@@ -25,7 +25,7 @@ jobs:
           - os: windows-latest
             name: Windows
             artifact: cshift-windows
-            binary: build/Release/cshift.exe
+            binary: build/cshift.exe
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
@@ -47,7 +47,7 @@ jobs:
           brew install llvm
           echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
 
-      # ── Windows: find LLVMConfig.cmake (GHCup ships one) ──────────────────
+      # ── Windows: GHCup ships LLVM, just find it ───────────────────────────
       - name: Find LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
