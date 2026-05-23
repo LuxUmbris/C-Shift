@@ -457,7 +457,7 @@ private:
         emit_call_val(n, /*result_name=*/"");
     }
 
-    // FIX (Bug 3): emit_call_val now correctly handles both an Arguments wrapper
+    // emit_call_val now correctly handles both an Arguments wrapper
     // node and args as direct children, and uses the declared LLVM param types
     // as hints so variadic functions like printf receive all their arguments.
     EzVal emit_call_val(Parser::ASTNode *n, const std::string &result_name) {
@@ -468,11 +468,13 @@ private:
 
         std::vector<EzVal> args;
         if (!n->children.empty()) {
-            // Support both: args wrapped in an Arguments/ArgList node, and args
+            // Support both: args wrapped in an Arguments/ArgList/Args node, and args
             // as direct children of the call node.
             auto *arg_container =
                 (!n->children.empty() &&
-                 (n->children[0]->type == "Arguments" || n->children[0]->type == "ArgList"))
+                 (n->children[0]->type == "Arguments" || 
+                  n->children[0]->type == "ArgList" || 
+                  n->children[0]->type == "Args")) // <--- ADD THIS CHECK
                 ? n->children[0]
                 : n;
 
