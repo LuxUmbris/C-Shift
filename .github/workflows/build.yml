@@ -1,0 +1,70 @@
+name: Build
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux
+            artifact: cshift-linux
+            binary: build/cshift
+
+          - os: macos-latest
+            name: macOS
+            artifact: cshift-macos
+            binary: build/cshift
+
+          - os: windows-latest
+            name: Windows
+            artifact: cshift-windows
+            binary: build/Release/cshift.exe
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Linux: LLVM + lld via apt ──────────────────────────────────────────
+      - name: Install LLVM (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-dev lld
+
+      # ── macOS: LLVM via Homebrew ───────────────────────────────────────────
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm
+          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+          echo "LLVM_DIR=$(brew --prefix llvm)/lib/cmake/llvm" >> $GITHUB_ENV
+
+      # ── Windows: LLVM via winget / choco ──────────────────────────────────
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        run: choco install llvm --yes
+        shell: pwsh
+
+      # ── Build ──────────────────────────────────────────────────────────────
+      - name: Configure
+        run: cmake -S . -B build ${{ runner.os == 'macOS' && '-DCMAKE_PREFIX_PATH=$LLVM_DIR' || '' }}
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      # ── Upload ────────────────────────────────────────────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.binary }}
+          if-no-files-found: error
