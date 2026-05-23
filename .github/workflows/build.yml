@@ -74,11 +74,11 @@ jobs:
             }
           }
           if (-not $llvm) {
-            Write-Host "LLVMConfig.cmake nicht gefunden, suche..."
+            Write-Host "LLVMConfig.cmake not found, searching..."
             Get-ChildItem "C:\" -Recurse -Filter "LLVMConfig.cmake" -ErrorAction SilentlyContinue | Select-Object -First 3
             exit 1
           }
-          Write-Host "LLVM gefunden in: $llvm"
+          Write-Host "LLVM found in: $llvm"
           echo "LLVM_DIR=$llvm\lib\cmake\llvm" >> $env:GITHUB_ENV
           echo "$llvm\bin" >> $env:GITHUB_PATH
 
