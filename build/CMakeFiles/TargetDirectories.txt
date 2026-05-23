@@ -1,0 +1,13 @@
+/workspaces/C-Shift/build/CMakeFiles/intrinsics_gen.dir
+/workspaces/C-Shift/build/CMakeFiles/omp_gen.dir
+/workspaces/C-Shift/build/CMakeFiles/acc_gen.dir
+/workspaces/C-Shift/build/CMakeFiles/RISCVTargetParserTableGen.dir
+/workspaces/C-Shift/build/CMakeFiles/cshift.dir
+/workspaces/C-Shift/build/CMakeFiles/frt_native.dir
+/workspaces/C-Shift/build/CMakeFiles/frt_x86_64-linux-gnu.dir
+/workspaces/C-Shift/build/CMakeFiles/edit_cache.dir
+/workspaces/C-Shift/build/CMakeFiles/rebuild_cache.dir
+/workspaces/C-Shift/build/CMakeFiles/list_install_components.dir
+/workspaces/C-Shift/build/CMakeFiles/install.dir
+/workspaces/C-Shift/build/CMakeFiles/install/local.dir
+/workspaces/C-Shift/build/CMakeFiles/install/strip.dir
