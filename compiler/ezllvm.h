@@ -546,13 +546,17 @@ static inline int ez_link_exe(const char **obj_files, int nobj,
     char cmd[4096] = {0};
     int using_cc = (strcmp(linker, "cc") == 0 || strcmp(linker, "gcc") == 0);
 
+    /* CRT paths — populated in the lld branch, remain empty for cc branch.
+     * Declared here so they are in scope for the post-link append below. */
+    char crt1[512] = {0}, crti[512] = {0}, crtn[512] = {0};
+    char libgcc[512] = {0}, libgcc_s[512] = {0};
+
     if (using_cc) {
         /* cc handles crt*.o and dynamic linker automatically */
         snprintf(cmd, sizeof(cmd), "%s", linker);
     } else {
         /* lld / ld: we need to specify crt files and dynamic linker ourselves.
          * We use $(cc --print-file-name=...) to locate them portably. */
-        char crt1[512], crti[512], crtn[512], libgcc[512], libgcc_s[512];
         FILE *f;
         #define EZ__FIND_CRT(var, name) \
             f = popen("cc --print-file-name=" name " 2>/dev/null", "r"); \
@@ -587,6 +591,11 @@ static inline int ez_link_exe(const char **obj_files, int nobj,
             pclose(ld);
         }
 
+        /* CRT link order MUST be:  crt1.o crti.o [user objs] crtn.o
+         * crti.o opens  the .init/.fini sections.
+         * crtn.o CLOSES the .init/.fini sections — it must come after all
+         * user objects.  Without it the .fini_array epilog is missing and
+         * call_init crashes on the dangling open entry (seen as 0x401016). */
         snprintf(cmd, sizeof(cmd),
             "%s -dynamic-linker %s %s %s",
             linker, dynld, crt1[0] ? crt1 : "", crti[0] ? crti : "");
@@ -608,9 +617,21 @@ static inline int ez_link_exe(const char **obj_files, int nobj,
         strncat(cmd, extra_libs[i], sizeof(cmd) - strlen(cmd) - 1);
     }
 
-    /* libc + libgcc always needed for typical programs */
+    /* libc + libgcc + crtn.o — crtn.o must come AFTER all user objects */
     if (!using_cc) {
         strncat(cmd, " -lc", sizeof(cmd) - strlen(cmd) - 1);
+        if (libgcc[0]) {
+            strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+            strncat(cmd, libgcc, sizeof(cmd) - strlen(cmd) - 1);
+        }
+        if (libgcc_s[0]) {
+            strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+            strncat(cmd, libgcc_s, sizeof(cmd) - strlen(cmd) - 1);
+        }
+        if (crtn[0]) {
+            strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+            strncat(cmd, crtn, sizeof(cmd) - strlen(cmd) - 1);
+        }
     }
 
     return ez__run(cmd);

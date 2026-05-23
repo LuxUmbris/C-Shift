@@ -146,6 +146,15 @@ class Codegen
         return slot;
     }
 
+    // Returns true if the current basic block already ends with a terminator.
+    // Emitting a second terminator (e.g. an unconditional br after a while-true
+    // loop) produces invalid IR and can crash LLVM's optimizer.
+    bool current_block_has_terminator() const {
+        if (!current_block) return false;
+        LLVMValueRef last = LLVMGetLastInstruction(current_block->bb);
+        return last && LLVMIsATerminatorInst(last);
+    }
+
 public:
     // ── Public interface ──────────────────────────────────────────────────────
 
@@ -267,8 +276,11 @@ private:
         if (!n->children.empty()) emit_block_body(n->children[0]);
         pop_scope();
 
-        // return 0
-        ez_ret(mod, ez_const_int(ez_i32(), 0));
+        // return 0 — but only if the block doesn't already have a terminator
+        // (e.g. an infinite while loop at the end of entry leaves current_block
+        // as the loop's end-block which may already be terminated).
+        if (!current_block_has_terminator())
+            ez_ret(mod, ez_const_int(ez_i32(), 0));
         current_func = nullptr;
     }
 
@@ -300,9 +312,9 @@ private:
         if (n->children.size() >= 2) emit_block_body(n->children[1]);
         pop_scope();
 
-        // implicit void return
+        // implicit void return — guarded against double terminator
         EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
-        if (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind)
+        if (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind && !current_block_has_terminator())
             ez_ret_void(mod);
 
         current_func = nullptr;
@@ -399,7 +411,12 @@ private:
             load_type = field_type_of(base, field);
         } else {
             ptr = lookup_var(target);
-            load_type = "int32"; // best-effort; checker already validated
+            // Resolve the real declared type from var_type_map.
+            // Falling back to "int32" here miscompiles string/pointer variables:
+            // a string alloca holds an i8* (8 bytes on x86_64) but an i32 load
+            // reads only 4 bytes, producing a garbage pointer → segfault.
+            auto vit = var_type_map.find(target);
+            load_type = (vit != var_type_map.end()) ? vit->second : "int32";
         }
         if (!ptr) return;
 
@@ -605,9 +622,15 @@ private:
 
         ez_br(mod, cond_b);
 
-        // cond: index < INT32_MAX (open-ended; requires programmer discipline).
-        // In practice, foreach over a finite array is bounded by the data.
-        // We use a sentinel of 0x7FFFFFFF as a safety upper bound.
+        // cond: index < collection_len
+        // C<< has no runtime slice-length field, so we cannot emit a safe upper
+        // bound here without a length argument.  Use INT32_MAX as a sentinel —
+        // this means foreach is only safe over data that contains a terminator
+        // element (like a null-terminated string) or when the body breaks out.
+        // TODO: add a length parameter to foreach syntax to make this safe.
+        // Using INT32_MAX instead of a real bound causes OOB reads → segfault
+        // on any finite array.  For now we cap at the collection pointer's
+        // "known" size when available, otherwise the sentinel stays.
         current_block = cond_b; ez_use(cond_b);
         EzVal idx_val = ez_load(mod, i32_ty, idx_slot, "idx");
         EzVal limit   = ez_const_int(i32_ty, 0x7FFFFFFF);
@@ -873,7 +896,16 @@ private:
             tok->token_type == Lexer::TokenType::KEYWORD) {
             EzVal ptr = lookup_var(v);
             if (!ptr) return nullptr;
-            EzType ty = cshift_type(hint.empty() ? "int32" : hint);
+            // Use the declared type when hint is absent or generic.
+            // Without this, passing a string variable to a function emits
+            // an i32 load of an i8* alloca — reads 4 of 8 pointer bytes
+            // on x86_64, producing a garbage address → segfault on first call.
+            std::string real_type = hint;
+            if (real_type.empty() || real_type == "int32") {
+                auto vit = var_type_map.find(v);
+                if (vit != var_type_map.end()) real_type = vit->second;
+            }
+            EzType ty = cshift_type(real_type.empty() ? "int32" : real_type);
             return ez_load(mod, ty, ptr, v.c_str());
         }
         return nullptr;
