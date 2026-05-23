@@ -33,56 +33,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── Linux: LLVM + lld via apt ──────────────────────────────────────────
+      # ── Linux ──────────────────────────────────────────────────────────────
       - name: Install LLVM (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y llvm-dev lld
 
-      # ── macOS: LLVM via Homebrew ───────────────────────────────────────────
+      # ── macOS ──────────────────────────────────────────────────────────────
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install llvm
           echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
-          echo "LLVM_DIR=$(brew --prefix llvm)/lib/cmake/llvm" >> $GITHUB_ENV
 
-      # ── Windows: LLVM vom offiziellen GitHub Release ──────────────────────
-      - name: Install LLVM (Windows)
+      # ── Windows: find LLVMConfig.cmake (GHCup ships one) ──────────────────
+      - name: Find LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = "18.1.8"
-          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/LLVM-$version-win64.exe"
-          $installer = "$env:TEMP\llvm-installer.exe"
-          Write-Host "Downloading LLVM $version..."
-          Invoke-WebRequest -Uri $url -OutFile $installer
-          Write-Host "Installing..."
-          Start-Process -FilePath $installer -ArgumentList "/S" -Wait
-          # Tatsächlichen Installationspfad suchen
-          $candidates = @(
-            "C:\Program Files\LLVM",
-            "C:\LLVM",
-            "C:\Program Files (x86)\LLVM"
-          )
-          $llvm = $null
-          foreach ($c in $candidates) {
-            if (Test-Path "$c\lib\cmake\llvm\LLVMConfig.cmake") {
-              $llvm = $c
-              break
-            }
-          }
-          if (-not $llvm) {
-            Write-Host "LLVMConfig.cmake not found, searching..."
-            Get-ChildItem "C:\" -Recurse -Filter "LLVMConfig.cmake" -ErrorAction SilentlyContinue | Select-Object -First 3
-            exit 1
-          }
-          Write-Host "LLVM found in: $llvm"
-          echo "LLVM_DIR=$llvm\lib\cmake\llvm" >> $env:GITHUB_ENV
-          echo "$llvm\bin" >> $env:GITHUB_PATH
+          $found = Get-ChildItem "C:\" -Recurse -Filter "LLVMConfig.cmake" -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+          if (-not $found) { Write-Error "LLVMConfig.cmake not found"; exit 1 }
+          $llvmDir = $found.DirectoryName
+          Write-Host "Found LLVM at: $llvmDir"
+          echo "LLVM_DIR=$llvmDir" >> $env:GITHUB_ENV
 
-      # ── Configure ─────────────────────────────────────────────────────────
+      # ── Configure ──────────────────────────────────────────────────────────
       - name: Configure (Linux)
         if: runner.os == 'Linux'
         run: cmake -S . -B build
@@ -94,15 +71,13 @@ jobs:
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          Write-Host "LLVM_DIR = $env:LLVM_DIR"
-          cmake -S . -B build -DLLVM_DIR="$env:LLVM_DIR"
+        run: cmake -S . -B build -DLLVM_DIR="$env:LLVM_DIR" -G "MinGW Makefiles"
 
       # ── Build ──────────────────────────────────────────────────────────────
       - name: Build
         run: cmake --build build --config Release
 
-      # ── Upload ────────────────────────────────────────────────────────────
+      # ── Upload ─────────────────────────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
