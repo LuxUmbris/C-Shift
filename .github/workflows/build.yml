@@ -15,17 +15,14 @@ jobs:
           - os: ubuntu-latest
             name: Linux
             artifact: cshift-linux
-            binary: build/cshift
 
           - os: macos-latest
             name: macOS
             artifact: cshift-macos
-            binary: build/cshift
 
           - os: windows-latest
             name: Windows
             artifact: cshift-windows
-            binary: build/cshift.exe
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
@@ -62,25 +59,117 @@ jobs:
       # ── Configure ──────────────────────────────────────────────────────────
       - name: Configure (Linux)
         if: runner.os == 'Linux'
-        run: cmake -S . -B build
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_INSTALL_PREFIX=dist
 
       - name: Configure (macOS)
         if: runner.os == 'macOS'
-        run: cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix llvm)"
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix llvm)" \
+            -DCMAKE_INSTALL_PREFIX=dist
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: cmake -S . -B build -DLLVM_DIR="$env:LLVM_DIR" -G "MinGW Makefiles"
+        run: |
+          cmake -S . -B build `
+            -DLLVM_DIR="$env:LLVM_DIR" `
+            -DCMAKE_INSTALL_PREFIX=dist `
+            -G "MinGW Makefiles"
 
-      # ── Build ──────────────────────────────────────────────────────────────
+      # ── Build + Install into dist/ ─────────────────────────────────────────
       - name: Build
         run: cmake --build build --config Release
+
+      - name: Install into dist/
+        run: cmake --install build --config Release
+
+      # ── Write install script (Linux/macOS) ────────────────────────────────
+      - name: Write install script (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cat > dist/install.sh << 'SCRIPT'
+          #!/usr/bin/env bash
+          # C<< installer — copies files and sets environment variables
+          set -e
+          INSTALL_DIR="${1:-/usr/local}"
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+          echo "Installing C<< to $INSTALL_DIR ..."
+          cp -r "$SCRIPT_DIR/bin"           "$INSTALL_DIR/"
+          cp -r "$SCRIPT_DIR/share"         "$INSTALL_DIR/"
+
+          CSHIFT_STD="$INSTALL_DIR/share/cshift"
+
+          # Detect shell config file
+          if   [ -f "$HOME/.zshrc"  ]; then RC="$HOME/.zshrc"
+          elif [ -f "$HOME/.bashrc" ]; then RC="$HOME/.bashrc"
+          else RC="$HOME/.profile"
+          fi
+
+          # Remove old entries
+          sed -i.bak '/# cshift/d; /CSHIFT_STD/d; /cshift\/bin/d' "$RC" 2>/dev/null || true
+
+          # Append new entries
+          cat >> "$RC" << ENV
+          # cshift
+          export CSHIFT_STD="$CSHIFT_STD"
+          export PATH="\$PATH:$INSTALL_DIR/bin"
+          ENV
+
+          echo "Done. Restart your shell or run: source $RC"
+          SCRIPT
+          chmod +x dist/install.sh
+
+      # ── Write install script (Windows) ────────────────────────────────────
+      - name: Write install script (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $script = @'
+          # C<< installer for Windows
+          # Run as Administrator for system-wide install, or without for user install.
+          param(
+              [string]$InstallDir = "$env:LOCALAPPDATA\cshift"
+          )
+
+          $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+          Write-Host "Installing C<< to $InstallDir ..."
+          New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+          Copy-Item -Recurse -Force "$ScriptDir\bin\*"   "$InstallDir\bin\"   -ErrorAction SilentlyContinue
+          Copy-Item -Recurse -Force "$ScriptDir\share\*" "$InstallDir\share\" -ErrorAction SilentlyContinue
+
+          $stdPath = "$InstallDir\share\cshift"
+          $binPath = "$InstallDir\bin"
+
+          # Set user environment variables
+          $target = if ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()`
+                        .IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+              "Machine"
+          } else {
+              "User"
+          }
+
+          [Environment]::SetEnvironmentVariable("CSHIFT_STD", $stdPath, $target)
+
+          $currentPath = [Environment]::GetEnvironmentVariable("PATH", $target)
+          if ($currentPath -notlike "*$binPath*") {
+              [Environment]::SetEnvironmentVariable("PATH", "$currentPath;$binPath", $target)
+          }
+
+          Write-Host ""
+          Write-Host "Done! CSHIFT_STD = $stdPath"
+          Write-Host "Restart your terminal for PATH changes to take effect."
+          '@
+          $script | Out-File -Encoding UTF8 dist\install.ps1
 
       # ── Upload ─────────────────────────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.binary }}
+          path: dist/
           if-no-files-found: error
