@@ -460,7 +460,7 @@ private:
             // as direct children of the call node.
             auto *arg_container =
                 (!n->children.empty() &&
-                 (n->children[0]->type == "Arguments" || n->children[0]->type == "ArgList"))
+                 (n->children[0]->type == "Arguments" || n->children[0]->type == "ArgList" || n->children[0]->type == "Args"))
                 ? n->children[0]
                 : n;
 
