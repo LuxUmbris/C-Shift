@@ -169,19 +169,12 @@ Properties:
 - Functions may contain any number of tunnel operations.
 - A function call is a statement.
 - Tunnel values produced inside a function appear in the call scope if they were reserved.
-- Inline usage of function results is forbidden except in reserve-initializers or for anonymous tunnels.
+- Inline usage of function results is forbidden except in reserve-initializers.
 Example:
 ```cll
 def compute(int32 x) // tunnels int32 doubled
 {
     tunnel x * 2 -> int32 doubled;
-}
-```
-anonymous:
-```
-def compute(int32 x) // tunnels int32 doubled
-{
-    tunnel x * 2;
 }
 ```
 ### Function calls
@@ -193,10 +186,6 @@ add(5, 7);
 inline:
 ```
 reserve int32 result = add(5, 7);
-```
-anonymous:
-```
-int32 result = add(5, 7);
 ```
 A function can tunnel multiple values. All values wich were reserved in the past and are tunneled by the function get filled. The others are ignored.
 ```
