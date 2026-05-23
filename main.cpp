@@ -406,7 +406,7 @@ int main(int argc, char **argv) {
 
     // Verify the generated IR
     char *err_msg = nullptr;
-    if (LLVMVerifyModule(mod->module, LLVMReturnStatusAction, &err_msg) != 0) {
+    if (LLVMVerifyModule(mod->mod, LLVMReturnStatusAction, &err_msg) != 0) {
         std::cerr << "[IR VERIFY ERROR] " << (err_msg ? err_msg : "unknown") << "\n";
         LLVMDisposeMessage(err_msg);
         ez_free(mod); ez_target_free(tgt);

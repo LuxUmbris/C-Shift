@@ -280,7 +280,7 @@ static inline void ez_target_free(EzTarget *t) { free(t); }
 static inline EzModule *ez_module(const char *name) {
     EzModule *m = (EzModule *)malloc(sizeof(EzModule));
     assert(m);
-    m->ctx     = LLVMContextCreate();
+    m->ctx     = LLVMGetGlobalContext();
     m->mod     = LLVMModuleCreateWithNameInContext(name, m->ctx);
     m->builder = LLVMCreateBuilderInContext(m->ctx);
     return m;
@@ -299,7 +299,7 @@ static inline EzModule *ez_module_for_target(const char *name, EzTarget *tgt) {
 
     EzModule *m = (EzModule *)malloc(sizeof(EzModule));
     assert(m);
-    m->ctx     = LLVMContextCreate();
+    m->ctx     = LLVMGetGlobalContext();
     m->mod     = LLVMModuleCreateWithNameInContext(name, m->ctx);
     m->builder = LLVMCreateBuilderInContext(m->ctx);
 
@@ -330,7 +330,6 @@ static inline EzModule *ez_module_for_target(const char *name, EzTarget *tgt) {
 static inline void ez_free(EzModule *m) {
     LLVMDisposeBuilder(m->builder);
     LLVMDisposeModule(m->mod);
-    LLVMContextDispose(m->ctx);
     free(m);
 }
 
@@ -874,30 +873,30 @@ static inline int ez_build_exe_for(EzModule *m, EzTarget *tgt,
    TYPES
    ═══════════════════════════════════════════════════════════════════════════ */
 
-static inline EzType *ez_i1(void)   { return LLVMInt1Type();  }
-static inline EzType *ez_i8(void)   { return LLVMInt8Type();  }
-static inline EzType *ez_i16(void)  { return LLVMInt16Type(); }
-static inline EzType *ez_i32(void)  { return LLVMInt32Type(); }
-static inline EzType *ez_i64(void)  { return LLVMInt64Type(); }
-static inline EzType *ez_f32(void)  { return LLVMFloatType();  }
-static inline EzType *ez_f64(void)  { return LLVMDoubleType(); }
-static inline EzType *ez_void(void) { return LLVMVoidType(); }
-static inline EzType *ez_ptr(void)  { return LLVMPointerType(LLVMInt8Type(), 0); }
-static inline EzType *ez_ptr_to(EzType *elem)                         { return LLVMPointerType(elem, 0); }
-static inline EzType *ez_array(EzType *elem, unsigned count)          { return LLVMArrayType(elem, count); }
-static inline EzType *ez_struct(EzType **fields, unsigned count)      { return LLVMStructType(fields, count, 0); }
-static inline EzType *ez_struct_named(EzModule *m, const char *name)  { return LLVMStructCreateNamed(m->ctx, name); }
-static inline void    ez_struct_body(EzType *s, EzType **f, unsigned n){ LLVMStructSetBody(s, f, n, 0); }
-static inline EzType *ez_func_type(EzType *ret, EzType **p, unsigned n, int v){ return LLVMFunctionType(ret, p, n, v); }
+static inline EzType ez_i1(void)   { return LLVMInt1Type();  }
+static inline EzType ez_i8(void)   { return LLVMInt8Type();  }
+static inline EzType ez_i16(void)  { return LLVMInt16Type(); }
+static inline EzType ez_i32(void)  { return LLVMInt32Type(); }
+static inline EzType ez_i64(void)  { return LLVMInt64Type(); }
+static inline EzType ez_f32(void)  { return LLVMFloatType();  }
+static inline EzType ez_f64(void)  { return LLVMDoubleType(); }
+static inline EzType ez_void(void) { return LLVMVoidType(); }
+static inline EzType ez_ptr(void)  { return LLVMPointerType(LLVMInt8Type(), 0); }
+static inline EzType ez_ptr_to(EzType elem)                         { return LLVMPointerType(elem, 0); }
+static inline EzType ez_array(EzType elem, unsigned count)          { return LLVMArrayType(elem, count); }
+static inline EzType ez_struct(EzType *fields, unsigned count)      { return LLVMStructType(fields, count, 0); }
+static inline EzType ez_struct_named(EzModule *m, const char *name)  { return LLVMStructCreateNamed(m->ctx, name); }
+static inline void    ez_struct_body(EzType s, EzType *f, unsigned n){ LLVMStructSetBody(s, f, n, 0); }
+static inline EzType ez_func_type(EzType ret, EzType *p, unsigned n, int v){ return LLVMFunctionType(ret, p, n, v); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CONSTANTS
    ═══════════════════════════════════════════════════════════════════════════ */
 
-static inline EzVal ez_const_int(EzType *ty, long long v)            { return LLVMConstInt(ty, (unsigned long long)v, 1); }
-static inline EzVal ez_const_uint(EzType *ty, unsigned long long v)  { return LLVMConstInt(ty, v, 0); }
-static inline EzVal ez_const_float(EzType *ty, double v)             { return LLVMConstReal(ty, v); }
-static inline EzVal ez_const_null(EzType *ty)                        { return LLVMConstNull(ty); }
+static inline EzVal ez_const_int(EzType ty, long long v)            { return LLVMConstInt(ty, (unsigned long long)v, 1); }
+static inline EzVal ez_const_uint(EzType ty, unsigned long long v)  { return LLVMConstInt(ty, v, 0); }
+static inline EzVal ez_const_float(EzType ty, double v)             { return LLVMConstReal(ty, v); }
+static inline EzVal ez_const_null(EzType ty)                        { return LLVMConstNull(ty); }
 static inline EzVal ez_const_bool(int v)                             { return LLVMConstInt(LLVMInt1Type(), v ? 1 : 0, 0); }
 static inline EzVal ez_global_string(EzModule *m, const char *s, const char *n) {
     return LLVMBuildGlobalStringPtr(m->builder, s, n);
@@ -908,7 +907,7 @@ static inline EzVal ez_global_string(EzModule *m, const char *s, const char *n) 
    ═══════════════════════════════════════════════════════════════════════════ */
 
 static inline EzFunc *ez_func(EzModule *m, const char *name,
-                               EzType *ret, EzType **params, unsigned nparams, int vararg) {
+                               EzType ret, EzType *params, unsigned nparams, int vararg) {
     EzFunc *f = (EzFunc *)malloc(sizeof(EzFunc));
     assert(f);
     f->owner = m;
@@ -917,7 +916,7 @@ static inline EzFunc *ez_func(EzModule *m, const char *name,
 }
 
 static inline EzFunc *ez_extern(EzModule *m, const char *name,
-                                 EzType *ret, EzType **params, unsigned nparams, int vararg) {
+                                 EzType ret, EzType *params, unsigned nparams, int vararg) {
     EzFunc *f = ez_func(m, name, ret, params, nparams, vararg);
     LLVMSetLinkage(f->fn, LLVMExternalLinkage);
     return f;
@@ -995,10 +994,10 @@ static inline void ez_cond_br(EzModule *m, EzVal cond,
    MEMORY
    ═══════════════════════════════════════════════════════════════════════════ */
 
-static inline EzVal ez_alloca(EzModule *m, EzType *ty, const char *n)      { return LLVMBuildAlloca(m->builder, ty, n); }
-static inline EzVal ez_load(EzModule *m, EzType *ty, EzVal ptr, const char *n) { return LLVMBuildLoad2(m->builder, ty, ptr, n); }
+static inline EzVal ez_alloca(EzModule *m, EzType ty, const char *n)      { return LLVMBuildAlloca(m->builder, ty, n); }
+static inline EzVal ez_load(EzModule *m, EzType ty, EzVal ptr, const char *n) { return LLVMBuildLoad2(m->builder, ty, ptr, n); }
 static inline void  ez_store(EzModule *m, EzVal val, EzVal ptr)             { LLVMBuildStore(m->builder, val, ptr); }
-static inline EzVal ez_gep(EzModule *m, EzType *ty, EzVal ptr,
+static inline EzVal ez_gep(EzModule *m, EzType ty, EzVal ptr,
                             EzVal *idx, unsigned nidx, const char *n)       { return LLVMBuildGEP2(m->builder, ty, ptr, idx, nidx, n); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1014,7 +1013,7 @@ static inline EzVal ez_call(EzModule *m, EzFunc *fn,
    PHI NODES
    ═══════════════════════════════════════════════════════════════════════════ */
 
-static inline EzVal ez_phi(EzModule *m, EzType *ty, const char *n)         { return LLVMBuildPhi(m->builder, ty, n); }
+static inline EzVal ez_phi(EzModule *m, EzType ty, const char *n)         { return LLVMBuildPhi(m->builder, ty, n); }
 static inline void  ez_phi_add(EzVal phi, EzVal *vals, EzBlock **blocks, unsigned count) {
     LLVMBasicBlockRef *bbs = (LLVMBasicBlockRef *)malloc(count * sizeof(LLVMBasicBlockRef));
     assert(bbs);
@@ -1027,16 +1026,16 @@ static inline void  ez_phi_add(EzVal phi, EzVal *vals, EzBlock **blocks, unsigne
    TYPE CONVERSIONS
    ═══════════════════════════════════════════════════════════════════════════ */
 
-static inline EzVal ez_sext(EzModule *m,    EzVal v, EzType *t, const char *n) { return LLVMBuildSExt(m->builder, v, t, n); }
-static inline EzVal ez_zext(EzModule *m,    EzVal v, EzType *t, const char *n) { return LLVMBuildZExt(m->builder, v, t, n); }
-static inline EzVal ez_trunc(EzModule *m,   EzVal v, EzType *t, const char *n) { return LLVMBuildTrunc(m->builder, v, t, n); }
-static inline EzVal ez_sitofp(EzModule *m,  EzVal v, EzType *t, const char *n) { return LLVMBuildSIToFP(m->builder, v, t, n); }
-static inline EzVal ez_uitofp(EzModule *m,  EzVal v, EzType *t, const char *n) { return LLVMBuildUIToFP(m->builder, v, t, n); }
-static inline EzVal ez_fptosi(EzModule *m,  EzVal v, EzType *t, const char *n) { return LLVMBuildFPToSI(m->builder, v, t, n); }
-static inline EzVal ez_fptoui(EzModule *m,  EzVal v, EzType *t, const char *n) { return LLVMBuildFPToUI(m->builder, v, t, n); }
-static inline EzVal ez_bitcast(EzModule *m, EzVal v, EzType *t, const char *n) { return LLVMBuildBitCast(m->builder, v, t, n); }
-static inline EzVal ez_ptrtoint(EzModule *m,EzVal p, EzType *t, const char *n) { return LLVMBuildPtrToInt(m->builder, p, t, n); }
-static inline EzVal ez_inttoptr(EzModule *m,EzVal v, EzType *t, const char *n) { return LLVMBuildIntToPtr(m->builder, v, t, n); }
+static inline EzVal ez_sext(EzModule *m,    EzVal v, EzType t, const char *n) { return LLVMBuildSExt(m->builder, v, t, n); }
+static inline EzVal ez_zext(EzModule *m,    EzVal v, EzType t, const char *n) { return LLVMBuildZExt(m->builder, v, t, n); }
+static inline EzVal ez_trunc(EzModule *m,   EzVal v, EzType t, const char *n) { return LLVMBuildTrunc(m->builder, v, t, n); }
+static inline EzVal ez_sitofp(EzModule *m,  EzVal v, EzType t, const char *n) { return LLVMBuildSIToFP(m->builder, v, t, n); }
+static inline EzVal ez_uitofp(EzModule *m,  EzVal v, EzType t, const char *n) { return LLVMBuildUIToFP(m->builder, v, t, n); }
+static inline EzVal ez_fptosi(EzModule *m,  EzVal v, EzType t, const char *n) { return LLVMBuildFPToSI(m->builder, v, t, n); }
+static inline EzVal ez_fptoui(EzModule *m,  EzVal v, EzType t, const char *n) { return LLVMBuildFPToUI(m->builder, v, t, n); }
+static inline EzVal ez_bitcast(EzModule *m, EzVal v, EzType t, const char *n) { return LLVMBuildBitCast(m->builder, v, t, n); }
+static inline EzVal ez_ptrtoint(EzModule *m,EzVal p, EzType t, const char *n) { return LLVMBuildPtrToInt(m->builder, p, t, n); }
+static inline EzVal ez_inttoptr(EzModule *m,EzVal v, EzType t, const char *n) { return LLVMBuildIntToPtr(m->builder, v, t, n); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    MISC

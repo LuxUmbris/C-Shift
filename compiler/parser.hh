@@ -112,7 +112,7 @@ private:
             // Look ahead: IDENT ( => call, IDENT = => assign, IDENT += etc => assign
             size_t la = 1;
             // skip potential pointer/slice decorators
-            while (peek_token(la).value == "*" || peek_token(la).value == "[" || peek_token(la).value == "[:") la++;
+            while (peek_token(la).value == "*" || peek_token(la).value == "[" || peek_token(la).value == "[:]") la++;
             if (peek_token(la).value == "(" ) return parse_call_statement();
             if (peek_token(la).value == "=" ||
                 peek_token(la).value == "+=" ||
@@ -389,7 +389,7 @@ private:
                     while (peek_token(la).value != "]" &&
                            peek_token(la).type != Lexer::TokenType::END_OF_FILE) la++;
                     la++; // consume ']'
-                } else if (peek_token(la).value == "[:,") {
+                } else if (peek_token(la).value == "[:]") {
                     la++;
                 }
                 // next must be an identifier (function name)
@@ -460,7 +460,9 @@ private:
             std::string ptype = parse_type_string();
             // name is optional in declarations
             std::string pname;
-            if (peek_token().type == Lexer::TokenType::IDENTIFIER)
+            // Allow keyword tokens as parameter names as well (e.g. "string string")
+            if (peek_token().type == Lexer::TokenType::IDENTIFIER ||
+                peek_token().type == Lexer::TokenType::KEYWORD)
                 pname = advance_token().value;
             params->children.push_back(new ASTNode("CParam", ptype + (pname.empty() ? "" : " " + pname), ln, current_depth));
             if (peek_token().value == ",") { advance_token(); continue; }

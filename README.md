@@ -1,4 +1,64 @@
-# C<< (C-Shift/C-Less-Less)
+# C<< (C-Shift / C-Less-Less)
+
+A small LLVM-based compiler for a safe, arena-oriented systems language.
+C<< focuses on deterministic, zero-runtime behavior and direct C ABI interoperability.
+
+## Build
+
+### Native build with Make
+
+### Build with CMake
+
+```bash
+mkdir -p build
+cd build
+cmake ..
+cmake --build .
+```
+
+## Usage
+
+Compile a C<< source file:
+
+```bash
+./cshift examples/hello.cll -o hello
+```
+
+Emit LLVM IR:
+
+```bash
+./cshift examples/hello.cll --emit-llvm
+```
+
+Emit assembly:
+
+```bash
+./cshift examples/hello.cll --emit-asm
+```
+
+Compile only to object file:
+
+```bash
+./cshift examples/hello.cll -c
+```
+
+Semantic check only:
+
+```bash
+./cshift examples/hello.cll --check-only
+```
+
+### Hello World
+
+```cll
+import std;
+
+entry
+{
+    puts("Hello, C<< world!");
+}
+```
+
 ## Philosophy
 C<< is designed to be safe without fighting the compiler, and easy to use without runtime abstractions. 
 So it does not have a GC (Garbage Collector), Borrow Checker or similar things and is fully arena-based. 

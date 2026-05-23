@@ -677,6 +677,8 @@ private:
         while (!base.empty() && (base.back() == '*' || base.back() == ']' || base.back() == ':' || base.back() == '['))
             base.pop_back();
         if (primitives.count(base)) return true;
+        // treat 'voided' as a known primitive type
+        if (base == "voided") return true;
         if (struct_types.count(base)) return true;
         if (enum_types.count(base)) return true;
         return false;

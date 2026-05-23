@@ -1,0 +1,6 @@
+import std;
+
+entry
+{
+    puts("Hello, C<< world!");
+}

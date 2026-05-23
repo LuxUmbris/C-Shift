@@ -43,7 +43,7 @@ class Codegen
 
     // name → struct type (for field GEP)
     struct StructLayout {
-        EzType *llvm_type;
+        EzType llvm_type;
         std::vector<std::string> field_names;
         std::vector<std::string> field_types;
     };
@@ -79,7 +79,7 @@ class Codegen
     }
 
     // Map C<< type string → LLVM EzType
-    EzType *cshift_type(const std::string &t) {
+    EzType cshift_type(const std::string &t) {
         std::string base = t;
         // strip pointer/array decorators to find base
         bool is_ptr   = (t.find('*')   != std::string::npos);
@@ -89,7 +89,7 @@ class Codegen
             base.erase(std::remove(base.begin(), base.end(), c), base.end());
         }
 
-        EzType *elem = nullptr;
+        EzType elem = nullptr;
         if      (base == "int8"  || base == "char")  elem = ez_i8();
         else if (base == "int16")                    elem = ez_i16();
         else if (base == "int32")                    elem = ez_i32();
@@ -110,7 +110,12 @@ class Codegen
             else elem = ez_i32(); // fallback: treat unknown as i32
         }
 
-        if (is_ptr || is_slice) return ez_ptr_to(elem);
+        // Special-case: pointer-to-void/voided should map to i8* (ez_ptr()),
+        // not a pointer to LLVM void type which is invalid.
+        if (is_ptr || is_slice) {
+            if (base == "voided" || base == "void") return ez_ptr();
+            return ez_ptr_to(elem);
+        }
         return elem;
     }
 
@@ -123,9 +128,13 @@ class Codegen
 
     // ── Entry-point alloca builder for the first block ────────────────────────
     // We position the builder at the very start of the entry block for allocas.
-    EzVal alloca_in_entry(EzFunc *fn, EzType *ty, const std::string &name) {
+    EzVal alloca_in_entry(EzFunc *fn, EzType ty, const std::string &name) {
         // Temporarily move builder to the first instruction of the entry block
         LLVMBasicBlockRef entry_bb = LLVMGetEntryBasicBlock(fn->fn);
+        if (!entry_bb) {
+            // ensure an entry block exists (some functions may not have one yet)
+            entry_bb = LLVMAppendBasicBlockInContext(fn->owner->ctx, fn->fn, "entry");
+        }
         LLVMValueRef first = LLVMGetFirstInstruction(entry_bb);
         if (first)
             LLVMPositionBuilderBefore(mod->builder, first);
@@ -168,7 +177,7 @@ private:
         StructLayout layout;
         layout.llvm_type = ez_struct_named(mod, name.c_str());
 
-        std::vector<EzType*> fields;
+        std::vector<EzType> fields;
         for (auto *f : n->children) {
             if (!f) continue;
             auto sp = f->value.find(' ');
@@ -188,9 +197,9 @@ private:
         std::string ret_s  = n->value.substr(0, sp);
         std::string fname  = n->value.substr(sp + 1);
 
-        EzType *ret = (ret_s == "voided" || ret_s == "void") ? ez_void() : cshift_type(ret_s);
+        EzType ret = (ret_s == "voided" || ret_s == "void") ? ez_void() : cshift_type(ret_s);
 
-        std::vector<EzType*> params;
+        std::vector<EzType> params;
         bool vararg = false;
         if (!n->children.empty() && n->children[0]->type == "CParams") {
             for (auto *p : n->children[0]->children) {
@@ -210,8 +219,8 @@ private:
         // C<< uses VOP (Vertical Ownership Programming): functions never return
         // values — all output flows through tunnel declarations (tunnel expr -> type name).
         // Functions therefore always have a void return type at the IR level.
-        EzType *ret = ez_void();
-        std::vector<EzType*> params;
+        EzType ret = ez_void();
+        std::vector<EzType> params;
         std::vector<std::string> pnames;
 
         if (!n->children.empty() && n->children[0]->type == "Parameters") {
@@ -281,7 +290,7 @@ private:
                 auto sp = p->value.find(' ');
                 std::string ptype = p->value.substr(0, sp);
                 std::string pname = p->value.substr(sp + 1);
-                EzType *ty = cshift_type(ptype);
+                EzType ty = cshift_type(ptype);
                 EzVal slot = alloca_in_entry(f, ty, pname.c_str());
                 ez_store(mod, ez_param(f, idx++), slot);
                 declare_var(pname, slot, ptype);
@@ -292,7 +301,7 @@ private:
         pop_scope();
 
         // implicit void return
-        EzType *ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
+        EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
         if (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind)
             ez_ret_void(mod);
 
@@ -334,7 +343,7 @@ private:
         auto sp = n->value.find(' ');
         std::string type_s = n->value.substr(0, sp);
         std::string vname  = n->value.substr(sp + 1);
-        EzType *ty = cshift_type(type_s);
+        EzType ty = cshift_type(type_s);
 
         EzVal slot = alloca_in_entry(current_func, ty, vname.c_str());
         declare_var(vname, slot, type_s);
@@ -356,7 +365,7 @@ private:
         auto sp = n->value.find(' ');
         std::string type_s = n->value.substr(0, sp);
         std::string vname  = n->value.substr(sp + 1);
-        EzType *ty = cshift_type(type_s);
+        EzType ty = cshift_type(type_s);
 
         EzVal slot = alloca_in_entry(current_func, ty, vname.c_str());
         declare_var(vname, slot, type_s);
@@ -401,7 +410,7 @@ private:
             ez_store(mod, rhs, ptr);
         } else {
             // Compound assign: load, operate, store
-            EzType *ty = cshift_type(load_type);
+            EzType ty = cshift_type(load_type);
             EzVal lhs = ez_load(mod, ty, ptr, "lhs");
             EzVal result = nullptr;
             if      (op == "+=") result = is_float_type(load_type) ? ez_fadd(mod, lhs, rhs, "add") : ez_add(mod, lhs, rhs, "add");
@@ -432,7 +441,7 @@ private:
                 if (v) args.push_back(v);
             }
         }
-        EzType *ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
+        EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
         bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
         return ez_call(mod, f, args.data(), (unsigned)args.size(),
                        is_void ? "" : result_name.c_str());
@@ -460,7 +469,7 @@ private:
         EzVal ptr = lookup_var(tname);
         if (!ptr) {
             // Create a slot (function-scoped tunnel output)
-            EzType *ty = cshift_type(ttype);
+            EzType ty = cshift_type(ttype);
             ptr = alloca_in_entry(current_func, ty, tname.c_str());
             declare_var(tname, ptr);
             tunnel_slots[tname] = ptr;
@@ -581,12 +590,12 @@ private:
         }
 
         // Allocate the loop index
-        EzType *i32_ty = ez_i32();
+        EzType i32_ty = ez_i32();
         EzVal idx_slot = alloca_in_entry(current_func, i32_ty, "__foreach_idx");
         ez_store(mod, ez_const_int(i32_ty, 0), idx_slot);
 
         // Allocate the item slot
-        EzType *elem_ty = cshift_type(item_type);
+        EzType elem_ty = cshift_type(item_type);
         EzVal item_slot = alloca_in_entry(current_func, elem_ty, item_name.c_str());
 
         // Blocks
@@ -691,7 +700,7 @@ private:
     EzVal emit_condition(Parser::ASTNode *n) {
         EzVal v = emit_expression_val(n, "bool");
         if (!v) return ez_const_bool(0);
-        EzType *ty = LLVMTypeOf(v);
+        EzType ty = LLVMTypeOf(v);
         if (LLVMGetTypeKind(ty) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(ty) == 1) return v;
         // Compare != 0
         return ez_ne(mod, v, LLVMConstInt(ty, 0, 0), "tobool");
@@ -828,7 +837,7 @@ private:
             if (v) args.push_back(v);
         }
 
-        EzType *ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
+        EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
         bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
         return ez_call(mod, f, args.data(), (unsigned)args.size(), is_void ? "" : "call");
     }
@@ -839,18 +848,20 @@ private:
 
         // String literal
         if (tok->token_type == Lexer::TokenType::STRING) {
-            return ez_global_string(mod, v.c_str(), ".str");
+            static int __str_id = 0;
+            std::string name = std::string(".str") + std::to_string(__str_id++);
+            return ez_global_string(mod, v.c_str(), name.c_str());
         }
         // Number literal
         if (tok->token_type == Lexer::TokenType::NUMBER) {
             if (v.find('.') != std::string::npos) {
                 double d = std::stod(v);
-                EzType *ty = (hint == "float32") ? ez_f32() : ez_f64();
+                EzType ty = (hint == "float32") ? ez_f32() : ez_f64();
                 return ez_const_float(ty, d);
             }
             long long iv = 0;
             try { iv = std::stoll(v, nullptr, 0); } catch(...) {}
-            EzType *ty = cshift_type(hint.empty() ? "int32" : hint);
+            EzType ty = cshift_type(hint.empty() ? "int32" : hint);
             return ez_const_int(ty, iv);
         }
         // Keywords: true / false
@@ -862,7 +873,7 @@ private:
             tok->token_type == Lexer::TokenType::KEYWORD) {
             EzVal ptr = lookup_var(v);
             if (!ptr) return nullptr;
-            EzType *ty = cshift_type(hint.empty() ? "int32" : hint);
+            EzType ty = cshift_type(hint.empty() ? "int32" : hint);
             return ez_load(mod, ty, ptr, v.c_str());
         }
         return nullptr;

@@ -22,20 +22,11 @@ message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
-llvm_map_components_to_libnames(LLVM_LIBS
-    core analysis target
-    x86     x86asmparser     x86codegen     x86desc     x86info
-    aarch64 aarch64asmparser aarch64codegen aarch64desc aarch64info
-    riscv   riscvasmparser   riscvcodegen   riscvdesc   riscvinfo
-    arm     armasmparser     armcodegen     armdesc     arminfo
-    all-targets
-)
-
 # ── cshift binary ─────────────────────────────────────────────────────────────
 
 add_executable(cshift main.cpp)
 target_compile_options(cshift PRIVATE -Wall -Wextra -O2)
-target_link_libraries(cshift PRIVATE ${LLVM_LIBS})
+target_link_libraries(cshift PRIVATE LLVM)
 
 # ── Precompile frt.c ──────────────────────────────────────────────────────────
 #
