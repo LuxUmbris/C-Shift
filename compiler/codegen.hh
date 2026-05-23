@@ -445,6 +445,9 @@ private:
         emit_call_val(n, /*result_name=*/"");
     }
 
+    // emit_call_val now correctly handles both an Arguments wrapper
+    // node and args as direct children, and uses the declared LLVM param types
+    // as hints so variadic functions like printf receive all their arguments.
     EzVal emit_call_val(Parser::ASTNode *n, const std::string &result_name) {
         const std::string &fname = n->value;
         auto it = func_map.find(fname);
@@ -453,11 +456,49 @@ private:
 
         std::vector<EzVal> args;
         if (!n->children.empty()) {
-            for (auto *arg : n->children[0]->children) {
-                EzVal v = emit_expression_val(arg, ""); // type inferred
+            // Support both: args wrapped in an Arguments/ArgList node, and args
+            // as direct children of the call node.
+            auto *arg_container =
+                (!n->children.empty() &&
+                 (n->children[0]->type == "Arguments" || n->children[0]->type == "ArgList"))
+                ? n->children[0]
+                : n;
+
+            EzType fn_type = LLVMGlobalGetValueType(f->fn);
+            unsigned param_count = LLVMCountParamTypes(fn_type);
+            std::vector<LLVMTypeRef> param_types(param_count);
+            if (param_count > 0)
+                LLVMGetParamTypes(fn_type, param_types.data());
+
+            for (auto *arg : arg_container->children) {
+                // Derive a type hint from the declared parameter type so that
+                // variables are loaded with the correct width.  For variadic
+                // parameters beyond the fixed param list we fall back to the
+                // variable's own declared type (handled inside eval_token).
+                std::string arg_hint = "";
+                unsigned arg_idx = (unsigned)args.size();
+                if (arg_idx < param_count) {
+                    LLVMTypeKind kind = LLVMGetTypeKind(param_types[arg_idx]);
+                    switch (kind) {
+                        case LLVMIntegerTypeKind: {
+                            unsigned w = LLVMGetIntTypeWidth(param_types[arg_idx]);
+                            if      (w == 64) arg_hint = "int64";
+                            else if (w == 32) arg_hint = "int32";
+                            else if (w == 16) arg_hint = "int16";
+                            else              arg_hint = "int8";
+                            break;
+                        }
+                        case LLVMDoubleTypeKind:  arg_hint = "float64"; break;
+                        case LLVMFloatTypeKind:   arg_hint = "float32"; break;
+                        case LLVMPointerTypeKind: arg_hint = "string";  break;
+                        default: break;
+                    }
+                }
+                EzVal v = emit_expression_val(arg, arg_hint);
                 if (v) args.push_back(v);
             }
         }
+
         EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
         bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
         return ez_call(mod, f, args.data(), (unsigned)args.size(),
@@ -571,78 +612,38 @@ private:
     }
 
     void emit_foreach(Parser::ASTNode *n) {
-        // foreach (type item : collection) { body }
-        // n->value  = "type item"
-        // n->children[0] = collection expression (must evaluate to a pointer)
-        // n->children[1] = body block
-        //
-        // Lowering strategy: the collection must be a pointer (T*) with a known
-        // length.  Because C<< has no built-in slice length at runtime, we require
-        // the programmer to iterate over a compile-time-sized array.  We therefore
-        // lower foreach into a counted index loop:
-        //
-        //   i32 __idx = 0
-        //   loop:  if __idx >= __len  goto end
-        //          type item = collection[__idx]
-        //          body
-        //          __idx++
-        //          goto loop
-        //   end:
-        //
-        // If the collection expression cannot be lowered to a pointer we skip the
-        // body and emit a diagnostic.  This keeps the compiler from crashing on
-        // foreach while clearly indicating unsupported use.
-
         if (!n || n->children.size() < 2) return;
 
         auto sp = n->value.find(' ');
         std::string item_type = (sp != std::string::npos) ? n->value.substr(0, sp) : "int32";
         std::string item_name = (sp != std::string::npos) ? n->value.substr(sp + 1) : n->value;
 
-        // Evaluate the collection — we expect a pointer value
         EzVal collection = emit_expression_val(n->children[0], item_type + "*");
-        if (!collection) {
-            // Cannot evaluate collection: emit nothing (checker will have warned)
-            return;
-        }
+        if (!collection) return;
 
-        // Allocate the loop index
         EzType i32_ty = ez_i32();
         EzVal idx_slot = alloca_in_entry(current_func, i32_ty, "__foreach_idx");
         ez_store(mod, ez_const_int(i32_ty, 0), idx_slot);
 
-        // Allocate the item slot
         EzType elem_ty = cshift_type(item_type);
         EzVal item_slot = alloca_in_entry(current_func, elem_ty, item_name.c_str());
 
-        // Blocks
         EzBlock *cond_b = ez_block(current_func, "foreach.cond");
         EzBlock *body_b = ez_block(current_func, "foreach.body");
         EzBlock *end_b  = ez_block(current_func, "foreach.end");
 
         ez_br(mod, cond_b);
 
-        // cond: index < collection_len
-        // C<< has no runtime slice-length field, so we cannot emit a safe upper
-        // bound here without a length argument.  Use INT32_MAX as a sentinel —
-        // this means foreach is only safe over data that contains a terminator
-        // element (like a null-terminated string) or when the body breaks out.
-        // TODO: add a length parameter to foreach syntax to make this safe.
-        // Using INT32_MAX instead of a real bound causes OOB reads → segfault
-        // on any finite array.  For now we cap at the collection pointer's
-        // "known" size when available, otherwise the sentinel stays.
         current_block = cond_b; ez_use(cond_b);
         EzVal idx_val = ez_load(mod, i32_ty, idx_slot, "idx");
         EzVal limit   = ez_const_int(i32_ty, 0x7FFFFFFF);
         EzVal cond    = ez_slt(mod, idx_val, limit, "foreach.cond");
         ez_cond_br(mod, cond, body_b, end_b);
 
-        // body
         current_block = body_b; ez_use(body_b);
         push_scope();
         declare_var(item_name, item_slot, item_type);
 
-        // Load collection[idx] via GEP
         EzVal gep_idx[1] = { idx_val };
         EzVal elem_ptr = ez_gep(mod, elem_ty, collection, gep_idx, 1, "elem_ptr");
         EzVal elem_val = ez_load(mod, elem_ty, elem_ptr, item_name.c_str());
@@ -651,7 +652,6 @@ private:
         emit_block_body(n->children[1]);
         pop_scope();
 
-        // increment
         EzVal idx_next = ez_add(mod, idx_val, ez_const_int(i32_ty, 1), "idx.next");
         ez_store(mod, idx_next, idx_slot);
         ez_br(mod, cond_b);
@@ -721,7 +721,9 @@ private:
 
     // Condition: evaluate and ensure i1
     EzVal emit_condition(Parser::ASTNode *n) {
-        EzVal v = emit_expression_val(n, "bool");
+        // FIX (Bug 2): pass empty hint instead of "bool" so that eval_token
+        // loads variables using their declared type rather than as i1.
+        EzVal v = emit_expression_val(n, "");
         if (!v) return ez_const_bool(0);
         EzType ty = LLVMTypeOf(v);
         if (LLVMGetTypeKind(ty) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(ty) == 1) return v;
@@ -803,8 +805,14 @@ private:
     }
 
     EzVal apply_binop(const std::string &op, EzVal lhs, EzVal rhs, const std::string &hint) {
-        bool fp = is_float_type(hint);
-        bool un = is_unsigned_type(hint);
+        // derive signedness/floatness from the actual LLVM type of
+        // lhs rather than the hint string, which may be empty or "bool" when
+        // called from a comparison context.
+        EzType lhs_ty = LLVMTypeOf(lhs);
+        LLVMTypeKind kind = LLVMGetTypeKind(lhs_ty);
+        bool fp = (kind == LLVMFloatTypeKind || kind == LLVMDoubleTypeKind);
+        bool un = !fp && is_unsigned_type(hint);
+
         if (op == "+")  return fp ? ez_fadd(mod,lhs,rhs,"add") : ez_add(mod,lhs,rhs,"add");
         if (op == "-")  return fp ? ez_fsub(mod,lhs,rhs,"sub") : ez_sub(mod,lhs,rhs,"sub");
         if (op == "*")  return fp ? ez_fmul(mod,lhs,rhs,"mul") : ez_mul(mod,lhs,rhs,"mul");
@@ -854,9 +862,35 @@ private:
             }
         }
 
+        // Use declared param types as hints (same logic as emit_call_val)
+        EzType fn_type = LLVMGlobalGetValueType(f->fn);
+        unsigned param_count = LLVMCountParamTypes(fn_type);
+        std::vector<LLVMTypeRef> param_types(param_count);
+        if (param_count > 0)
+            LLVMGetParamTypes(fn_type, param_types.data());
+
         std::vector<EzVal> args;
         for (auto &grp : arg_groups) {
-            EzVal v = eval_expr_children(grp, "");
+            std::string arg_hint = "";
+            unsigned arg_idx = (unsigned)args.size();
+            if (arg_idx < param_count) {
+                LLVMTypeKind kind = LLVMGetTypeKind(param_types[arg_idx]);
+                switch (kind) {
+                    case LLVMIntegerTypeKind: {
+                        unsigned w = LLVMGetIntTypeWidth(param_types[arg_idx]);
+                        if      (w == 64) arg_hint = "int64";
+                        else if (w == 32) arg_hint = "int32";
+                        else if (w == 16) arg_hint = "int16";
+                        else              arg_hint = "int8";
+                        break;
+                    }
+                    case LLVMDoubleTypeKind:  arg_hint = "float64"; break;
+                    case LLVMFloatTypeKind:   arg_hint = "float32"; break;
+                    case LLVMPointerTypeKind: arg_hint = "string";  break;
+                    default: break;
+                }
+            }
+            EzVal v = eval_expr_children(grp, arg_hint);
             if (v) args.push_back(v);
         }
 
@@ -869,12 +903,31 @@ private:
         if (!tok) return nullptr;
         const std::string &v = tok->value;
 
-        // String literal
+        // process escape sequences the lexer left as raw text
+        // before handing the string to LLVM, otherwise \n becomes \\n in the IR.
         if (tok->token_type == Lexer::TokenType::STRING) {
             static int __str_id = 0;
             std::string name = std::string(".str") + std::to_string(__str_id++);
-            return ez_global_string(mod, v.c_str(), name.c_str());
+            std::string processed;
+            processed.reserve(v.size());
+            for (size_t i = 0; i < v.size(); ++i) {
+                if (v[i] == '\\' && i + 1 < v.size()) {
+                    switch (v[i + 1]) {
+                        case 'n':  processed += '\n'; ++i; break;
+                        case 't':  processed += '\t'; ++i; break;
+                        case 'r':  processed += '\r'; ++i; break;
+                        case '0':  processed += '\0'; ++i; break;
+                        case '\\': processed += '\\'; ++i; break;
+                        case '"':  processed += '"';  ++i; break;
+                        default:   processed += v[i];      break;
+                    }
+                } else {
+                    processed += v[i];
+                }
+            }
+            return ez_global_string(mod, processed.c_str(), name.c_str());
         }
+
         // Number literal
         if (tok->token_type == Lexer::TokenType::NUMBER) {
             if (v.find('.') != std::string::npos) {
@@ -891,21 +944,17 @@ private:
         if (v == "true")  return ez_const_bool(1);
         if (v == "false") return ez_const_bool(0);
 
-        // Identifier: load from alloca
+        // always load a variable using its declared type.
+        // Never use the hint for the load type — if hint is "bool" (propagated
+        // from emit_condition) we would load an int32 alloca as i1, reading only
+        // the lowest bit and producing garbage comparison results.
         if (tok->token_type == Lexer::TokenType::IDENTIFIER ||
             tok->token_type == Lexer::TokenType::KEYWORD) {
             EzVal ptr = lookup_var(v);
             if (!ptr) return nullptr;
-            // Use the declared type when hint is absent or generic.
-            // Without this, passing a string variable to a function emits
-            // an i32 load of an i8* alloca — reads 4 of 8 pointer bytes
-            // on x86_64, producing a garbage address → segfault on first call.
-            std::string real_type = hint;
-            if (real_type.empty() || real_type == "int32") {
-                auto vit = var_type_map.find(v);
-                if (vit != var_type_map.end()) real_type = vit->second;
-            }
-            EzType ty = cshift_type(real_type.empty() ? "int32" : real_type);
+            auto vit = var_type_map.find(v);
+            std::string real_type = (vit != var_type_map.end()) ? vit->second : "int32";
+            EzType ty = cshift_type(real_type);
             return ez_load(mod, ty, ptr, v.c_str());
         }
         return nullptr;
