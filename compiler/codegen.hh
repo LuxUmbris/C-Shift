@@ -41,6 +41,27 @@ class Codegen
     // name → EzFunc* (for call generation)
     std::unordered_map<std::string, EzFunc*> func_map;
 
+    // Tunnel output info for C<< functions: name → ordered list of (type, name) pairs.
+    // These become hidden pointer parameters appended after the normal params.
+    struct TunnelParam { std::string type; std::string name; };
+    std::unordered_map<std::string, std::vector<TunnelParam>> func_tunnels;
+
+    // Collect all unique tunnel targets from a function body (recursive)
+    void collect_tunnels(Parser::ASTNode *node, std::vector<TunnelParam> &out) {
+        if (!node) return;
+        if (node->type == "Tunnel" && node->children.size() >= 2) {
+            auto *target = node->children[1];
+            auto sp = target->value.find(' ');
+            std::string ttype = target->value.substr(0, sp);
+            std::string tname = target->value.substr(sp + 1);
+            // Deduplicate
+            bool found = false;
+            for (auto &tp : out) if (tp.name == tname && tp.type == ttype) { found = true; break; }
+            if (!found) out.push_back({ttype, tname});
+        }
+        for (auto *child : node->children) collect_tunnels(child, out);
+    }
+
     // name → struct type (for field GEP)
     struct StructLayout {
         EzType llvm_type;
@@ -225,9 +246,6 @@ private:
 
     void forward_function(Parser::ASTNode *n) {
         const std::string &name = n->value;
-        // C<< uses VOP (Vertical Ownership Programming): functions never return
-        // values — all output flows through tunnel declarations (tunnel expr -> type name).
-        // Functions therefore always have a void return type at the IR level.
         EzType ret = ez_void();
         std::vector<EzType> params;
         std::vector<std::string> pnames;
@@ -238,6 +256,18 @@ private:
                 params.push_back(cshift_type(p->value.substr(0, sp)));
                 pnames.push_back(p->value.substr(sp + 1));
             }
+        }
+
+        // Scan the function body for tunnel targets and add them as hidden
+        // pointer parameters after the regular params.  This is how C<< VOP
+        // tunnel outputs are implemented: the caller passes the address of its
+        // reserved slot, and the function writes into it directly.
+        std::vector<TunnelParam> tunnels;
+        if (n->children.size() >= 2) collect_tunnels(n->children[1], tunnels);
+        func_tunnels[name] = tunnels;
+        for (auto &tp : tunnels) {
+            params.push_back(ez_ptr()); // pointer to caller's slot
+            pnames.push_back("__tunnel_" + tp.name);
         }
 
         EzFunc *f = ez_func(mod, name.c_str(), ret, params.data(), (unsigned)params.size(), 0);
@@ -277,8 +307,6 @@ private:
         pop_scope();
 
         // return 0 — but only if the block doesn't already have a terminator
-        // (e.g. an infinite while loop at the end of entry leaves current_block
-        // as the loop's end-block which may already be terminated).
         if (!current_block_has_terminator())
             ez_ret(mod, ez_const_int(ez_i32(), 0));
         current_func = nullptr;
@@ -295,17 +323,33 @@ private:
         push_scope();
         tunnel_slots.clear();
 
-        // Bind parameters to allocas
+        // Bind regular parameters to allocas
+        unsigned param_idx = 0;
         if (!n->children.empty() && n->children[0]->type == "Parameters") {
-            unsigned idx = 0;
             for (auto *p : n->children[0]->children) {
                 auto sp = p->value.find(' ');
                 std::string ptype = p->value.substr(0, sp);
                 std::string pname = p->value.substr(sp + 1);
                 EzType ty = cshift_type(ptype);
                 EzVal slot = alloca_in_entry(f, ty, pname.c_str());
-                ez_store(mod, ez_param(f, idx++), slot);
+                ez_store(mod, ez_param(f, param_idx++), slot);
                 declare_var(pname, slot, ptype);
+            }
+        }
+
+        // Bind hidden tunnel pointer params: each tunnel target is passed as a
+        // ptr by the caller. Register them directly in tunnel_slots and var scope
+        // so that emit_tunnel writes through to the caller's alloca.
+        auto tit = func_tunnels.find(name);
+        if (tit != func_tunnels.end()) {
+            for (auto &tp : tit->second) {
+                // The param is already a pointer to the caller's slot
+                EzVal caller_ptr = ez_param(f, param_idx++);
+                // Store the param ptr itself into a local alloca so lookup_var works
+                EzVal ptr_slot = alloca_in_entry(f, ez_ptr(), ("__tptr_" + tp.name).c_str());
+                ez_store(mod, caller_ptr, ptr_slot);
+                tunnel_slots[tp.name] = ptr_slot; // slot holding the ptr
+                declare_var(tp.name, ptr_slot, tp.type);
             }
         }
 
@@ -373,11 +417,6 @@ private:
 
 
     void emit_reserve(Parser::ASTNode *n) {
-        // reserve is like declaration; the tunnel mechanism handles the init.
-        // FIX (inline reserve): when the initialiser is a call to a void function
-        // that tunnels its output, emit_expression_val returns nullptr (void call).
-        // After the call, the callee has stored the result into a tunnel_slot keyed
-        // by vname.  We detect that case and load from the slot instead.
         auto sp = n->value.find(' ');
         std::string type_s = n->value.substr(0, sp);
         std::string vname  = n->value.substr(sp + 1);
@@ -389,17 +428,50 @@ private:
         size_t start = 0;
         if (!n->children.empty() && n->children[0]->type == "Shared") start = 1;
         if (n->children.size() > start) {
-            // Pre-register the slot so that emit_tunnel (called inside the callee
-            // or via an inline tunnel statement before this reserve) can find it.
-            tunnel_slots[vname] = slot;
-
-            EzVal init = emit_expression_val(n->children[start], type_s);
-            if (init) {
-                // Direct value (e.g. literal, non-void call): store it.
-                ez_store(mod, init, slot);
+            auto *init_expr = n->children[start];
+            // Detect inline function call: reserve int32 x = fn(args)
+            // parse_expression puts tokens [fn, (, args, )] into the Expression.
+            // emit_expression_val → eval_call_expr handles this and returns nullptr
+            // for void C<< functions (they tunnel instead of returning).
+            // So: try the normal expression path first; if it returns a value, store it.
+            // If the call is to a void (tunnel-based) C<< function, the call itself
+            // writes the tunnel slot we just declared above — nothing to store.
+            bool is_call = (init_expr->type == "Expression" &&
+                            init_expr->children.size() >= 2 &&
+                            init_expr->children[0]->token_type == Lexer::TokenType::IDENTIFIER &&
+                            init_expr->children[1]->value == "(");
+            if (is_call) {
+                // For C<< tunnel functions, pre-register this slot under every
+                // tunnel target name so emit_call_val passes the right pointer.
+                // This handles: reserve int32 x = fn(args)  where fn tunnels
+                // a variable named differently (e.g. "result").
+                std::string call_fname = init_expr->children[0]->value;
+                auto tit = func_tunnels.find(call_fname);
+                std::vector<std::string> injected_names;
+                if (tit != func_tunnels.end()) {
+                    push_scope();
+                    for (auto &tp : tit->second) {
+                                declare_var(tp.name, slot, type_s);
+                        injected_names.push_back(tp.name);
+                    }
+                }
+                EzVal call_result = emit_expression_val(init_expr, type_s);
+                if (tit != func_tunnels.end()) {
+                    pop_scope();
+                }
+                // Only store if call_result is a real (non-void) value.
+                // For C<< void/tunnel functions, ez_call still returns the call
+                // instruction (non-null) but it has void type — storing it crashes LLVM.
+                if (call_result) {
+                    EzType res_ty = LLVMTypeOf(call_result);
+                    if (LLVMGetTypeKind(res_ty) != LLVMVoidTypeKind)
+                        ez_store(mod, call_result, slot);
+                }
+                // For C<< tunnel functions the slot is now written by the callee
+            } else {
+                EzVal init = emit_expression_val(init_expr, type_s);
+                if (init) ez_store(mod, init, slot);
             }
-            // If init == nullptr the callee was void and already stored into
-            // tunnel_slots[vname] → slot, so the alloca already holds the value.
         }
     }
 
@@ -453,99 +525,143 @@ private:
 
     // ── Call statement ────────────────────────────────────────────────────────
 
-    void emit_call_stmt(Parser::ASTNode *n) 
-    {
+    void emit_call_stmt(Parser::ASTNode *n) {
         emit_call_val(n, /*result_name=*/"");
     }
 
-    // emit_call_val now correctly handles both an Arguments wrapper
-    // node and args as direct children, and uses the declared LLVM param types
-    // as hints so variadic functions like printf receive all their arguments.
-    EzVal emit_call_val(Parser::ASTNode *n, const std::string &result_name) 
-    {
+    // FIX (Bug 3 – root cause): parse_expression() does not stop at commas, so
+    // parse_call_statement puts ALL argument tokens into a single Expression node
+    // inside the Args wrapper.  e.g. printf("fmt", a, b) produces:
+    //   Args → [ Expression[ Token("fmt"), Token(","), Token(a), Token(","), Token(b) ] ]
+    // We must split that flat token list on top-level commas ourselves.
+    // Returns groups of token-node vectors, one per argument.
+    static std::vector<std::vector<Parser::ASTNode*>>
+    split_args_by_comma(Parser::ASTNode *args_node) {
+        std::vector<std::vector<Parser::ASTNode*>> groups;
+        if (!args_node) return groups;
+
+        // Collect the flat token list: either from the single Expression child
+        // (parse_call_statement path) or directly from the node's children
+        // (already-split path from eval_call_expr).
+        const std::vector<Parser::ASTNode*> *flat = nullptr;
+        std::vector<Parser::ASTNode*> tmp;
+
+        if (args_node->children.size() == 1 &&
+            args_node->children[0]->type == "Expression") {
+            // Standard path: one Expression containing all tokens+commas
+            flat = &args_node->children[0]->children;
+        } else {
+            // Already split: each child is a separate Expression
+            // Flatten into token groups directly
+            for (auto *child : args_node->children) {
+                if (child->type == "Expression")
+                    groups.push_back(child->children);
+                else
+                    groups.push_back({child});
+            }
+            return groups;
+        }
+
+        // Split flat token list on "," at paren depth 0
+        std::vector<Parser::ASTNode*> cur;
+        int depth = 0;
+        for (auto *tok : *flat) {
+            if (tok->value == "(") { depth++; cur.push_back(tok); }
+            else if (tok->value == ")") { depth--; cur.push_back(tok); }
+            else if (tok->value == "," && depth == 0) {
+                groups.push_back(cur);
+                cur.clear();
+            } else {
+                cur.push_back(tok);
+            }
+        }
+        if (!cur.empty()) groups.push_back(cur);
+        return groups;
+    }
+
+    // Helper: derive a hint string from a declared LLVM param type
+    static std::string hint_from_llvm_type(LLVMTypeRef ty) {
+        LLVMTypeKind kind = LLVMGetTypeKind(ty);
+        switch (kind) {
+            case LLVMIntegerTypeKind: {
+                unsigned w = LLVMGetIntTypeWidth(ty);
+                if      (w == 64) return "int64";
+                else if (w == 32) return "int32";
+                else if (w == 16) return "int16";
+                else              return "int8";
+            }
+            case LLVMDoubleTypeKind:  return "float64";
+            case LLVMFloatTypeKind:   return "float32";
+            case LLVMPointerTypeKind: return "string";
+            default: return "";
+        }
+    }
+
+    EzVal emit_call_val(Parser::ASTNode *n, const std::string &result_name) {
         const std::string &fname = n->value;
         auto it = func_map.find(fname);
-        if (it == func_map.end()) return nullptr;
+        if (it == func_map.end()) {
+            // Function was called but never declared via import or def.
+            // Auto-declare as a variadic C extern returning void so the call
+            // is emitted rather than silently dropped.  The checker already
+            // warned about this; here we make it link-time rather than
+            // compile-time-silent.
+            EzFunc *f_auto = ez_extern(mod, fname.c_str(), ez_void(),
+                                       nullptr, 0, /*vararg=*/1);
+            func_map[fname] = f_auto;
+            it = func_map.find(fname);
+        }
         EzFunc *f = it->second;
 
         std::vector<EzVal> args;
-    
-        // Resolve function parameter types for matching type hints
-        EzType fn_type = LLVMGlobalGetValueType(f->fn);
-        unsigned param_count = LLVMCountParamTypes(fn_type);
-        std::vector<LLVMTypeRef> param_types(param_count);
-        if (param_count > 0) 
-        {
-            LLVMGetParamTypes(fn_type, param_types.data());
-        }
+        if (!n->children.empty()) {
+            // n->children[0] is the Args wrapper node from parse_call_statement
+            auto *args_node = n->children[0];
 
-        // Identify the true argument container node safely
-        Parser::ASTNode *arg_container = n;
-        if (!n->children.empty() &&
-            (n->children[0]->type == "Arguments" || 
-            n->children[0]->type == "ArgList" || 
-            n->children[0]->type == "Args")) 
-        {
-            arg_container = n->children[0];
-        }
+            // Split args on commas (parse_expression doesn't stop at commas,
+            // so all tokens land in one flat Expression inside the Args node)
+            auto arg_groups = split_args_by_comma(args_node);
 
-        // Process all explicit arguments provided in the source code
-        for (auto *arg : arg_container->children)
-        {
-            std::string arg_hint = "";
-            unsigned arg_idx = (unsigned)args.size();
-        
-            if (arg_idx < param_count) 
-            {
-                LLVMTypeKind kind = LLVMGetTypeKind(param_types[arg_idx]);
-                switch (kind) 
-                {
-                    case LLVMIntegerTypeKind: 
-                    {
-                        unsigned w = LLVMGetIntTypeWidth(param_types[arg_idx]);
-                        if      (w == 64) arg_hint = "int64";
-                        else if (w == 32) arg_hint = "int32";
-                        else if (w == 16) arg_hint = "int16";
-                        else              arg_hint = "int8";
-                        break;
+            // Only use the declared non-tunnel param types for hints
+            auto tit = func_tunnels.find(fname);
+            unsigned n_tunnels = tit != func_tunnels.end() ? (unsigned)tit->second.size() : 0;
+            EzType fn_type = LLVMGlobalGetValueType(f->fn);
+            unsigned total_params = LLVMCountParamTypes(fn_type);
+            unsigned regular_params = total_params - n_tunnels;
+            std::vector<LLVMTypeRef> param_types(total_params);
+            if (total_params > 0)
+                LLVMGetParamTypes(fn_type, param_types.data());
+
+            for (auto &grp : arg_groups) {
+                std::string arg_hint = "";
+                unsigned arg_idx = (unsigned)args.size();
+                if (arg_idx < regular_params)
+                    arg_hint = hint_from_llvm_type(param_types[arg_idx]);
+                EzVal v = eval_expr_children(grp, arg_hint);
+                if (v) args.push_back(v);
+            }
+
+            // Append hidden tunnel pointer args: pass address of caller's reserved slot.
+            // If a slot doesn't exist yet, create one.
+            if (tit != func_tunnels.end()) {
+                for (auto &tp : tit->second) {
+                    EzVal slot = lookup_var(tp.name);
+                    if (!slot) {
+                        EzType ty = cshift_type(tp.type);
+                        slot = alloca_in_entry(current_func, ty, tp.name.c_str());
+                        declare_var(tp.name, slot, tp.type);
                     }
-                    case LLVMDoubleTypeKind:  arg_hint = "float64"; break;
-                    case LLVMFloatTypeKind:   arg_hint = "float32"; break;
-                    case LLVMPointerTypeKind: arg_hint = "string";  break;
-                    default: break;
+                    // Pass the alloca pointer directly (it IS the address)
+                    args.push_back(slot);
                 }
             }
-        
-            EzVal v = emit_expression_val(arg, arg_hint);
-            if (v) 
-            {
-                args.push_back(v);
-            }
         }
 
-    // If the function signature expects more parameters than explicitly written,
-    // and the last parameter is a pointer (the tunnel slot), inject an anonymous alloca.
-    if (args.size() < param_count) 
-    {
-        unsigned next_idx = (unsigned)args.size();
-        // Check if the expected parameter is a pointer (used for tunnel targets)
-        if (LLVMGetTypeKind(param_types[next_idx]) == LLVMPointerTypeKind) 
-        {
-            // Create a hidden temporary local variable on the stack to catch the tunnel output
-            // We can determine the inner element type or fallback to an i32 stack slot
-            EzType anon_ty = ez_i32(); 
-            EzVal anon_alloca = ez_alloca(current_func, anon_ty, "anon_tunnel_tmp");
-            args.push_back(anon_alloca);
-        }
+        EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
+        bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
+        return ez_call(mod, f, args.data(), (unsigned)args.size(),
+                       is_void ? "" : result_name.c_str());
     }
-    // ─────────────────────────────────────────────────────────────────────────
-
-    EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
-    bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
-    
-    return ez_call(mod, f, args.data(), (unsigned)args.size(),
-                   is_void ? "" : result_name.c_str());
-}
 
     // ── Tunnel ────────────────────────────────────────────────────────────────
     // tunnel expr -> type name
@@ -553,8 +669,7 @@ private:
     //                     that represents the output (caller reads it).
     // Inside entry/block: evaluate expr, store into the named variable.
 
-    void emit_tunnel(Parser::ASTNode *n) 
-    {
+    void emit_tunnel(Parser::ASTNode *n) {
         if (n->children.size() < 2) return;
         auto *expr   = n->children[0];
         auto *target = n->children[1];
@@ -566,13 +681,23 @@ private:
         EzVal rhs = emit_expression_val(expr, ttype);
         if (!rhs) return;
 
-        // Find or create the target slot
+        EzType ty = cshift_type(ttype);
+
+        // Check if this tunnel target was registered as a hidden pointer param
+        auto tit = tunnel_slots.find(tname);
+        if (tit != tunnel_slots.end()) {
+            // tunnel_slots[name] holds a ptr-to-ptr (local alloca storing the
+            // caller's pointer).  Load the caller's pointer then store rhs into it.
+            EzVal caller_ptr = ez_load(mod, ez_ptr(), tit->second, "tptr");
+            ez_store(mod, rhs, caller_ptr);
+            return;
+        }
+
+        // Entry/block scope tunnel: write directly into the named variable
         EzVal ptr = lookup_var(tname);
         if (!ptr) {
-            // Create a slot (function-scoped tunnel output)
-            EzType ty = cshift_type(ttype);
             ptr = alloca_in_entry(current_func, ty, tname.c_str());
-            declare_var(tname, ptr);
+            declare_var(tname, ptr, ttype);
             tunnel_slots[tname] = ptr;
         }
         ez_store(mod, rhs, ptr);
@@ -580,8 +705,7 @@ private:
 
     // ── Control flow ──────────────────────────────────────────────────────────
 
-    void emit_if(Parser::ASTNode *n) 
-    {
+    void emit_if(Parser::ASTNode *n) {
         if (n->children.empty()) return;
 
         EzVal cond = emit_condition(n->children[0]);
@@ -609,8 +733,7 @@ private:
         current_block = end_b; ez_use(end_b);
     }
 
-    void emit_while(Parser::ASTNode *n) 
-    {
+    void emit_while(Parser::ASTNode *n) {
         EzBlock *cond_b = ez_block(current_func, "while.cond");
         EzBlock *body_b = ez_block(current_func, "while.body");
         EzBlock *end_b  = ez_block(current_func, "while.end");
@@ -628,8 +751,7 @@ private:
         current_block = end_b; ez_use(end_b);
     }
 
-    void emit_for(Parser::ASTNode *n) 
-    {
+    void emit_for(Parser::ASTNode *n) {
         // children: [init_decl, cond_expr, incr_expr, body_block]
         push_scope();
         if (n->children.size() > 0) emit_declaration(n->children[0]);
@@ -657,8 +779,7 @@ private:
         pop_scope();
     }
 
-    void emit_foreach(Parser::ASTNode *n) 
-    {
+    void emit_foreach(Parser::ASTNode *n) {
         if (!n || n->children.size() < 2) return;
 
         auto sp = n->value.find(' ');
@@ -796,43 +917,6 @@ private:
             return eval_call_expr(tokens, hint);
         }
 
-        // FIX: Dot-chain field access: IDENT . IDENT (. IDENT)*
-        // When the token stream is [p, ".", x] we must GEP into the struct
-        // rather than loading all of p and then ignoring the field.
-        if (tokens.size() >= 3 &&
-            tokens[0]->token_type == Lexer::TokenType::IDENTIFIER &&
-            tokens[1]->value == ".") {
-            // Collect the base variable and the field chain
-            std::string base_var = tokens[0]->value;
-            // Walk the chain: base . f1 . f2 . ...
-            // For now resolve the first field; chains of depth > 1 are
-            // handled by treating the intermediate GEP result as a pointer
-            // and recursing (we only need depth-1 for the common p.x case).
-            size_t idx = 1;
-            EzVal ptr = lookup_var(base_var);
-            std::string cur_var = base_var;
-            while (idx + 1 < tokens.size() && tokens[idx]->value == ".") {
-                std::string field = tokens[idx + 1]->value;
-                if (!ptr) return nullptr;
-                ptr = gep_field(ptr, cur_var, field);
-                // Load field value for subsequent chaining; for the final
-                // field we do the load below.
-                std::string ftype = field_type_of(cur_var, field);
-                if (idx + 2 < tokens.size() && tokens[idx + 2]->value == ".") {
-                    // Intermediate field: load so next gep_field has a value ptr
-                    EzType fty = cshift_type(ftype);
-                    ptr = ez_load(mod, fty, ptr, field.c_str());
-                    cur_var = field; // approximate; fine for single-level structs
-                } else {
-                    // Final field: load and return
-                    EzType fty = cshift_type(ftype);
-                    return ez_load(mod, fty, ptr, field.c_str());
-                }
-                idx += 2;
-            }
-            return ptr; // shouldn't reach here normally
-        }
-
         // Single token
         if (tokens.size() == 1) return eval_token(tokens[0], hint);
 
@@ -859,6 +943,20 @@ private:
         if (tokens.front()->value == "(" && tokens.back()->value == ")") {
             std::vector<Parser::ASTNode*> inner(tokens.begin() + 1, tokens.end() - 1);
             return eval_expr_children(inner, hint);
+        }
+
+        // Field access: IDENT . FIELD  (or chained: a.b.c)
+        if (tokens.size() >= 3 && tokens[1]->value == ".") {
+            // Build "base.field" string and GEP
+            std::string base = tokens[0]->value;
+            std::string field = tokens[2]->value;
+            EzVal base_ptr = lookup_var(base);
+            if (base_ptr) {
+                EzVal field_ptr = gep_field(base_ptr, base, field);
+                std::string ftype = field_type_of(base, field);
+                EzType fty = cshift_type(ftype.empty() ? hint : ftype);
+                return ez_load(mod, fty, field_ptr, field.c_str());
+            }
         }
 
         // Fallback: evaluate first token
@@ -889,7 +987,7 @@ private:
     }
 
     EzVal apply_binop(const std::string &op, EzVal lhs, EzVal rhs, const std::string &hint) {
-        // FIX (Bug 2): derive signedness/floatness from the actual LLVM type of
+        // derive signedness/floatness from the actual LLVM type of
         // lhs rather than the hint string, which may be empty or "bool" when
         // called from a comparison context.
         EzType lhs_ty = LLVMTypeOf(lhs);
@@ -921,7 +1019,12 @@ private:
         (void)hint;
         std::string fname = tokens[0]->value;
         auto it = func_map.find(fname);
-        if (it == func_map.end()) return nullptr;
+        if (it == func_map.end()) {
+            EzFunc *f_auto = ez_extern(mod, fname.c_str(), ez_void(),
+                                       nullptr, 0, /*vararg=*/1);
+            func_map[fname] = f_auto;
+            it = func_map.find(fname);
+        }
         EzFunc *f = it->second;
 
         // Collect argument token groups separated by ',' at depth 0
@@ -946,36 +1049,36 @@ private:
             }
         }
 
-        // Use declared param types as hints (same logic as emit_call_val)
+        // Only use the declared non-tunnel param types for hints
+        auto tit2 = func_tunnels.find(fname);
+        unsigned n_tunnels2 = tit2 != func_tunnels.end() ? (unsigned)tit2->second.size() : 0;
         EzType fn_type = LLVMGlobalGetValueType(f->fn);
-        unsigned param_count = LLVMCountParamTypes(fn_type);
-        std::vector<LLVMTypeRef> param_types(param_count);
-        if (param_count > 0)
+        unsigned total_params = LLVMCountParamTypes(fn_type);
+        unsigned regular_params = total_params - n_tunnels2;
+        std::vector<LLVMTypeRef> param_types(total_params);
+        if (total_params > 0)
             LLVMGetParamTypes(fn_type, param_types.data());
 
         std::vector<EzVal> args;
         for (auto &grp : arg_groups) {
-            std::string arg_hint = "";
             unsigned arg_idx = (unsigned)args.size();
-            if (arg_idx < param_count) {
-                LLVMTypeKind kind = LLVMGetTypeKind(param_types[arg_idx]);
-                switch (kind) {
-                    case LLVMIntegerTypeKind: {
-                        unsigned w = LLVMGetIntTypeWidth(param_types[arg_idx]);
-                        if      (w == 64) arg_hint = "int64";
-                        else if (w == 32) arg_hint = "int32";
-                        else if (w == 16) arg_hint = "int16";
-                        else              arg_hint = "int8";
-                        break;
-                    }
-                    case LLVMDoubleTypeKind:  arg_hint = "float64"; break;
-                    case LLVMFloatTypeKind:   arg_hint = "float32"; break;
-                    case LLVMPointerTypeKind: arg_hint = "string";  break;
-                    default: break;
-                }
-            }
+            std::string arg_hint = (arg_idx < regular_params)
+                ? hint_from_llvm_type(param_types[arg_idx]) : "";
             EzVal v = eval_expr_children(grp, arg_hint);
             if (v) args.push_back(v);
+        }
+
+        // Append hidden tunnel pointer args — find or create caller slots
+        if (tit2 != func_tunnels.end()) {
+            for (auto &tp : tit2->second) {
+                EzVal slot = lookup_var(tp.name);
+                        if (!slot) {
+                    EzType ty = cshift_type(tp.type);
+                    slot = alloca_in_entry(current_func, ty, tp.name.c_str());
+                    declare_var(tp.name, slot, tp.type);
+                }
+                args.push_back(slot);
+            }
         }
 
         EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
@@ -987,7 +1090,7 @@ private:
         if (!tok) return nullptr;
         const std::string &v = tok->value;
 
-        // FIX (Bug 1): process escape sequences the lexer left as raw text
+        // process escape sequences the lexer left as raw text
         // before handing the string to LLVM, otherwise \n becomes \\n in the IR.
         if (tok->token_type == Lexer::TokenType::STRING) {
             static int __str_id = 0;
@@ -1028,7 +1131,7 @@ private:
         if (v == "true")  return ez_const_bool(1);
         if (v == "false") return ez_const_bool(0);
 
-        // FIX (Bug 2): always load a variable using its declared type.
+        // always load a variable using its declared type.
         // Never use the hint for the load type — if hint is "bool" (propagated
         // from emit_condition) we would load an int32 alloca as i1, reading only
         // the lowest bit and producing garbage comparison results.
