@@ -373,7 +373,11 @@ private:
 
 
     void emit_reserve(Parser::ASTNode *n) {
-        // reserve is like declaration; the tunnel mechanism handles the init
+        // reserve is like declaration; the tunnel mechanism handles the init.
+        // FIX (inline reserve): when the initialiser is a call to a void function
+        // that tunnels its output, emit_expression_val returns nullptr (void call).
+        // After the call, the callee has stored the result into a tunnel_slot keyed
+        // by vname.  We detect that case and load from the slot instead.
         auto sp = n->value.find(' ');
         std::string type_s = n->value.substr(0, sp);
         std::string vname  = n->value.substr(sp + 1);
@@ -382,12 +386,20 @@ private:
         EzVal slot = alloca_in_entry(current_func, ty, vname.c_str());
         declare_var(vname, slot, type_s);
 
-        // If there's an initialiser expression, evaluate it
         size_t start = 0;
         if (!n->children.empty() && n->children[0]->type == "Shared") start = 1;
         if (n->children.size() > start) {
+            // Pre-register the slot so that emit_tunnel (called inside the callee
+            // or via an inline tunnel statement before this reserve) can find it.
+            tunnel_slots[vname] = slot;
+
             EzVal init = emit_expression_val(n->children[start], type_s);
-            if (init) ez_store(mod, init, slot);
+            if (init) {
+                // Direct value (e.g. literal, non-void call): store it.
+                ez_store(mod, init, slot);
+            }
+            // If init == nullptr the callee was void and already stored into
+            // tunnel_slots[vname] → slot, so the alloca already holds the value.
         }
     }
 
@@ -445,7 +457,7 @@ private:
         emit_call_val(n, /*result_name=*/"");
     }
 
-    // emit_call_val now correctly handles both an Arguments wrapper
+    // FIX (Bug 3): emit_call_val now correctly handles both an Arguments wrapper
     // node and args as direct children, and uses the declared LLVM param types
     // as hints so variadic functions like printf receive all their arguments.
     EzVal emit_call_val(Parser::ASTNode *n, const std::string &result_name) {
@@ -460,7 +472,7 @@ private:
             // as direct children of the call node.
             auto *arg_container =
                 (!n->children.empty() &&
-                 (n->children[0]->type == "Arguments" || n->children[0]->type == "ArgList" || n->children[0]->type == "Args"))
+                 (n->children[0]->type == "Arguments" || n->children[0]->type == "ArgList"))
                 ? n->children[0]
                 : n;
 
@@ -749,6 +761,43 @@ private:
             return eval_call_expr(tokens, hint);
         }
 
+        // FIX: Dot-chain field access: IDENT . IDENT (. IDENT)*
+        // When the token stream is [p, ".", x] we must GEP into the struct
+        // rather than loading all of p and then ignoring the field.
+        if (tokens.size() >= 3 &&
+            tokens[0]->token_type == Lexer::TokenType::IDENTIFIER &&
+            tokens[1]->value == ".") {
+            // Collect the base variable and the field chain
+            std::string base_var = tokens[0]->value;
+            // Walk the chain: base . f1 . f2 . ...
+            // For now resolve the first field; chains of depth > 1 are
+            // handled by treating the intermediate GEP result as a pointer
+            // and recursing (we only need depth-1 for the common p.x case).
+            size_t idx = 1;
+            EzVal ptr = lookup_var(base_var);
+            std::string cur_var = base_var;
+            while (idx + 1 < tokens.size() && tokens[idx]->value == ".") {
+                std::string field = tokens[idx + 1]->value;
+                if (!ptr) return nullptr;
+                ptr = gep_field(ptr, cur_var, field);
+                // Load field value for subsequent chaining; for the final
+                // field we do the load below.
+                std::string ftype = field_type_of(cur_var, field);
+                if (idx + 2 < tokens.size() && tokens[idx + 2]->value == ".") {
+                    // Intermediate field: load so next gep_field has a value ptr
+                    EzType fty = cshift_type(ftype);
+                    ptr = ez_load(mod, fty, ptr, field.c_str());
+                    cur_var = field; // approximate; fine for single-level structs
+                } else {
+                    // Final field: load and return
+                    EzType fty = cshift_type(ftype);
+                    return ez_load(mod, fty, ptr, field.c_str());
+                }
+                idx += 2;
+            }
+            return ptr; // shouldn't reach here normally
+        }
+
         // Single token
         if (tokens.size() == 1) return eval_token(tokens[0], hint);
 
@@ -805,7 +854,7 @@ private:
     }
 
     EzVal apply_binop(const std::string &op, EzVal lhs, EzVal rhs, const std::string &hint) {
-        // derive signedness/floatness from the actual LLVM type of
+        // FIX (Bug 2): derive signedness/floatness from the actual LLVM type of
         // lhs rather than the hint string, which may be empty or "bool" when
         // called from a comparison context.
         EzType lhs_ty = LLVMTypeOf(lhs);
@@ -903,7 +952,7 @@ private:
         if (!tok) return nullptr;
         const std::string &v = tok->value;
 
-        // process escape sequences the lexer left as raw text
+        // FIX (Bug 1): process escape sequences the lexer left as raw text
         // before handing the string to LLVM, otherwise \n becomes \\n in the IR.
         if (tok->token_type == Lexer::TokenType::STRING) {
             static int __str_id = 0;
@@ -944,7 +993,7 @@ private:
         if (v == "true")  return ez_const_bool(1);
         if (v == "false") return ez_const_bool(0);
 
-        // always load a variable using its declared type.
+        // FIX (Bug 2): always load a variable using its declared type.
         // Never use the hint for the load type — if hint is "bool" (propagated
         // from emit_condition) we would load an int32 alloca as i1, reading only
         // the lowest bit and producing garbage comparison results.
