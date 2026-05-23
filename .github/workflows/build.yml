@@ -48,12 +48,20 @@ jobs:
           echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
           echo "LLVM_DIR=$(brew --prefix llvm)/lib/cmake/llvm" >> $GITHUB_ENV
 
-      # ── Windows: LLVM via choco, Pfad explizit setzen ─────────────────────
+      # ── Windows: LLVM vom offiziellen GitHub Release ──────────────────────
+      # choco installiert nur Binaries, keine CMake-Dev-Files (LLVMConfig.cmake).
+      # Das offizielle LLVM-Windows-Installer-EXE enthält alles inkl. cmake/.
       - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install llvm --yes --no-progress
+          $version = "18.1.8"
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/LLVM-$version-win64.exe"
+          $installer = "$env:TEMP\llvm-installer.exe"
+          Write-Host "Downloading LLVM $version..."
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          Write-Host "Installing..."
+          Start-Process -FilePath $installer -ArgumentList "/S" -Wait
           $llvm = "C:\Program Files\LLVM"
           echo "LLVM_DIR=$llvm\lib\cmake\llvm" >> $env:GITHUB_ENV
           echo "$llvm\bin"                     >> $env:GITHUB_PATH
