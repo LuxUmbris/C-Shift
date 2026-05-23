@@ -196,9 +196,42 @@ private:
                     if (existing.type == ti.type && existing.name == ti.name) { already = true; break; }
                 if (!already) out.push_back(ti);
             }
-            // Recurse into sub-blocks (if/while/for etc.)
+            // Recurse into ALL children (not just Block nodes) so we capture
+            // tunnels inside if/while/for/switch/case bodies and anonymous tunnels
+            // that are direct children of control-flow nodes.
             for (auto* sub : c->children)
-                if (sub && sub->type == "Block") collect_tunnels_from_block(sub, out);
+            {
+                if (!sub) continue;
+                if (sub->type == "Block")
+                    collect_tunnels_from_block(sub, out);
+                else
+                    collect_tunnels_from_block_node(sub, out);
+            }
+        }
+    }
+
+    // Recurse into a single non-Block statement looking for Tunnel nodes.
+    void collect_tunnels_from_block_node(Parser::ASTNode* n, std::vector<TunnelInfo>& out)
+    {
+        if (!n) return;
+        if (n->type == "Tunnel" && n->children.size() >= 2)
+        {
+            auto* target = n->children[1];
+            TunnelInfo ti;
+            ti.type = extract_base_type(target->value);
+            ti.name = extract_name(target->value);
+            bool already = false;
+            for (auto& existing : out)
+                if (existing.type == ti.type && existing.name == ti.name) { already = true; break; }
+            if (!already) out.push_back(ti);
+        }
+        for (auto* c : n->children)
+        {
+            if (!c) continue;
+            if (c->type == "Block")
+                collect_tunnels_from_block(c, out);
+            else
+                collect_tunnels_from_block_node(c, out);
         }
     }
 
@@ -375,19 +408,54 @@ private:
         if (looks_like_call && func_table.count(func_name))
         {
             auto& sig = func_table[func_name];
-            int matches = 0;
+
+            // Exact match: tunnel type + name both match
+            int exact_matches = 0;
+            // Type-only match: tunnel type matches, name is "_" (anonymous) or
+            // there is exactly one tunnel of the right type in the function
+            int type_matches = 0;
+
             for (auto& ti : sig.tunnels)
             {
-                if (ti.type == want_type && ti.name == want_name) matches++;
+                if (ti.type == want_type)
+                {
+                    type_matches++;
+                    // Exact match: name matches reserve target OR anonymous (_)
+                    if (ti.name == want_name || ti.name == "_")
+                        exact_matches++;
+                }
             }
-            if (matches == 0)
-                add_error(reserve_node->line,
-                    "reserve: no tunnel '-> " + want_type + " " + want_name +
-                    "' found in function '" + func_name + "'");
-            else if (matches > 1)
+
+            if (exact_matches == 0)
+            {
+                if (type_matches == 1)
+                {
+                    // Inline anonymous tunnel: function has exactly one tunnel of the
+                    // right type — this is valid (the codegen pre-registers the slot).
+                    // No error, just continue.
+                }
+                else if (type_matches == 0)
+                {
+                    add_error(reserve_node->line,
+                        "reserve: no tunnel '-> " + want_type + " " + want_name +
+                        "' (or '-> " + want_type + " _') found in function '" + func_name + "'");
+                }
+                else
+                {
+                    // Multiple type matches but no name match — ambiguous
+                    add_error(reserve_node->line,
+                        "reserve: ambiguous tunnel — function '" + func_name +
+                        "' has " + std::to_string(type_matches) +
+                        " tunnels of type '" + want_type +
+                        "' but none named '" + want_name + "' or '_'");
+                }
+            }
+            else if (exact_matches > 1)
+            {
                 add_error(reserve_node->line,
                     "reserve: multiple tunnels '-> " + want_type + " " + want_name +
                     "' found in function '" + func_name + "' — ambiguous");
+            }
         }
 
         check_expression(expr);
