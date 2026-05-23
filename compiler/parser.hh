@@ -110,9 +110,14 @@ private:
         {
             // Could be assignment or function call statement
             // Look ahead: IDENT ( => call, IDENT = => assign, IDENT += etc => assign
+            // Also handles field access chains: IDENT.FIELD = ...
             size_t la = 1;
             // skip potential pointer/slice decorators
             while (peek_token(la).value == "*" || peek_token(la).value == "[" || peek_token(la).value == "[:]") la++;
+            // skip dot-field chains: p.x  or  p.x.y  etc.
+            while (peek_token(la).value == "." &&
+                   peek_token(la + 1).type == Lexer::TokenType::IDENTIFIER)
+                la += 2;
             if (peek_token(la).value == "(" ) return parse_call_statement();
             if (peek_token(la).value == "=" ||
                 peek_token(la).value == "+=" ||
