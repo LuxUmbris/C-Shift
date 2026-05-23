@@ -453,71 +453,99 @@ private:
 
     // ── Call statement ────────────────────────────────────────────────────────
 
-    void emit_call_stmt(Parser::ASTNode *n) {
+    void emit_call_stmt(Parser::ASTNode *n) 
+    {
         emit_call_val(n, /*result_name=*/"");
     }
 
     // emit_call_val now correctly handles both an Arguments wrapper
     // node and args as direct children, and uses the declared LLVM param types
     // as hints so variadic functions like printf receive all their arguments.
-    EzVal emit_call_val(Parser::ASTNode *n, const std::string &result_name) {
+    EzVal emit_call_val(Parser::ASTNode *n, const std::string &result_name) 
+    {
         const std::string &fname = n->value;
         auto it = func_map.find(fname);
         if (it == func_map.end()) return nullptr;
         EzFunc *f = it->second;
 
         std::vector<EzVal> args;
-        if (!n->children.empty()) {
-            // Support both: args wrapped in an Arguments/ArgList/Args node, and args
-            // as direct children of the call node.
-            auto *arg_container =
-                (!n->children.empty() &&
-                 (n->children[0]->type == "Arguments" || 
-                  n->children[0]->type == "ArgList" || 
-                  n->children[0]->type == "Args")) // <--- ADD THIS CHECK
-                ? n->children[0]
-                : n;
+    
+        // Resolve function parameter types for matching type hints
+        EzType fn_type = LLVMGlobalGetValueType(f->fn);
+        unsigned param_count = LLVMCountParamTypes(fn_type);
+        std::vector<LLVMTypeRef> param_types(param_count);
+        if (param_count > 0) 
+        {
+            LLVMGetParamTypes(fn_type, param_types.data());
+        }
 
-            EzType fn_type = LLVMGlobalGetValueType(f->fn);
-            unsigned param_count = LLVMCountParamTypes(fn_type);
-            std::vector<LLVMTypeRef> param_types(param_count);
-            if (param_count > 0)
-                LLVMGetParamTypes(fn_type, param_types.data());
+        // Identify the true argument container node safely
+        Parser::ASTNode *arg_container = n;
+        if (!n->children.empty() &&
+            (n->children[0]->type == "Arguments" || 
+            n->children[0]->type == "ArgList" || 
+            n->children[0]->type == "Args")) 
+        {
+            arg_container = n->children[0];
+        }
 
-            for (auto *arg : arg_container->children) {
-                // Derive a type hint from the declared parameter type so that
-                // variables are loaded with the correct width.  For variadic
-                // parameters beyond the fixed param list we fall back to the
-                // variable's own declared type (handled inside eval_token).
-                std::string arg_hint = "";
-                unsigned arg_idx = (unsigned)args.size();
-                if (arg_idx < param_count) {
-                    LLVMTypeKind kind = LLVMGetTypeKind(param_types[arg_idx]);
-                    switch (kind) {
-                        case LLVMIntegerTypeKind: {
-                            unsigned w = LLVMGetIntTypeWidth(param_types[arg_idx]);
-                            if      (w == 64) arg_hint = "int64";
-                            else if (w == 32) arg_hint = "int32";
-                            else if (w == 16) arg_hint = "int16";
-                            else              arg_hint = "int8";
-                            break;
-                        }
-                        case LLVMDoubleTypeKind:  arg_hint = "float64"; break;
-                        case LLVMFloatTypeKind:   arg_hint = "float32"; break;
-                        case LLVMPointerTypeKind: arg_hint = "string";  break;
-                        default: break;
+        // Process all explicit arguments provided in the source code
+        for (auto *arg : arg_container->children)
+        {
+            std::string arg_hint = "";
+            unsigned arg_idx = (unsigned)args.size();
+        
+            if (arg_idx < param_count) 
+            {
+                LLVMTypeKind kind = LLVMGetTypeKind(param_types[arg_idx]);
+                switch (kind) 
+                {
+                    case LLVMIntegerTypeKind: 
+                    {
+                        unsigned w = LLVMGetIntTypeWidth(param_types[arg_idx]);
+                        if      (w == 64) arg_hint = "int64";
+                        else if (w == 32) arg_hint = "int32";
+                        else if (w == 16) arg_hint = "int16";
+                        else              arg_hint = "int8";
+                        break;
                     }
+                    case LLVMDoubleTypeKind:  arg_hint = "float64"; break;
+                    case LLVMFloatTypeKind:   arg_hint = "float32"; break;
+                    case LLVMPointerTypeKind: arg_hint = "string";  break;
+                    default: break;
                 }
-                EzVal v = emit_expression_val(arg, arg_hint);
-                if (v) args.push_back(v);
+            }
+        
+            EzVal v = emit_expression_val(arg, arg_hint);
+            if (v) 
+            {
+                args.push_back(v);
             }
         }
 
-        EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
-        bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
-        return ez_call(mod, f, args.data(), (unsigned)args.size(),
-                       is_void ? "" : result_name.c_str());
+    // If the function signature expects more parameters than explicitly written,
+    // and the last parameter is a pointer (the tunnel slot), inject an anonymous alloca.
+    if (args.size() < param_count) 
+    {
+        unsigned next_idx = (unsigned)args.size();
+        // Check if the expected parameter is a pointer (used for tunnel targets)
+        if (LLVMGetTypeKind(param_types[next_idx]) == LLVMPointerTypeKind) 
+        {
+            // Create a hidden temporary local variable on the stack to catch the tunnel output
+            // We can determine the inner element type or fallback to an i32 stack slot
+            EzType anon_ty = ez_i32(); 
+            EzVal anon_alloca = ez_alloca(current_func, anon_ty, "anon_tunnel_tmp");
+            args.push_back(anon_alloca);
+        }
     }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
+    bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
+    
+    return ez_call(mod, f, args.data(), (unsigned)args.size(),
+                   is_void ? "" : result_name.c_str());
+}
 
     // ── Tunnel ────────────────────────────────────────────────────────────────
     // tunnel expr -> type name
@@ -525,7 +553,8 @@ private:
     //                     that represents the output (caller reads it).
     // Inside entry/block: evaluate expr, store into the named variable.
 
-    void emit_tunnel(Parser::ASTNode *n) {
+    void emit_tunnel(Parser::ASTNode *n) 
+    {
         if (n->children.size() < 2) return;
         auto *expr   = n->children[0];
         auto *target = n->children[1];
@@ -551,7 +580,8 @@ private:
 
     // ── Control flow ──────────────────────────────────────────────────────────
 
-    void emit_if(Parser::ASTNode *n) {
+    void emit_if(Parser::ASTNode *n) 
+    {
         if (n->children.empty()) return;
 
         EzVal cond = emit_condition(n->children[0]);
@@ -579,7 +609,8 @@ private:
         current_block = end_b; ez_use(end_b);
     }
 
-    void emit_while(Parser::ASTNode *n) {
+    void emit_while(Parser::ASTNode *n) 
+    {
         EzBlock *cond_b = ez_block(current_func, "while.cond");
         EzBlock *body_b = ez_block(current_func, "while.body");
         EzBlock *end_b  = ez_block(current_func, "while.end");
@@ -597,7 +628,8 @@ private:
         current_block = end_b; ez_use(end_b);
     }
 
-    void emit_for(Parser::ASTNode *n) {
+    void emit_for(Parser::ASTNode *n) 
+    {
         // children: [init_decl, cond_expr, incr_expr, body_block]
         push_scope();
         if (n->children.size() > 0) emit_declaration(n->children[0]);
@@ -625,7 +657,8 @@ private:
         pop_scope();
     }
 
-    void emit_foreach(Parser::ASTNode *n) {
+    void emit_foreach(Parser::ASTNode *n) 
+    {
         if (!n || n->children.size() < 2) return;
 
         auto sp = n->value.find(' ');
