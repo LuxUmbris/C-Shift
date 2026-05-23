@@ -49,8 +49,6 @@ jobs:
           echo "LLVM_DIR=$(brew --prefix llvm)/lib/cmake/llvm" >> $GITHUB_ENV
 
       # ── Windows: LLVM vom offiziellen GitHub Release ──────────────────────
-      # choco installiert nur Binaries, keine CMake-Dev-Files (LLVMConfig.cmake).
-      # Das offizielle LLVM-Windows-Installer-EXE enthält alles inkl. cmake/.
       - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -62,9 +60,27 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $installer
           Write-Host "Installing..."
           Start-Process -FilePath $installer -ArgumentList "/S" -Wait
-          $llvm = "C:\Program Files\LLVM"
+          # Tatsächlichen Installationspfad suchen
+          $candidates = @(
+            "C:\Program Files\LLVM",
+            "C:\LLVM",
+            "C:\Program Files (x86)\LLVM"
+          )
+          $llvm = $null
+          foreach ($c in $candidates) {
+            if (Test-Path "$c\lib\cmake\llvm\LLVMConfig.cmake") {
+              $llvm = $c
+              break
+            }
+          }
+          if (-not $llvm) {
+            Write-Host "LLVMConfig.cmake nicht gefunden, suche..."
+            Get-ChildItem "C:\" -Recurse -Filter "LLVMConfig.cmake" -ErrorAction SilentlyContinue | Select-Object -First 3
+            exit 1
+          }
+          Write-Host "LLVM gefunden in: $llvm"
           echo "LLVM_DIR=$llvm\lib\cmake\llvm" >> $env:GITHUB_ENV
-          echo "$llvm\bin"                     >> $env:GITHUB_PATH
+          echo "$llvm\bin" >> $env:GITHUB_PATH
 
       # ── Configure ─────────────────────────────────────────────────────────
       - name: Configure (Linux)
@@ -78,7 +94,9 @@ jobs:
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: cmake -S . -B build -DLLVM_DIR="$env:LLVM_DIR"
+        run: |
+          Write-Host "LLVM_DIR = $env:LLVM_DIR"
+          cmake -S . -B build -DLLVM_DIR="$env:LLVM_DIR"
 
       # ── Build ──────────────────────────────────────────────────────────────
       - name: Build
