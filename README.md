@@ -216,6 +216,15 @@ T[:]  // pointer + length, non-owning
 ```
 Slices may only reference arenas that outlive them.
 
+### For loops
+```
+for (int32 i = 0; i < 5;)
+{
+    // arena
+    i += 1;
+}
+```
+
 ### Control Flow
 Supported constructs:
 if / else
