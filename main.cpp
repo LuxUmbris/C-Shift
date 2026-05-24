@@ -47,9 +47,11 @@
 // ── Utilities
 // ─────────────────────────────────────────────────────────────────
 
-static std::string read_file(const std::string &path) {
+static std::string read_file(const std::string &path)
+{
   std::ifstream f(path);
-  if (!f) {
+  if (!f)
+  {
     std::cerr << "[ERROR] Cannot open '" << path << "'\n";
     std::exit(1);
   }
@@ -58,19 +60,24 @@ static std::string read_file(const std::string &path) {
   return ss.str();
 }
 
-static bool file_exists(const std::string &path) {
+static bool file_exists(const std::string &path)
+{
   struct stat st;
   return stat(path.c_str(), &st) == 0;
 }
 
-static std::string dirname_of(const std::string &path) {
+static std::string dirname_of(const std::string &path)
+{
   auto slash = path.find_last_of("/\\");
   return (slash == std::string::npos) ? "." : path.substr(0, slash);
 }
 
-static void mkdirp(const std::string &path) {
-  for (size_t i = 1; i < path.size(); ++i) {
-    if (path[i] == '/' || path[i] == '\\') {
+static void mkdirp(const std::string &path)
+{
+  for (size_t i = 1; i < path.size(); ++i)
+  {
+    if (path[i] == '/' || path[i] == '\\')
+    {
       MKDIR(path.substr(0, i).c_str());
     }
   }
@@ -90,9 +97,11 @@ static void mkdirp(const std::string &path) {
 //   7. C:\cshift\                     (Windows)
 
 static std::string find_std_cll(const std::string &src_path,
-                                const std::string &exe_path) {
+                                const std::string &exe_path)
+{
   const char *env = std::getenv("CSHIFT_STD_PATH");
-  if (env) {
+  if (env)
+  {
     std::string ep(env);
     if (file_exists(ep + "/std.cll"))
       return ep + "/std.cll";
@@ -106,7 +115,8 @@ static std::string find_std_cll(const std::string &src_path,
            "/usr/share/cshift",
            "/opt/homebrew/share/cshift",
            "C:\\cshift",
-       }) {
+       })
+  {
     std::string c = d + "/std.cll";
     if (file_exists(c))
       return c;
@@ -126,7 +136,8 @@ static std::string find_std_cll(const std::string &src_path,
 //   macOS  : ~/Library/Caches/cshift/frt/<triple>/frt.o
 //   Windows: %LOCALAPPDATA%\cshift\frt\<triple>\frt.o
 
-static std::string get_frt_cache_base() {
+static std::string get_frt_cache_base()
+{
 #ifdef _WIN32
   const char *la = std::getenv("LOCALAPPDATA");
   return std::string(la ? la : "C:") + "\\cshift\\frt";
@@ -143,11 +154,12 @@ static std::string get_frt_cache_base() {
 }
 
 static std::string compile_frt_to_cache(const std::string &frt_c,
-                                        const std::string &triple,
-                                        bool verbose) {
+                                        const std::string &triple, bool verbose)
+{
   std::string cache_dir = get_frt_cache_base() + "/" + triple;
   std::string cache_path = cache_dir + "/frt.o";
-  if (file_exists(cache_path)) {
+  if (file_exists(cache_path))
+  {
     if (verbose)
       std::cerr << "[frt] using cached " << cache_path << "\n";
     return cache_path;
@@ -158,19 +170,22 @@ static std::string compile_frt_to_cache(const std::string &frt_c,
   const char *cc_env = std::getenv("CC");
   if (cc_env)
     compilers.push_back(cc_env);
-  if (!triple.empty() && triple != "native") {
+  if (!triple.empty() && triple != "native")
+  {
     compilers.push_back(triple + "-gcc");
     compilers.push_back(triple + "-clang");
   }
   for (auto &c : std::vector<std::string>{"cc", "gcc", "clang"})
     compilers.push_back(c);
 
-  for (auto &cc : compilers) {
+  for (auto &cc : compilers)
+  {
     std::string cmd =
         cc + " -O2 -c \"" + frt_c + "\" -o \"" + cache_path + "\" 2>/dev/null";
     if (verbose)
       std::cerr << "[frt] trying: " << cmd << "\n";
-    if (std::system(cmd.c_str()) == 0 && file_exists(cache_path)) {
+    if (std::system(cmd.c_str()) == 0 && file_exists(cache_path))
+    {
       if (verbose)
         std::cerr << "[frt] compiled and cached at " << cache_path << "\n";
       return cache_path;
@@ -181,7 +196,8 @@ static std::string compile_frt_to_cache(const std::string &frt_c,
 
 static std::string find_frt_o(const std::string &exe_path,
                               const std::string &target_triple, bool verbose,
-                              bool no_frt) {
+                              bool no_frt)
+{
   if (no_frt)
     return "";
   std::string triple = target_triple.empty() ? "native" : target_triple;
@@ -190,9 +206,11 @@ static std::string find_frt_o(const std::string &exe_path,
   for (auto &base : std::vector<std::string>{
            dirname_of(exe_path) + "/../share/cshift/frt",
            dirname_of(exe_path) + "/frt",
-       }) {
+       })
+  {
     std::string p = base + "/" + triple + "/frt.o";
-    if (file_exists(p)) {
+    if (file_exists(p))
+    {
       if (verbose)
         std::cerr << "[frt] prebuilt: " << p << "\n";
       return p;
@@ -207,9 +225,11 @@ static std::string find_frt_o(const std::string &exe_path,
            "/usr/share/cshift",
            "/opt/homebrew/share/cshift",
            "C:\\cshift",
-       }) {
+       })
+  {
     std::string fc = d + "/frt.c";
-    if (file_exists(fc)) {
+    if (file_exists(fc))
+    {
       std::string r = compile_frt_to_cache(fc, triple, verbose);
       if (!r.empty())
         return r;
@@ -231,24 +251,29 @@ static std::string find_frt_o(const std::string &exe_path,
 
 static std::string expand_std_import(const std::string &source,
                                      const std::string &std_cll_path,
-                                     bool verbose) {
+                                     bool verbose)
+{
   std::string out;
   out.reserve(source.size());
   std::istringstream stream(source);
   std::string line;
   bool inlined = false;
 
-  while (std::getline(stream, line)) {
+  while (std::getline(stream, line))
+  {
     // Trim leading whitespace for comparison
     std::string trimmed = line;
     auto first = trimmed.find_first_not_of(" \t\r");
     if (first != std::string::npos)
       trimmed = trimmed.substr(first);
 
-    if (trimmed == "import std;") {
-      if (!inlined) {
+    if (trimmed == "import std;")
+    {
+      if (!inlined)
+      {
         inlined = true;
-        if (std_cll_path.empty()) {
+        if (std_cll_path.empty())
+        {
           std::cerr << "[ERROR] 'import std;' used but std.cll was not found.\n"
                     << "        Set CSHIFT_STD_PATH or place std.cll next to "
                        "your source.\n";
@@ -261,7 +286,9 @@ static std::string expand_std_import(const std::string &source,
         out += "\n// --- end import std ---\n";
       }
       // else: duplicate import std; — silently drop
-    } else {
+    }
+    else
+    {
       out += line + "\n";
     }
   }
@@ -272,7 +299,8 @@ static std::string expand_std_import(const std::string &source,
 //
 // Accepts friendly aliases as well as raw LLVM triples.
 
-static EzTarget *make_target(const std::string &triple) {
+static EzTarget *make_target(const std::string &triple)
+{
   if (triple == "x86_64-linux" || triple == "x86_64-linux-gnu")
     return ez_target_x86_64_linux();
   if (triple == "aarch64-linux" || triple == "aarch64-linux-gnu")
@@ -295,7 +323,8 @@ static EzTarget *make_target(const std::string &triple) {
 
 // ── Usage ────────────────────────────────────────────────────────────────────
 
-static void usage(const char *argv0) {
+static void usage(const char *argv0)
+{
   std::cerr
       << "Usage: " << argv0 << " <source.cll> [options]\n\n"
       << "Options:\n"
@@ -313,7 +342,8 @@ static void usage(const char *argv0) {
 // ── main
 // ──────────────────────────────────────────────────────────────────────
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
   if (argc < 2)
     usage(argv[0]);
 
@@ -326,7 +356,8 @@ int main(int argc, char **argv) {
   bool check_only = false;
   bool verbose = false;
 
-  for (int i = 1; i < argc; ++i) {
+  for (int i = 1; i < argc; ++i)
+  {
     std::string a = argv[i];
     if (a == "-o" && i + 1 < argc)
       out_path = argv[++i];
@@ -344,13 +375,17 @@ int main(int argc, char **argv) {
       check_only = true;
     else if (a == "--verbose" || a == "-v")
       verbose = true;
-    else if (a[0] != '-') {
-      if (!src_path.empty()) {
+    else if (a[0] != '-')
+    {
+      if (!src_path.empty())
+      {
         std::cerr << "[ERROR] Multiple source files not yet supported.\n";
         usage(argv[0]);
       }
       src_path = a;
-    } else {
+    }
+    else
+    {
       std::cerr << "[ERROR] Unknown option: " << a << "\n";
       usage(argv[0]);
     }
@@ -360,13 +395,15 @@ int main(int argc, char **argv) {
 
   // Warn if not a .cll file
   if (src_path.size() < 4 ||
-      src_path.compare(src_path.size() - 4, 4, ".cll") != 0) {
+      src_path.compare(src_path.size() - 4, 4, ".cll") != 0)
+  {
     std::cerr << "[WARNING] Source file does not have a .cll extension: "
               << src_path << "\n";
   }
 
   // Derive default output path from source stem
-  if (out_path.empty()) {
+  if (out_path.empty())
+  {
     out_path = src_path;
     auto dot = out_path.rfind('.');
     if (dot != std::string::npos)
@@ -388,18 +425,24 @@ int main(int argc, char **argv) {
 
   Lexer lexer(source);
   std::vector<Lexer::Token> tokens;
-  try {
+  try
+  {
     tokens = lexer.tokenize();
-  } catch (const std::exception &e) {
+  }
+  catch (const std::exception &e)
+  {
     std::cerr << e.what() << "\n";
     return 1;
   }
 
   Parser parser(tokens);
   std::vector<Parser::ASTNode *> ast;
-  try {
+  try
+  {
     ast = parser.parse_program();
-  } catch (const std::exception &e) {
+  }
+  catch (const std::exception &e)
+  {
     std::cerr << e.what() << "\n";
     return 1;
   }
@@ -407,13 +450,15 @@ int main(int argc, char **argv) {
   Checker checker;
   bool ok = checker.check(ast);
   checker.print_issues(std::cerr);
-  if (!ok) {
+  if (!ok)
+  {
     for (auto *n : ast)
       delete n;
     return 1;
   }
 
-  if (check_only) {
+  if (check_only)
+  {
     std::cout << "[OK] Semantic check passed.\n";
     for (auto *n : ast)
       delete n;
@@ -431,9 +476,11 @@ int main(int argc, char **argv) {
   EzTarget *tgt = nullptr;
   EzModule *mod = nullptr;
 
-  if (!target_triple.empty()) {
+  if (!target_triple.empty())
+  {
     tgt = make_target(target_triple);
-    if (!tgt) {
+    if (!tgt)
+    {
       std::cerr << "[ERROR] Could not create target for: " << target_triple
                 << "\n";
       for (auto *n : ast)
@@ -441,15 +488,20 @@ int main(int argc, char **argv) {
       return 1;
     }
     mod = ez_module_for_target("cshift", tgt);
-  } else {
+  }
+  else
+  {
     mod = ez_module("cshift");
   }
 
   {
     Codegen cg(mod);
-    try {
+    try
+    {
       cg.generate(ast);
-    } catch (const std::exception &e) {
+    }
+    catch (const std::exception &e)
+    {
       std::cerr << "[CODEGEN ERROR] " << e.what() << "\n";
       ez_free(mod);
       ez_target_free(tgt);
@@ -463,7 +515,8 @@ int main(int argc, char **argv) {
 
   // Verify the generated IR
   char *err_msg = nullptr;
-  if (LLVMVerifyModule(mod->mod, LLVMReturnStatusAction, &err_msg) != 0) {
+  if (LLVMVerifyModule(mod->mod, LLVMReturnStatusAction, &err_msg) != 0)
+  {
     std::cerr << "[IR VERIFY ERROR] " << (err_msg ? err_msg : "unknown")
               << "\n";
     LLVMDisposeMessage(err_msg);
@@ -477,26 +530,31 @@ int main(int argc, char **argv) {
 
   int rc = 0;
 
-  if (emit_llvm) {
+  if (emit_llvm)
+  {
     // Write human-readable LLVM IR
     rc = ez_to_file(mod, out_path.c_str());
-
-  } else if (emit_asm) {
+  }
+  else if (emit_asm)
+  {
     rc = tgt ? ez_compile_asm_for(mod, tgt, out_path.c_str())
              : ez_compile_asm(mod, out_path.c_str());
-
-  } else if (no_link) {
+  }
+  else if (no_link)
+  {
     rc = tgt ? ez_compile_for(mod, tgt, out_path.c_str())
              : ez_compile(mod, out_path.c_str());
-
-  } else {
+  }
+  else
+  {
     // Full pipeline: compile → temp .o → link with frt.o → executable
     std::string tmp_obj = out_path + ".ez_tmp.o";
 
     rc = tgt ? ez_compile_for(mod, tgt, tmp_obj.c_str())
              : ez_compile(mod, tmp_obj.c_str());
 
-    if (rc == 0) {
+    if (rc == 0)
+    {
       std::string frt_o = find_frt_o(exe_path, target_triple, verbose, no_frt);
 
       std::vector<const char *> objs;

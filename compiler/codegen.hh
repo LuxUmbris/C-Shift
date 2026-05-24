@@ -26,7 +26,8 @@
 //   • string literals → global i8*
 // ============================================================
 
-class Codegen {
+class Codegen
+{
   // ── Types ────────────────────────────────────────────────────────────────
 
   EzModule *mod;
@@ -43,17 +44,20 @@ class Codegen {
   // Tunnel output info for C<< functions: name → ordered list of (type, name)
   // pairs. These become hidden pointer parameters appended after the normal
   // params.
-  struct TunnelParam {
+  struct TunnelParam
+  {
     std::string type;
     std::string name;
   };
   std::unordered_map<std::string, std::vector<TunnelParam>> func_tunnels;
 
   // Collect all unique tunnel targets from a function body (recursive)
-  void collect_tunnels(Parser::ASTNode *node, std::vector<TunnelParam> &out) {
+  void collect_tunnels(Parser::ASTNode *node, std::vector<TunnelParam> &out)
+  {
     if (!node)
       return;
-    if (node->type == "Tunnel" && node->children.size() >= 2) {
+    if (node->type == "Tunnel" && node->children.size() >= 2)
+    {
       auto *target = node->children[1];
       auto sp = target->value.find(' ');
       std::string ttype = target->value.substr(0, sp);
@@ -61,7 +65,8 @@ class Codegen {
       // Deduplicate
       bool found = false;
       for (auto &tp : out)
-        if (tp.name == tname && tp.type == ttype) {
+        if (tp.name == tname && tp.type == ttype)
+        {
           found = true;
           break;
         }
@@ -73,7 +78,8 @@ class Codegen {
   }
 
   // name → struct type (for field GEP)
-  struct StructLayout {
+  struct StructLayout
+  {
     EzType llvm_type;
     std::vector<std::string> field_names;
     std::vector<std::string> field_types;
@@ -95,16 +101,20 @@ class Codegen {
   std::unordered_map<std::string, std::string> var_type_map;
 
   void declare_var(const std::string &name, EzVal alloca_ptr,
-                   const std::string &type_s = "") {
-    if (!var_scopes.empty()) {
+                   const std::string &type_s = "")
+  {
+    if (!var_scopes.empty())
+    {
       var_scopes.back()[name] = alloca_ptr;
       if (!type_s.empty())
         var_type_map[name] = type_s;
     }
   }
 
-  EzVal lookup_var(const std::string &name) {
-    for (int i = (int)var_scopes.size() - 1; i >= 0; --i) {
+  EzVal lookup_var(const std::string &name)
+  {
+    for (int i = (int)var_scopes.size() - 1; i >= 0; --i)
+    {
       auto it = var_scopes[i].find(name);
       if (it != var_scopes[i].end())
         return it->second;
@@ -113,13 +123,15 @@ class Codegen {
   }
 
   // Map C<< type string → LLVM EzType
-  EzType cshift_type(const std::string &t) {
+  EzType cshift_type(const std::string &t)
+  {
     std::string base = t;
     // strip pointer/array decorators to find base
     bool is_ptr = (t.find('*') != std::string::npos);
     bool is_slice = (t.find('[') != std::string::npos);
     // strip all decorators
-    for (char c : std::string("*[]:|")) {
+    for (char c : std::string("*[]:|"))
+    {
       base.erase(std::remove(base.begin(), base.end(), c), base.end());
     }
 
@@ -150,7 +162,8 @@ class Codegen {
       elem = ez_ptr(); // i8*
     else if (base == "voided" || base == "void")
       elem = ez_void();
-    else {
+    else
+    {
       // user-defined struct?
       auto it = struct_map.find(base);
       if (it != struct_map.end())
@@ -161,7 +174,8 @@ class Codegen {
 
     // Special-case: pointer-to-void/voided should map to i8* (ez_ptr()),
     // not a pointer to LLVM void type which is invalid.
-    if (is_ptr || is_slice) {
+    if (is_ptr || is_slice)
+    {
       if (base == "voided" || base == "void")
         return ez_ptr();
       return ez_ptr_to(elem);
@@ -169,19 +183,23 @@ class Codegen {
     return elem;
   }
 
-  bool is_float_type(const std::string &t) {
+  bool is_float_type(const std::string &t)
+  {
     return t == "float32" || t == "float64";
   }
-  bool is_unsigned_type(const std::string &t) {
+  bool is_unsigned_type(const std::string &t)
+  {
     return t.substr(0, 4) == "uint";
   }
 
   // ── Entry-point alloca builder for the first block ────────────────────────
   // We position the builder at the very start of the entry block for allocas.
-  EzVal alloca_in_entry(EzFunc *fn, EzType ty, const std::string &name) {
+  EzVal alloca_in_entry(EzFunc *fn, EzType ty, const std::string &name)
+  {
     // Temporarily move builder to the first instruction of the entry block
     LLVMBasicBlockRef entry_bb = LLVMGetEntryBasicBlock(fn->fn);
-    if (!entry_bb) {
+    if (!entry_bb)
+    {
       // ensure an entry block exists (some functions may not have one yet)
       entry_bb = LLVMAppendBasicBlockInContext(fn->owner->ctx, fn->fn, "entry");
     }
@@ -199,7 +217,8 @@ class Codegen {
   // Returns true if the current basic block already ends with a terminator.
   // Emitting a second terminator (e.g. an unconditional br after a while-true
   // loop) produces invalid IR and can crash LLVM's optimizer.
-  bool current_block_has_terminator() const {
+  bool current_block_has_terminator() const
+  {
     if (!current_block)
       return false;
     LLVMValueRef last = LLVMGetLastInstruction(current_block->bb);
@@ -212,7 +231,8 @@ public:
   explicit Codegen(EzModule *m) : mod(m) {}
 
   // Generate IR for a full program AST.
-  void generate(const std::vector<Parser::ASTNode *> &ast) {
+  void generate(const std::vector<Parser::ASTNode *> &ast)
+  {
     // Pass 1: forward-declare all structs, functions, and C imports
     for (auto *n : ast)
       forward_declare(n);
@@ -224,7 +244,8 @@ public:
 private:
   // ── Forward declarations ──────────────────────────────────────────────────
 
-  void forward_declare(Parser::ASTNode *n) {
+  void forward_declare(Parser::ASTNode *n)
+  {
     if (!n)
       return;
     if (n->type == "Struct")
@@ -240,13 +261,15 @@ private:
         forward_declare(c);
   }
 
-  void forward_struct(Parser::ASTNode *n) {
+  void forward_struct(Parser::ASTNode *n)
+  {
     const std::string &name = n->value;
     StructLayout layout;
     layout.llvm_type = ez_struct_named(mod, name.c_str());
 
     std::vector<EzType> fields;
-    for (auto *f : n->children) {
+    for (auto *f : n->children)
+    {
       if (!f)
         continue;
       auto sp = f->value.find(' ');
@@ -260,7 +283,8 @@ private:
     struct_map[name] = layout;
   }
 
-  void forward_c_import(Parser::ASTNode *n) {
+  void forward_c_import(Parser::ASTNode *n)
+  {
     // value = "rettype funcname"
     auto sp = n->value.find(' ');
     std::string ret_s = n->value.substr(0, sp);
@@ -271,9 +295,12 @@ private:
 
     std::vector<EzType> params;
     bool vararg = false;
-    if (!n->children.empty() && n->children[0]->type == "CParams") {
-      for (auto *p : n->children[0]->children) {
-        if (p->type == "Variadic") {
+    if (!n->children.empty() && n->children[0]->type == "CParams")
+    {
+      for (auto *p : n->children[0]->children)
+      {
+        if (p->type == "Variadic")
+        {
           vararg = true;
           continue;
         }
@@ -288,14 +315,17 @@ private:
     func_map[fname] = f;
   }
 
-  void forward_function(Parser::ASTNode *n) {
+  void forward_function(Parser::ASTNode *n)
+  {
     const std::string &name = n->value;
     EzType ret = ez_void();
     std::vector<EzType> params;
     std::vector<std::string> pnames;
 
-    if (!n->children.empty() && n->children[0]->type == "Parameters") {
-      for (auto *p : n->children[0]->children) {
+    if (!n->children.empty() && n->children[0]->type == "Parameters")
+    {
+      for (auto *p : n->children[0]->children)
+      {
         auto sp = p->value.find(' ');
         params.push_back(cshift_type(p->value.substr(0, sp)));
         pnames.push_back(p->value.substr(sp + 1));
@@ -310,7 +340,8 @@ private:
     if (n->children.size() >= 2)
       collect_tunnels(n->children[1], tunnels);
     func_tunnels[name] = tunnels;
-    for (auto &tp : tunnels) {
+    for (auto &tp : tunnels)
+    {
       params.push_back(ez_ptr()); // pointer to caller's slot
       pnames.push_back("__tunnel_" + tp.name);
     }
@@ -322,7 +353,8 @@ private:
     func_map[name] = f;
   }
 
-  void forward_entry(Parser::ASTNode *) {
+  void forward_entry(Parser::ASTNode *)
+  {
     // main() : i32
     EzFunc *f = ez_func(mod, "main", ez_i32(), nullptr, 0, 0);
     func_map["__entry__"] = f;
@@ -330,21 +362,25 @@ private:
 
   // ── Top-level emitters ────────────────────────────────────────────────────
 
-  void emit_top(Parser::ASTNode *n) {
+  void emit_top(Parser::ASTNode *n)
+  {
     if (!n)
       return;
     if (n->type == "Function")
       emit_function(n);
     else if (n->type == "Entry")
       emit_entry(n);
-    else if (n->type == "Struct") { /* body already set in forward pass */
-    } else if (n->type == "Namespace")
+    else if (n->type == "Struct")
+    { /* body already set in forward pass */
+    }
+    else if (n->type == "Namespace")
       for (auto *c : n->children)
         emit_top(c);
     // CImport / ModuleImport / Import: nothing to emit
   }
 
-  void emit_entry(Parser::ASTNode *n) {
+  void emit_entry(Parser::ASTNode *n)
+  {
     EzFunc *f = func_map["__entry__"];
     current_func = f;
     EzBlock *entry_b = ez_block(f, "entry");
@@ -363,7 +399,8 @@ private:
     current_func = nullptr;
   }
 
-  void emit_function(Parser::ASTNode *n) {
+  void emit_function(Parser::ASTNode *n)
+  {
     const std::string &name = n->value;
     EzFunc *f = func_map[name];
     current_func = f;
@@ -376,8 +413,10 @@ private:
 
     // Bind regular parameters to allocas
     unsigned param_idx = 0;
-    if (!n->children.empty() && n->children[0]->type == "Parameters") {
-      for (auto *p : n->children[0]->children) {
+    if (!n->children.empty() && n->children[0]->type == "Parameters")
+    {
+      for (auto *p : n->children[0]->children)
+      {
         auto sp = p->value.find(' ');
         std::string ptype = p->value.substr(0, sp);
         std::string pname = p->value.substr(sp + 1);
@@ -392,8 +431,10 @@ private:
     // ptr by the caller. Register them directly in tunnel_slots and var scope
     // so that emit_tunnel writes through to the caller's alloca.
     auto tit = func_tunnels.find(name);
-    if (tit != func_tunnels.end()) {
-      for (auto &tp : tit->second) {
+    if (tit != func_tunnels.end())
+    {
+      for (auto &tp : tit->second)
+      {
         // The param is already a pointer to the caller's slot
         EzVal caller_ptr = ez_param(f, param_idx++);
         // Store the param ptr itself into a local alloca so lookup_var works
@@ -420,7 +461,8 @@ private:
 
   // ── Block / statement dispatch ────────────────────────────────────────────
 
-  void emit_block_body(Parser::ASTNode *block) {
+  void emit_block_body(Parser::ASTNode *block)
+  {
     if (!block)
       return;
     push_scope();
@@ -429,7 +471,8 @@ private:
     pop_scope();
   }
 
-  void emit_stmt(Parser::ASTNode *n) {
+  void emit_stmt(Parser::ASTNode *n)
+  {
     if (!n)
       return;
     const std::string &t = n->type;
@@ -445,9 +488,13 @@ private:
       emit_call_stmt(n);
     else if (t == "Tunnel")
       emit_tunnel(n);
-    else if (t == "Move") {    /* voided-state is static; no runtime action */
-    } else if (t == "Reset") { /* no runtime action */
-    } else if (t == "If")
+    else if (t == "Move")
+    { /* voided-state is static; no runtime action */
+    }
+    else if (t == "Reset")
+    { /* no runtime action */
+    }
+    else if (t == "If")
       emit_if(n);
     else if (t == "While")
       emit_while(n);
@@ -465,7 +512,8 @@ private:
 
   // ── Variables ─────────────────────────────────────────────────────────────
 
-  void emit_declaration(Parser::ASTNode *n) {
+  void emit_declaration(Parser::ASTNode *n)
+  {
     auto sp = n->value.find(' ');
     std::string type_s = n->value.substr(0, sp);
     std::string vname = n->value.substr(sp + 1);
@@ -474,19 +522,22 @@ private:
     EzVal slot = alloca_in_entry(current_func, ty, vname.c_str());
     declare_var(vname, slot, type_s);
 
-    if (!n->children.empty()) {
+    if (!n->children.empty())
+    {
       EzVal init = emit_expression_val(n->children[0], type_s);
       if (init)
         ez_store(mod, init, slot);
     }
   }
 
-  void emit_const(Parser::ASTNode *n) {
+  void emit_const(Parser::ASTNode *n)
+  {
     // Same as declaration (constness enforced by checker, not codegen)
     emit_declaration(n);
   }
 
-  void emit_reserve(Parser::ASTNode *n) {
+  void emit_reserve(Parser::ASTNode *n)
+  {
     auto sp = n->value.find(' ');
     std::string type_s = n->value.substr(0, sp);
     std::string vname = n->value.substr(sp + 1);
@@ -498,7 +549,8 @@ private:
     size_t start = 0;
     if (!n->children.empty() && n->children[0]->type == "Shared")
       start = 1;
-    if (n->children.size() > start) {
+    if (n->children.size() > start)
+    {
       auto *init_expr = n->children[start];
       // Detect inline function call: reserve int32 x = fn(args)
       // parse_expression puts tokens [fn, (, args, )] into the Expression.
@@ -512,7 +564,8 @@ private:
           (init_expr->type == "Expression" && init_expr->children.size() >= 2 &&
            init_expr->children[0]->token_type == Lexer::TokenType::IDENTIFIER &&
            init_expr->children[1]->value == "(");
-      if (is_call) {
+      if (is_call)
+      {
         // For C<< tunnel functions, pre-register this slot under every
         // tunnel target name so emit_call_val passes the right pointer.
         // This handles: reserve int32 x = fn(args)  where fn tunnels
@@ -520,28 +573,34 @@ private:
         std::string call_fname = init_expr->children[0]->value;
         auto tit = func_tunnels.find(call_fname);
         std::vector<std::string> injected_names;
-        if (tit != func_tunnels.end()) {
+        if (tit != func_tunnels.end())
+        {
           push_scope();
-          for (auto &tp : tit->second) {
+          for (auto &tp : tit->second)
+          {
             declare_var(tp.name, slot, type_s);
             injected_names.push_back(tp.name);
           }
         }
         EzVal call_result = emit_expression_val(init_expr, type_s);
-        if (tit != func_tunnels.end()) {
+        if (tit != func_tunnels.end())
+        {
           pop_scope();
         }
         // Only store if call_result is a real (non-void) value.
         // For C<< void/tunnel functions, ez_call still returns the call
         // instruction (non-null) but it has void type — storing it crashes
         // LLVM.
-        if (call_result) {
+        if (call_result)
+        {
           EzType res_ty = LLVMTypeOf(call_result);
           if (LLVMGetTypeKind(res_ty) != LLVMVoidTypeKind)
             ez_store(mod, call_result, slot);
         }
         // For C<< tunnel functions the slot is now written by the callee
-      } else {
+      }
+      else
+      {
         EzVal init = emit_expression_val(init_expr, type_s);
         if (init)
           ez_store(mod, init, slot);
@@ -549,7 +608,8 @@ private:
     }
   }
 
-  void emit_assignment(Parser::ASTNode *n) {
+  void emit_assignment(Parser::ASTNode *n)
+  {
     // value = "target op"
     auto sp = n->value.rfind(' ');
     std::string target = n->value.substr(0, sp);
@@ -560,7 +620,8 @@ private:
     EzVal ptr = nullptr;
     std::string load_type;
 
-    if (dot != std::string::npos) {
+    if (dot != std::string::npos)
+    {
       std::string base = target.substr(0, dot);
       std::string field = target.substr(dot + 1);
       EzVal base_ptr = lookup_var(base);
@@ -568,7 +629,9 @@ private:
         return;
       ptr = gep_field(base_ptr, base, field);
       load_type = field_type_of(base, field);
-    } else {
+    }
+    else
+    {
       ptr = lookup_var(target);
       // Resolve the real declared type from var_type_map.
       // Falling back to "int32" here miscompiles string/pointer variables:
@@ -585,9 +648,12 @@ private:
     if (!rhs)
       return;
 
-    if (op == "=") {
+    if (op == "=")
+    {
       ez_store(mod, rhs, ptr);
-    } else {
+    }
+    else
+    {
       // Compound assign: load, operate, store
       EzType ty = cshift_type(load_type);
       EzVal lhs = ez_load(mod, ty, ptr, "lhs");
@@ -613,7 +679,8 @@ private:
 
   // ── Call statement ────────────────────────────────────────────────────────
 
-  void emit_call_stmt(Parser::ASTNode *n) {
+  void emit_call_stmt(Parser::ASTNode *n)
+  {
     emit_call_val(n, /*result_name=*/"");
   }
 
@@ -625,7 +692,8 @@ private:
   // We must split that flat token list on top-level commas ourselves.
   // Returns groups of token-node vectors, one per argument.
   static std::vector<std::vector<Parser::ASTNode *>>
-  split_args_by_comma(Parser::ASTNode *args_node) {
+  split_args_by_comma(Parser::ASTNode *args_node)
+  {
     std::vector<std::vector<Parser::ASTNode *>> groups;
     if (!args_node)
       return groups;
@@ -637,13 +705,17 @@ private:
     std::vector<Parser::ASTNode *> tmp;
 
     if (args_node->children.size() == 1 &&
-        args_node->children[0]->type == "Expression") {
+        args_node->children[0]->type == "Expression")
+    {
       // Standard path: one Expression containing all tokens+commas
       flat = &args_node->children[0]->children;
-    } else {
+    }
+    else
+    {
       // Already split: each child is a separate Expression
       // Flatten into token groups directly
-      for (auto *child : args_node->children) {
+      for (auto *child : args_node->children)
+      {
         if (child->type == "Expression")
           groups.push_back(child->children);
         else
@@ -655,17 +727,25 @@ private:
     // Split flat token list on "," at paren depth 0
     std::vector<Parser::ASTNode *> cur;
     int depth = 0;
-    for (auto *tok : *flat) {
-      if (tok->value == "(") {
+    for (auto *tok : *flat)
+    {
+      if (tok->value == "(")
+      {
         depth++;
         cur.push_back(tok);
-      } else if (tok->value == ")") {
+      }
+      else if (tok->value == ")")
+      {
         depth--;
         cur.push_back(tok);
-      } else if (tok->value == "," && depth == 0) {
+      }
+      else if (tok->value == "," && depth == 0)
+      {
         groups.push_back(cur);
         cur.clear();
-      } else {
+      }
+      else
+      {
         cur.push_back(tok);
       }
     }
@@ -675,10 +755,13 @@ private:
   }
 
   // Helper: derive a hint string from a declared LLVM param type
-  static std::string hint_from_llvm_type(LLVMTypeRef ty) {
+  static std::string hint_from_llvm_type(LLVMTypeRef ty)
+  {
     LLVMTypeKind kind = LLVMGetTypeKind(ty);
-    switch (kind) {
-    case LLVMIntegerTypeKind: {
+    switch (kind)
+    {
+    case LLVMIntegerTypeKind:
+    {
       unsigned w = LLVMGetIntTypeWidth(ty);
       if (w == 64)
         return "int64";
@@ -700,10 +783,12 @@ private:
     }
   }
 
-  EzVal emit_call_val(Parser::ASTNode *n, const std::string &result_name) {
+  EzVal emit_call_val(Parser::ASTNode *n, const std::string &result_name)
+  {
     const std::string &fname = n->value;
     auto it = func_map.find(fname);
-    if (it == func_map.end()) {
+    if (it == func_map.end())
+    {
       // Function was called but never declared via import or def.
       // Auto-declare as a variadic C extern returning void so the call
       // is emitted rather than silently dropped.  The checker already
@@ -717,7 +802,8 @@ private:
     EzFunc *f = it->second;
 
     std::vector<EzVal> args;
-    if (!n->children.empty()) {
+    if (!n->children.empty())
+    {
       // n->children[0] is the Args wrapper node from parse_call_statement
       auto *args_node = n->children[0];
 
@@ -736,7 +822,8 @@ private:
       if (total_params > 0)
         LLVMGetParamTypes(fn_type, param_types.data());
 
-      for (auto &grp : arg_groups) {
+      for (auto &grp : arg_groups)
+      {
         std::string arg_hint = "";
         unsigned arg_idx = (unsigned)args.size();
         if (arg_idx < regular_params)
@@ -748,10 +835,13 @@ private:
 
       // Append hidden tunnel pointer args: pass address of caller's reserved
       // slot. If a slot doesn't exist yet, create one.
-      if (tit != func_tunnels.end()) {
-        for (auto &tp : tit->second) {
+      if (tit != func_tunnels.end())
+      {
+        for (auto &tp : tit->second)
+        {
           EzVal slot = lookup_var(tp.name);
-          if (!slot) {
+          if (!slot)
+          {
             EzType ty = cshift_type(tp.type);
             slot = alloca_in_entry(current_func, ty, tp.name.c_str());
             declare_var(tp.name, slot, tp.type);
@@ -774,7 +864,8 @@ private:
   //                     that represents the output (caller reads it).
   // Inside entry/block: evaluate expr, store into the named variable.
 
-  void emit_tunnel(Parser::ASTNode *n) {
+  void emit_tunnel(Parser::ASTNode *n)
+  {
     if (n->children.size() < 2)
       return;
     auto *expr = n->children[0];
@@ -792,7 +883,8 @@ private:
 
     // Check if this tunnel target was registered as a hidden pointer param
     auto tit = tunnel_slots.find(tname);
-    if (tit != tunnel_slots.end()) {
+    if (tit != tunnel_slots.end())
+    {
       // tunnel_slots[name] holds a ptr-to-ptr (local alloca storing the
       // caller's pointer).  Load the caller's pointer then store rhs into it.
       EzVal caller_ptr = ez_load(mod, ez_ptr(), tit->second, "tptr");
@@ -802,7 +894,8 @@ private:
 
     // Entry/block scope tunnel: write directly into the named variable
     EzVal ptr = lookup_var(tname);
-    if (!ptr) {
+    if (!ptr)
+    {
       ptr = alloca_in_entry(current_func, ty, tname.c_str());
       declare_var(tname, ptr, ttype);
       tunnel_slots[tname] = ptr;
@@ -812,7 +905,8 @@ private:
 
   // ── Control flow ──────────────────────────────────────────────────────────
 
-  void emit_if(Parser::ASTNode *n) {
+  void emit_if(Parser::ASTNode *n)
+  {
     if (n->children.empty())
       return;
 
@@ -834,7 +928,8 @@ private:
     // else
     current_block = else_b;
     ez_use(else_b);
-    if (n->children.size() > 2) {
+    if (n->children.size() > 2)
+    {
       auto *el = n->children[2];
       if (el->type == "If")
         emit_if(el);
@@ -847,7 +942,8 @@ private:
     ez_use(end_b);
   }
 
-  void emit_while(Parser::ASTNode *n) {
+  void emit_while(Parser::ASTNode *n)
+  {
     EzBlock *cond_b = ez_block(current_func, "while.cond");
     EzBlock *body_b = ez_block(current_func, "while.body");
     EzBlock *end_b = ez_block(current_func, "while.end");
@@ -870,7 +966,8 @@ private:
     ez_use(end_b);
   }
 
-  void emit_for(Parser::ASTNode *n) {
+  void emit_for(Parser::ASTNode *n)
+  {
     // children: [init_decl, cond_expr, incr_expr, body_block]
     push_scope();
     if (n->children.size() > 0)
@@ -906,7 +1003,8 @@ private:
     pop_scope();
   }
 
-  void emit_foreach(Parser::ASTNode *n) {
+  void emit_foreach(Parser::ASTNode *n)
+  {
     if (!n || n->children.size() < 2)
       return;
 
@@ -961,7 +1059,8 @@ private:
     ez_use(end_b);
   }
 
-  void emit_switch(Parser::ASTNode *n) {
+  void emit_switch(Parser::ASTNode *n)
+  {
     if (n->children.empty())
       return;
 
@@ -970,7 +1069,8 @@ private:
     // Count cases
     std::vector<Parser::ASTNode *> cases;
     Parser::ASTNode *default_node = nullptr;
-    for (size_t i = 1; i < n->children.size(); ++i) {
+    for (size_t i = 1; i < n->children.size(); ++i)
+    {
       auto *c = n->children[i];
       if (c->type == "Case")
         cases.push_back(c);
@@ -991,7 +1091,8 @@ private:
     // LLVM switch instruction
     LLVMValueRef sw = LLVMBuildSwitch(mod->builder, switched, default_b->bb,
                                       (unsigned)cases.size());
-    for (size_t i = 0; i < cases.size(); ++i) {
+    for (size_t i = 0; i < cases.size(); ++i)
+    {
       const std::string &val_s = cases[i]->value;
       // valid/voided are symbolic; map to i32 sentinel values for now
       long long ival = 0;
@@ -999,10 +1100,14 @@ private:
         ival = 1;
       else if (val_s == "voided")
         ival = 0;
-      else {
-        try {
+      else
+      {
+        try
+        {
           ival = std::stoll(val_s);
-        } catch (...) {
+        }
+        catch (...)
+        {
         }
       }
       LLVMAddCase(sw, LLVMConstInt(ez_i32(), (unsigned long long)ival, 1),
@@ -1010,14 +1115,16 @@ private:
     }
 
     // Emit case bodies
-    for (size_t i = 0; i < cases.size(); ++i) {
+    for (size_t i = 0; i < cases.size(); ++i)
+    {
       current_block = case_blocks[i];
       ez_use(case_blocks[i]);
       for (auto *stmt : cases[i]->children)
         emit_stmt(stmt);
       ez_br(mod, end_b);
     }
-    if (default_node) {
+    if (default_node)
+    {
       current_block = default_b;
       ez_use(default_b);
       for (auto *stmt : default_node->children)
@@ -1032,7 +1139,8 @@ private:
   // ── Expression evaluation ─────────────────────────────────────────────────
   // Returns an EzVal (SSA value). hint_type guides numeric literal sizing.
 
-  EzVal emit_expression_val(Parser::ASTNode *n, const std::string &hint_type) {
+  EzVal emit_expression_val(Parser::ASTNode *n, const std::string &hint_type)
+  {
     if (!n)
       return nullptr;
 
@@ -1045,7 +1153,8 @@ private:
   }
 
   // Condition: evaluate and ensure i1
-  EzVal emit_condition(Parser::ASTNode *n) {
+  EzVal emit_condition(Parser::ASTNode *n)
+  {
     // FIX (Bug 2): pass empty hint instead of "bool" so that eval_token
     // loads variables using their declared type rather than as i1.
     EzVal v = emit_expression_val(n, "");
@@ -1067,14 +1176,16 @@ private:
   // calls. This is a simple left-to-right evaluator for the flat expression
   // AST.
   EzVal eval_expr_children(const std::vector<Parser::ASTNode *> &tokens,
-                           const std::string &hint) {
+                           const std::string &hint)
+  {
     if (tokens.empty())
       return nullptr;
 
     // Detect function call: IDENT ( args... )
     if (tokens.size() >= 3 && tokens[0]->type == "Token" &&
         tokens[0]->token_type == Lexer::TokenType::IDENTIFIER &&
-        tokens[1]->value == "(") {
+        tokens[1]->value == "(")
+    {
       return eval_call_expr(tokens, hint);
     }
 
@@ -1083,7 +1194,8 @@ private:
       return eval_token(tokens[0], hint);
 
     // Unary minus: - TOKEN
-    if (tokens.size() == 2 && tokens[0]->value == "-") {
+    if (tokens.size() == 2 && tokens[0]->value == "-")
+    {
       EzVal v = eval_token(tokens[1], hint);
       if (!v)
         return nullptr;
@@ -1094,7 +1206,8 @@ private:
     // Binary expression: lhs op rhs
     // Find rightmost low-precedence operator (simple left-associative)
     int op_idx = find_binary_op(tokens);
-    if (op_idx > 0) {
+    if (op_idx > 0)
+    {
       std::vector<Parser::ASTNode *> lhs_tokens(tokens.begin(),
                                                 tokens.begin() + op_idx);
       std::vector<Parser::ASTNode *> rhs_tokens(tokens.begin() + op_idx + 1,
@@ -1107,19 +1220,22 @@ private:
     }
 
     // Strip outer parens
-    if (tokens.front()->value == "(" && tokens.back()->value == ")") {
+    if (tokens.front()->value == "(" && tokens.back()->value == ")")
+    {
       std::vector<Parser::ASTNode *> inner(tokens.begin() + 1,
                                            tokens.end() - 1);
       return eval_expr_children(inner, hint);
     }
 
     // Field access: IDENT . FIELD  (or chained: a.b.c)
-    if (tokens.size() >= 3 && tokens[1]->value == ".") {
+    if (tokens.size() >= 3 && tokens[1]->value == ".")
+    {
       // Build "base.field" string and GEP
       std::string base = tokens[0]->value;
       std::string field = tokens[2]->value;
       EzVal base_ptr = lookup_var(base);
-      if (base_ptr) {
+      if (base_ptr)
+      {
         EzVal field_ptr = gep_field(base_ptr, base, field);
         std::string ftype = field_type_of(base, field);
         EzType fty = cshift_type(ftype.empty() ? hint : ftype);
@@ -1132,21 +1248,25 @@ private:
   }
 
   // Find the index of the rightmost binary operator (lowest precedence first)
-  int find_binary_op(const std::vector<Parser::ASTNode *> &tokens) {
+  int find_binary_op(const std::vector<Parser::ASTNode *> &tokens)
+  {
     // Precedence levels (lower number = lower precedence, split last)
     static const std::vector<std::vector<std::string>> prec = {
         {"||"},     {"&&"},         {"==", "!="}, {"<", ">", "<=", ">="},
         {"+", "-"}, {"*", "/", "%"}};
     int depth = 0;
-    for (auto &level : prec) {
+    for (auto &level : prec)
+    {
       // scan right-to-left at depth 0
-      for (int i = (int)tokens.size() - 1; i >= 1; --i) {
+      for (int i = (int)tokens.size() - 1; i >= 1; --i)
+      {
         const std::string &v = tokens[i]->value;
         if (v == ")")
           depth++;
         if (v == "(")
           depth--;
-        if (depth == 0) {
+        if (depth == 0)
+        {
           for (auto &op : level)
             if (v == op)
               return i;
@@ -1157,7 +1277,8 @@ private:
   }
 
   EzVal apply_binop(const std::string &op, EzVal lhs, EzVal rhs,
-                    const std::string &hint) {
+                    const std::string &hint)
+  {
     // derive signedness/floatness from the actual LLVM type of
     // lhs rather than the hint string, which may be empty or "bool" when
     // called from a comparison context.
@@ -1206,11 +1327,13 @@ private:
 
   // Evaluate a call expression: tokens = [name, "(", arg_exprs..., ")"]
   EzVal eval_call_expr(const std::vector<Parser::ASTNode *> &tokens,
-                       const std::string &hint) {
+                       const std::string &hint)
+  {
     (void)hint;
     std::string fname = tokens[0]->value;
     auto it = func_map.find(fname);
-    if (it == func_map.end()) {
+    if (it == func_map.end())
+    {
       EzFunc *f_auto =
           ez_extern(mod, fname.c_str(), ez_void(), nullptr, 0, /*vararg=*/1);
       func_map[fname] = f_auto;
@@ -1222,23 +1345,32 @@ private:
     std::vector<std::vector<Parser::ASTNode *>> arg_groups;
     std::vector<Parser::ASTNode *> cur_group;
     int depth = 0;
-    for (size_t i = 2; i < tokens.size(); ++i) {
+    for (size_t i = 2; i < tokens.size(); ++i)
+    {
       const std::string &v = tokens[i]->value;
-      if (v == "(") {
+      if (v == "(")
+      {
         depth++;
         cur_group.push_back(tokens[i]);
-      } else if (v == ")") {
-        if (depth == 0) {
+      }
+      else if (v == ")")
+      {
+        if (depth == 0)
+        {
           if (!cur_group.empty())
             arg_groups.push_back(cur_group);
           break;
         }
         depth--;
         cur_group.push_back(tokens[i]);
-      } else if (v == "," && depth == 0) {
+      }
+      else if (v == "," && depth == 0)
+      {
         arg_groups.push_back(cur_group);
         cur_group.clear();
-      } else {
+      }
+      else
+      {
         cur_group.push_back(tokens[i]);
       }
     }
@@ -1255,7 +1387,8 @@ private:
       LLVMGetParamTypes(fn_type, param_types.data());
 
     std::vector<EzVal> args;
-    for (auto &grp : arg_groups) {
+    for (auto &grp : arg_groups)
+    {
       unsigned arg_idx = (unsigned)args.size();
       std::string arg_hint = (arg_idx < regular_params)
                                  ? hint_from_llvm_type(param_types[arg_idx])
@@ -1266,10 +1399,13 @@ private:
     }
 
     // Append hidden tunnel pointer args — find or create caller slots
-    if (tit2 != func_tunnels.end()) {
-      for (auto &tp : tit2->second) {
+    if (tit2 != func_tunnels.end())
+    {
+      for (auto &tp : tit2->second)
+      {
         EzVal slot = lookup_var(tp.name);
-        if (!slot) {
+        if (!slot)
+        {
           EzType ty = cshift_type(tp.type);
           slot = alloca_in_entry(current_func, ty, tp.name.c_str());
           declare_var(tp.name, slot, tp.type);
@@ -1284,21 +1420,26 @@ private:
                    is_void ? "" : "call");
   }
 
-  EzVal eval_token(Parser::ASTNode *tok, const std::string &hint) {
+  EzVal eval_token(Parser::ASTNode *tok, const std::string &hint)
+  {
     if (!tok)
       return nullptr;
     const std::string &v = tok->value;
 
     // process escape sequences the lexer left as raw text
     // before handing the string to LLVM, otherwise \n becomes \\n in the IR.
-    if (tok->token_type == Lexer::TokenType::STRING) {
+    if (tok->token_type == Lexer::TokenType::STRING)
+    {
       static int __str_id = 0;
       std::string name = std::string(".str") + std::to_string(__str_id++);
       std::string processed;
       processed.reserve(v.size());
-      for (size_t i = 0; i < v.size(); ++i) {
-        if (v[i] == '\\' && i + 1 < v.size()) {
-          switch (v[i + 1]) {
+      for (size_t i = 0; i < v.size(); ++i)
+      {
+        if (v[i] == '\\' && i + 1 < v.size())
+        {
+          switch (v[i + 1])
+          {
           case 'n':
             processed += '\n';
             ++i;
@@ -1327,7 +1468,9 @@ private:
             processed += v[i];
             break;
           }
-        } else {
+        }
+        else
+        {
           processed += v[i];
         }
       }
@@ -1335,16 +1478,21 @@ private:
     }
 
     // Number literal
-    if (tok->token_type == Lexer::TokenType::NUMBER) {
-      if (v.find('.') != std::string::npos) {
+    if (tok->token_type == Lexer::TokenType::NUMBER)
+    {
+      if (v.find('.') != std::string::npos)
+      {
         double d = std::stod(v);
         EzType ty = (hint == "float32") ? ez_f32() : ez_f64();
         return ez_const_float(ty, d);
       }
       long long iv = 0;
-      try {
+      try
+      {
         iv = std::stoll(v, nullptr, 0);
-      } catch (...) {
+      }
+      catch (...)
+      {
       }
       EzType ty = cshift_type(hint.empty() ? "int32" : hint);
       return ez_const_int(ty, iv);
@@ -1360,7 +1508,8 @@ private:
     // from emit_condition) we would load an int32 alloca as i1, reading only
     // the lowest bit and producing garbage comparison results.
     if (tok->token_type == Lexer::TokenType::IDENTIFIER ||
-        tok->token_type == Lexer::TokenType::KEYWORD) {
+        tok->token_type == Lexer::TokenType::KEYWORD)
+    {
       EzVal ptr = lookup_var(v);
       if (!ptr)
         return nullptr;
@@ -1376,12 +1525,14 @@ private:
   // ── Struct helpers ────────────────────────────────────────────────────────
 
   EzVal gep_field(EzVal struct_ptr, const std::string &struct_var,
-                  const std::string &field) {
+                  const std::string &field)
+  {
     // Resolve the struct type name from the variable's declared type.
     // This avoids false matches when multiple structs share a field name.
     std::string struct_type_name;
     auto it = var_type_map.find(struct_var);
-    if (it != var_type_map.end()) {
+    if (it != var_type_map.end())
+    {
       // Strip pointer/array decorators to get the base struct name
       struct_type_name = it->second;
       while (!struct_type_name.empty() &&
@@ -1393,12 +1544,16 @@ private:
 
     // If we know the struct type, look it up directly; otherwise fall back to
     // searching
-    if (!struct_type_name.empty()) {
+    if (!struct_type_name.empty())
+    {
       auto sit = struct_map.find(struct_type_name);
-      if (sit != struct_map.end()) {
+      if (sit != struct_map.end())
+      {
         auto &layout = sit->second;
-        for (unsigned i = 0; i < layout.field_names.size(); ++i) {
-          if (layout.field_names[i] == field) {
+        for (unsigned i = 0; i < layout.field_names.size(); ++i)
+        {
+          if (layout.field_names[i] == field)
+          {
             EzVal idxs[2] = {ez_const_int(ez_i32(), 0),
                              ez_const_int(ez_i32(), (long long)i)};
             return ez_gep(mod, layout.llvm_type, struct_ptr, idxs, 2,
@@ -1408,9 +1563,12 @@ private:
       }
     }
     // Fallback: search all struct layouts (ambiguous but better than nothing)
-    for (auto &[sname, layout] : struct_map) {
-      for (unsigned i = 0; i < layout.field_names.size(); ++i) {
-        if (layout.field_names[i] == field) {
+    for (auto &[sname, layout] : struct_map)
+    {
+      for (unsigned i = 0; i < layout.field_names.size(); ++i)
+      {
+        if (layout.field_names[i] == field)
+        {
           EzVal idxs[2] = {ez_const_int(ez_i32(), 0),
                            ez_const_int(ez_i32(), (long long)i)};
           return ez_gep(mod, layout.llvm_type, struct_ptr, idxs, 2,
@@ -1421,11 +1579,13 @@ private:
     return struct_ptr;
   }
 
-  std::string field_type_of(const std::string &var, const std::string &field) {
+  std::string field_type_of(const std::string &var, const std::string &field)
+  {
     // Resolve via var_type_map first for accuracy
     std::string struct_type_name;
     auto it = var_type_map.find(var);
-    if (it != var_type_map.end()) {
+    if (it != var_type_map.end())
+    {
       struct_type_name = it->second;
       while (!struct_type_name.empty() &&
              (struct_type_name.back() == '*' ||
@@ -1433,9 +1593,11 @@ private:
               struct_type_name.back() == ':' || struct_type_name.back() == '['))
         struct_type_name.pop_back();
     }
-    if (!struct_type_name.empty()) {
+    if (!struct_type_name.empty())
+    {
       auto sit = struct_map.find(struct_type_name);
-      if (sit != struct_map.end()) {
+      if (sit != struct_map.end())
+      {
         auto &layout = sit->second;
         for (unsigned i = 0; i < layout.field_names.size(); ++i)
           if (layout.field_names[i] == field)
@@ -1443,7 +1605,8 @@ private:
       }
     }
     // Fallback: search all layouts
-    for (auto &[sname, layout] : struct_map) {
+    for (auto &[sname, layout] : struct_map)
+    {
       for (unsigned i = 0; i < layout.field_names.size(); ++i)
         if (layout.field_names[i] == field)
           return layout.field_types[i];

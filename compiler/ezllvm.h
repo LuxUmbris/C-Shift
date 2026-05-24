@@ -97,7 +97,8 @@ typedef LLVMTypeRef EzType;
  *               Path to ld-linux / ld.so on the target.
  *               Set to "" for static or bare-metal builds.
  */
-typedef struct EzTarget {
+typedef struct EzTarget
+{
   char triple[128];
   char cpu[64];
   char features[256];
@@ -109,18 +110,21 @@ typedef struct EzTarget {
 /* ─── Internal structs ───────────────────────────────────────────────────────
  */
 
-struct EzModule {
+struct EzModule
+{
   LLVMContextRef ctx;
   LLVMModuleRef mod;
   LLVMBuilderRef builder;
 };
 
-struct EzFunc {
+struct EzFunc
+{
   EzModule *owner;
   LLVMValueRef fn;
 };
 
-struct EzBlock {
+struct EzBlock
+{
   EzFunc *owner;
   LLVMBasicBlockRef bb;
 };
@@ -136,7 +140,8 @@ struct EzBlock {
 static inline void ez__fill_target(EzTarget *t, const char *triple,
                                    const char *cpu, const char *features,
                                    const char *linker, const char *sysroot,
-                                   const char *dynlinker) {
+                                   const char *dynlinker)
+{
   memset(t, 0, sizeof(*t));
   strncpy(t->triple, triple, sizeof(t->triple) - 1);
   strncpy(t->cpu, cpu, sizeof(t->cpu) - 1);
@@ -151,7 +156,8 @@ static inline void ez__fill_target(EzTarget *t, const char *triple,
  * Equivalent to not specifying a target at all.
  * Use this when you want cross-compilation infra but for the local machine.
  */
-static inline EzTarget *ez_target_native(void) {
+static inline EzTarget *ez_target_native(void)
+{
   EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
   assert(t);
   char *triple = LLVMGetDefaultTargetTriple();
@@ -161,7 +167,8 @@ static inline EzTarget *ez_target_native(void) {
 }
 
 /** x86-64 Linux (glibc) — e.g. most desktop/server Linux. */
-static inline EzTarget *ez_target_x86_64_linux(void) {
+static inline EzTarget *ez_target_x86_64_linux(void)
+{
   EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
   assert(t);
   ez__fill_target(t, "x86_64-linux-gnu", "x86-64", "", "ld.lld",
@@ -171,7 +178,8 @@ static inline EzTarget *ez_target_x86_64_linux(void) {
 
 /** ARM64 / AArch64 Linux (glibc) — Raspberry Pi 4+, AWS Graviton, etc.
  *  Install cross toolchain:  sudo apt install gcc-aarch64-linux-gnu */
-static inline EzTarget *ez_target_aarch64_linux(void) {
+static inline EzTarget *ez_target_aarch64_linux(void)
+{
   EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
   assert(t);
   ez__fill_target(t, "aarch64-linux-gnu", "generic", "", "ld.lld",
@@ -181,7 +189,8 @@ static inline EzTarget *ez_target_aarch64_linux(void) {
 
 /** ARM 32-bit Linux hard-float (gnueabihf) — Raspberry Pi 1-3, old phones.
  *  Install cross toolchain:  sudo apt install gcc-arm-linux-gnueabihf */
-static inline EzTarget *ez_target_arm32_linux(void) {
+static inline EzTarget *ez_target_arm32_linux(void)
+{
   EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
   assert(t);
   ez__fill_target(t, "armv7-linux-gnueabihf", "generic", "+vfp3,+neon",
@@ -192,7 +201,8 @@ static inline EzTarget *ez_target_arm32_linux(void) {
 
 /** RISC-V 64-bit Linux (glibc) — SiFive boards, QEMU, etc.
  *  Install cross toolchain:  sudo apt install gcc-riscv64-linux-gnu */
-static inline EzTarget *ez_target_riscv64_linux(void) {
+static inline EzTarget *ez_target_riscv64_linux(void)
+{
   EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
   assert(t);
   ez__fill_target(t, "riscv64-linux-gnu", "generic-rv64", "+m,+a,+f,+d,+c",
@@ -203,7 +213,8 @@ static inline EzTarget *ez_target_riscv64_linux(void) {
 
 /** x86-64 macOS (arm64 also runs x86 via Rosetta).
  *  Linking macOS binaries from Linux requires an osxcross sysroot. */
-static inline EzTarget *ez_target_x86_64_macos(void) {
+static inline EzTarget *ez_target_x86_64_macos(void)
+{
   EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
   assert(t);
   ez__fill_target(t, "x86_64-apple-macosx10.15.0", "x86-64", "", "ld64.lld",
@@ -214,7 +225,8 @@ static inline EzTarget *ez_target_x86_64_macos(void) {
 
 /** ARM64 macOS (Apple Silicon — M1/M2/M3).
  *  Linking from Linux requires an osxcross sysroot. */
-static inline EzTarget *ez_target_aarch64_macos(void) {
+static inline EzTarget *ez_target_aarch64_macos(void)
+{
   EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
   assert(t);
   ez__fill_target(t, "aarch64-apple-macosx11.0.0", "apple-a14", "", "ld64.lld",
@@ -225,7 +237,8 @@ static inline EzTarget *ez_target_aarch64_macos(void) {
 
 /** x86-64 Windows (MSVC ABI).
  *  Use lld-link or cross-compile with a mingw sysroot. */
-static inline EzTarget *ez_target_x86_64_windows(void) {
+static inline EzTarget *ez_target_x86_64_windows(void)
+{
   EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
   assert(t);
   ez__fill_target(t, "x86_64-pc-windows-msvc", "x86-64", "", "lld-link",
@@ -242,9 +255,9 @@ static inline EzTarget *ez_target_x86_64_windows(void) {
  *                     "riscv32-unknown-elf"  for embedded RISC-V
  *                     "x86_64-unknown-none"  for a 64-bit kernel
  */
-static inline EzTarget *ez_target_bare_metal(const char *triple,
-                                             const char *cpu,
-                                             const char *features) {
+static inline EzTarget *
+ez_target_bare_metal(const char *triple, const char *cpu, const char *features)
+{
   EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
   assert(t);
   ez__fill_target(t, triple, cpu, features, "ld.lld", "", "");
@@ -262,7 +275,8 @@ static inline void ez_target_free(EzTarget *t) { free(t); }
 /**
  * ez_module — create a new module for the host (native) target.
  */
-static inline EzModule *ez_module(const char *name) {
+static inline EzModule *ez_module(const char *name)
+{
   EzModule *m = (EzModule *)malloc(sizeof(EzModule));
   assert(m);
   m->ctx = LLVMGetGlobalContext();
@@ -276,7 +290,8 @@ static inline EzModule *ez_module(const char *name) {
  * Sets the target triple and data layout so codegen is correct for that arch.
  * Use this instead of ez_module() when cross-compiling.
  */
-static inline EzModule *ez_module_for_target(const char *name, EzTarget *tgt) {
+static inline EzModule *ez_module_for_target(const char *name, EzTarget *tgt)
+{
   LLVMInitializeAllTargetInfos();
   LLVMInitializeAllTargets();
   LLVMInitializeAllTargetMCs();
@@ -294,14 +309,17 @@ static inline EzModule *ez_module_for_target(const char *name, EzTarget *tgt) {
   /* Compute the data layout for this triple and bake it in */
   LLVMTargetRef target_ref;
   char *err = NULL;
-  if (LLVMGetTargetFromTriple(tgt->triple, &target_ref, &err) == 0) {
+  if (LLVMGetTargetFromTriple(tgt->triple, &target_ref, &err) == 0)
+  {
     LLVMTargetMachineRef tm = LLVMCreateTargetMachine(
         target_ref, tgt->triple, tgt->cpu, tgt->features,
         LLVMCodeGenLevelDefault, LLVMRelocPIC, LLVMCodeModelDefault);
     LLVMTargetDataRef dl = LLVMCreateTargetDataLayout(tm);
     LLVMSetModuleDataLayout(m->mod, dl);
     LLVMDisposeTargetMachine(tm);
-  } else {
+  }
+  else
+  {
     fprintf(stderr, "ez_module_for_target: unknown triple '%s': %s\n",
             tgt->triple, err ? err : "");
     LLVMDisposeMessage(err);
@@ -312,7 +330,8 @@ static inline EzModule *ez_module_for_target(const char *name, EzTarget *tgt) {
 /**
  * ez_free — destroy a module and release all LLVM resources.
  */
-static inline void ez_free(EzModule *m) {
+static inline void ez_free(EzModule *m)
+{
   LLVMDisposeBuilder(m->builder);
   LLVMDisposeModule(m->mod);
   free(m);
@@ -327,9 +346,11 @@ static inline void ez_dump(EzModule *m) { LLVMDumpModule(m->mod); }
  * ez_to_file — write human-readable LLVM IR (.ll) to a file.
  * @return 0 on success, non-zero on error.
  */
-static inline int ez_to_file(EzModule *m, const char *path) {
+static inline int ez_to_file(EzModule *m, const char *path)
+{
   char *err = NULL;
-  if (LLVMPrintModuleToFile(m->mod, path, &err) != 0) {
+  if (LLVMPrintModuleToFile(m->mod, path, &err) != 0)
+  {
     fprintf(stderr, "ez_to_file: %s\n", err ? err : "(unknown)");
     LLVMDisposeMessage(err);
     return 1;
@@ -341,10 +362,12 @@ static inline int ez_to_file(EzModule *m, const char *path) {
  * ez_verify — check the IR for consistency errors.
  * Prints problems to stderr. Returns 0 if valid, 1 if broken.
  */
-static inline int ez_verify(EzModule *m) {
+static inline int ez_verify(EzModule *m)
+{
   char *err = NULL;
   int bad = LLVMVerifyModule(m->mod, LLVMPrintMessageAction, &err);
-  if (bad && err) {
+  if (bad && err)
+  {
     fprintf(stderr, "ez_verify: %s\n", err);
     LLVMDisposeMessage(err);
   }
@@ -353,7 +376,8 @@ static inline int ez_verify(EzModule *m) {
 
 /* ─── Internal: build a TargetMachine from an EzTarget ───────────────────────
  */
-static inline LLVMTargetMachineRef ez__make_tm(EzTarget *tgt) {
+static inline LLVMTargetMachineRef ez__make_tm(EzTarget *tgt)
+{
   LLVMInitializeAllTargetInfos();
   LLVMInitializeAllTargets();
   LLVMInitializeAllTargetMCs();
@@ -361,7 +385,8 @@ static inline LLVMTargetMachineRef ez__make_tm(EzTarget *tgt) {
 
   LLVMTargetRef target_ref;
   char *err = NULL;
-  if (LLVMGetTargetFromTriple(tgt->triple, &target_ref, &err) != 0) {
+  if (LLVMGetTargetFromTriple(tgt->triple, &target_ref, &err) != 0)
+  {
     fprintf(stderr, "ez: can't find target '%s': %s\n", tgt->triple,
             err ? err : "");
     LLVMDisposeMessage(err);
@@ -382,7 +407,8 @@ static inline LLVMTargetMachineRef ez__make_tm(EzTarget *tgt) {
  * @param path  Output path, e.g. "out.o".
  * @return      0 on success, non-zero on error.
  */
-static inline int ez_compile(EzModule *m, const char *path) {
+static inline int ez_compile(EzModule *m, const char *path)
+{
   EzTarget *native = ez_target_native();
   LLVMTargetMachineRef tm = ez__make_tm(native);
   ez_target_free(native);
@@ -392,7 +418,8 @@ static inline int ez_compile(EzModule *m, const char *path) {
   LLVMSetModuleDataLayout(m->mod, LLVMCreateTargetDataLayout(tm));
   char *err = NULL;
   int rc = LLVMTargetMachineEmitToFile(tm, m->mod, path, LLVMObjectFile, &err);
-  if (rc) {
+  if (rc)
+  {
     fprintf(stderr, "ez_compile: %s\n", err ? err : "");
     LLVMDisposeMessage(err);
   }
@@ -414,7 +441,8 @@ static inline int ez_compile(EzModule *m, const char *path) {
  *   // ... build IR ...
  *   ez_compile_for(mod, arm, "app-arm64.o");
  */
-static inline int ez_compile_for(EzModule *m, EzTarget *tgt, const char *path) {
+static inline int ez_compile_for(EzModule *m, EzTarget *tgt, const char *path)
+{
   LLVMTargetMachineRef tm = ez__make_tm(tgt);
   if (!tm)
     return 1;
@@ -422,7 +450,8 @@ static inline int ez_compile_for(EzModule *m, EzTarget *tgt, const char *path) {
   LLVMSetModuleDataLayout(m->mod, LLVMCreateTargetDataLayout(tm));
   char *err = NULL;
   int rc = LLVMTargetMachineEmitToFile(tm, m->mod, path, LLVMObjectFile, &err);
-  if (rc) {
+  if (rc)
+  {
     fprintf(stderr, "ez_compile_for: %s\n", err ? err : "");
     LLVMDisposeMessage(err);
   }
@@ -435,7 +464,8 @@ static inline int ez_compile_for(EzModule *m, EzTarget *tgt, const char *path) {
  * Writes a .s file you can inspect or feed to an assembler.
  * @return 0 on success.
  */
-static inline int ez_compile_asm(EzModule *m, const char *path) {
+static inline int ez_compile_asm(EzModule *m, const char *path)
+{
   EzTarget *native = ez_target_native();
   LLVMTargetMachineRef tm = ez__make_tm(native);
   ez_target_free(native);
@@ -444,7 +474,8 @@ static inline int ez_compile_asm(EzModule *m, const char *path) {
   char *err = NULL;
   int rc =
       LLVMTargetMachineEmitToFile(tm, m->mod, path, LLVMAssemblyFile, &err);
-  if (rc) {
+  if (rc)
+  {
     fprintf(stderr, "ez_compile_asm: %s\n", err ? err : "");
     LLVMDisposeMessage(err);
   }
@@ -456,7 +487,8 @@ static inline int ez_compile_asm(EzModule *m, const char *path) {
  * ez_compile_asm_for — emit assembly for a specific target.
  */
 static inline int ez_compile_asm_for(EzModule *m, EzTarget *tgt,
-                                     const char *path) {
+                                     const char *path)
+{
   LLVMTargetMachineRef tm = ez__make_tm(tgt);
   if (!tm)
     return 1;
@@ -465,7 +497,8 @@ static inline int ez_compile_asm_for(EzModule *m, EzTarget *tgt,
   char *err = NULL;
   int rc =
       LLVMTargetMachineEmitToFile(tm, m->mod, path, LLVMAssemblyFile, &err);
-  if (rc) {
+  if (rc)
+  {
     fprintf(stderr, "ez_compile_asm_for: %s\n", err ? err : "");
     LLVMDisposeMessage(err);
   }
@@ -494,7 +527,8 @@ static inline int ez_compile_asm_for(EzModule *m, EzTarget *tgt,
 
 /* ─── Internal: run a shell command, print it on failure ──────────────────────
  */
-static inline int ez__run(const char *cmd) {
+static inline int ez__run(const char *cmd)
+{
   int rc = system(cmd);
   if (rc != 0)
     fprintf(stderr, "ez: linker command failed (exit %d):\n  %s\n", rc, cmd);
@@ -504,17 +538,20 @@ static inline int ez__run(const char *cmd) {
 /* ─── Internal: find a working linker binary ──────────────────────────────────
  */
 static inline int ez__find_linker(const char *preferred, char *out,
-                                  size_t outsz) {
+                                  size_t outsz)
+{
   /* candidates in preference order */
   const char *candidates[] = {
       preferred[0] ? preferred : NULL, "ld.lld", "lld", "ld", "cc", NULL};
   char probe[256];
-  for (int i = 0; candidates[i]; i++) {
+  for (int i = 0; candidates[i]; i++)
+  {
     if (!candidates[i] || !candidates[i][0])
       continue;
     snprintf(probe, sizeof(probe), "command -v %s >/dev/null 2>&1",
              candidates[i]);
-    if (system(probe) == 0) {
+    if (system(probe) == 0)
+    {
       strncpy(out, candidates[i], outsz - 1);
       out[outsz - 1] = '\0';
       return 1;
@@ -547,9 +584,11 @@ static inline int ez__find_linker(const char *preferred, char *out,
  */
 static inline int ez_link_exe(const char **obj_files, int nobj,
                               const char *out_path, const char **extra_libs,
-                              int nlibs) {
+                              int nlibs)
+{
   char linker[128];
-  if (!ez__find_linker("ld.lld", linker, sizeof(linker))) {
+  if (!ez__find_linker("ld.lld", linker, sizeof(linker)))
+  {
     fprintf(
         stderr,
         "ez_link_exe: no linker found. Install lld:  sudo apt install lld\n");
@@ -565,23 +604,29 @@ static inline int ez_link_exe(const char **obj_files, int nobj,
   char crt1[512] = {0}, crti[512] = {0}, crtn[512] = {0};
   char libgcc[512] = {0}, libgcc_s[512] = {0};
 
-  if (using_cc) {
+  if (using_cc)
+  {
     /* cc handles crt*.o and dynamic linker automatically */
     snprintf(cmd, sizeof(cmd), "%s", linker);
-  } else {
+  }
+  else
+  {
     /* lld / ld: we need to specify crt files and dynamic linker ourselves.
      * We use $(cc --print-file-name=...) to locate them portably. */
     FILE *f;
 #define EZ__FIND_CRT(var, name)                                                \
   f = popen("cc --print-file-name=" name " 2>/dev/null", "r");                 \
-  if (f) {                                                                     \
+  if (f)                                                                       \
+  {                                                                            \
     if (!fgets(var, sizeof(var), f))                                           \
       var[0] = '\0';                                                           \
     size_t _l = strlen(var);                                                   \
     if (_l && var[_l - 1] == '\n')                                             \
       var[_l - 1] = '\0';                                                      \
     pclose(f);                                                                 \
-  } else {                                                                     \
+  }                                                                            \
+  else                                                                         \
+  {                                                                            \
     var[0] = '\0';                                                             \
   }
     EZ__FIND_CRT(crt1, "crt1.o")
@@ -595,18 +640,22 @@ static inline int ez_link_exe(const char **obj_files, int nobj,
     /* try to detect dynamically */
     FILE *ld = popen(
         "cc -Wl,--verbose 2>&1 | grep 'ld-linux\\|ld-musl' | head -1", "r");
-    if (ld) {
+    if (ld)
+    {
       char line[512] = {0};
-      if (fgets(line, sizeof(line), ld)) {
+      if (fgets(line, sizeof(line), ld))
+      {
         char *s = strstr(line, "/");
-        if (s) {
+        if (s)
+        {
           char *e = strchr(s, '"');
           if (!e)
             e = strchr(s, ' ');
           if (!e)
             e = s + strlen(s);
           size_t len = (size_t)(e - s);
-          if (len > 0 && len < sizeof(dynld) - 1) {
+          if (len > 0 && len < sizeof(dynld) - 1)
+          {
             memcpy(dynld, s, len);
             dynld[len] = '\0';
           }
@@ -625,7 +674,8 @@ static inline int ez_link_exe(const char **obj_files, int nobj,
   }
 
   /* append object files */
-  for (int i = 0; i < nobj; i++) {
+  for (int i = 0; i < nobj; i++)
+  {
     strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
     strncat(cmd, obj_files[i], sizeof(cmd) - strlen(cmd) - 1);
   }
@@ -635,23 +685,28 @@ static inline int ez_link_exe(const char **obj_files, int nobj,
   strncat(cmd, out_path, sizeof(cmd) - strlen(cmd) - 1);
 
   /* extra libs */
-  for (int i = 0; i < nlibs; i++) {
+  for (int i = 0; i < nlibs; i++)
+  {
     strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
     strncat(cmd, extra_libs[i], sizeof(cmd) - strlen(cmd) - 1);
   }
 
   /* libc + libgcc + crtn.o — crtn.o must come AFTER all user objects */
-  if (!using_cc) {
+  if (!using_cc)
+  {
     strncat(cmd, " -lc", sizeof(cmd) - strlen(cmd) - 1);
-    if (libgcc[0]) {
+    if (libgcc[0])
+    {
       strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
       strncat(cmd, libgcc, sizeof(cmd) - strlen(cmd) - 1);
     }
-    if (libgcc_s[0]) {
+    if (libgcc_s[0])
+    {
       strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
       strncat(cmd, libgcc_s, sizeof(cmd) - strlen(cmd) - 1);
     }
-    if (crtn[0]) {
+    if (crtn[0])
+    {
       strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
       strncat(cmd, crtn, sizeof(cmd) - strlen(cmd) - 1);
     }
@@ -693,7 +748,8 @@ static inline int ez_link_exe(const char **obj_files, int nobj,
  */
 static inline int ez_link_exe_for(EzTarget *tgt, const char **obj_files,
                                   int nobj, const char **extra_flags,
-                                  int nflags, const char *out_path) {
+                                  int nflags, const char *out_path)
+{
   /* pick the right lld frontend for the target OS */
   char linker[128];
   const char *preferred = tgt->linker[0] ? tgt->linker : "ld.lld";
@@ -701,17 +757,20 @@ static inline int ez_link_exe_for(EzTarget *tgt, const char **obj_files,
   /* map common lld frontends */
   const char *lld_candidates[] = {preferred, "ld.lld", "lld", NULL};
   int found = 0;
-  for (int i = 0; lld_candidates[i]; i++) {
+  for (int i = 0; lld_candidates[i]; i++)
+  {
     char probe[256];
     snprintf(probe, sizeof(probe), "command -v %s >/dev/null 2>&1",
              lld_candidates[i]);
-    if (system(probe) == 0) {
+    if (system(probe) == 0)
+    {
       strncpy(linker, lld_candidates[i], sizeof(linker) - 1);
       found = 1;
       break;
     }
   }
-  if (!found) {
+  if (!found)
+  {
     fprintf(stderr, "ez_link_exe_for: lld not found. Install with:\n"
                     "  sudo apt install lld\n");
     return 1;
@@ -726,7 +785,8 @@ static inline int ez_link_exe_for(EzTarget *tgt, const char **obj_files,
   int is_windows = (strstr(tgt->triple, "windows") != NULL ||
                     strstr(tgt->triple, "msvc") != NULL);
 
-  if (is_macho) {
+  if (is_macho)
+  {
     snprintf(cmd, sizeof(cmd), "%s -arch %s",
              strcmp(linker, "ld.lld") == 0 ? "ld64.lld" : linker,
              strstr(tgt->triple, "aarch64") ? "arm64" : "x86_64");
@@ -734,31 +794,36 @@ static inline int ez_link_exe_for(EzTarget *tgt, const char **obj_files,
       snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " -syslibroot %s",
                tgt->sysroot);
     strncat(cmd, " -lSystem", sizeof(cmd) - strlen(cmd) - 1);
-
-  } else if (is_windows) {
+  }
+  else if (is_windows)
+  {
     snprintf(cmd, sizeof(cmd), "lld-link");
     if (tgt->sysroot[0])
       snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " /libpath:%s/lib",
                tgt->sysroot);
-    for (int i = 0; i < nobj; i++) {
+    for (int i = 0; i < nobj; i++)
+    {
       strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
       strncat(cmd, obj_files[i], sizeof(cmd) - strlen(cmd) - 1);
     }
     snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " /out:%s",
              out_path);
-    for (int i = 0; i < nflags; i++) {
+    for (int i = 0; i < nflags; i++)
+    {
       strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
       strncat(cmd, extra_flags[i], sizeof(cmd) - strlen(cmd) - 1);
     }
     return ez__run(cmd);
-
-  } else {
+  }
+  else
+  {
     /* ELF target (Linux, bare-metal) */
     int bare = (tgt->sysroot[0] == '\0' && tgt->dynamic_linker[0] == '\0');
 
     snprintf(cmd, sizeof(cmd), "%s --target=%s", linker, tgt->triple);
 
-    if (!bare) {
+    if (!bare)
+    {
       /* dynamic Linux binary */
       if (tgt->sysroot[0])
         snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " --sysroot=%s",
@@ -768,7 +833,8 @@ static inline int ez_link_exe_for(EzTarget *tgt, const char **obj_files,
                  " -dynamic-linker %s", tgt->dynamic_linker);
 
       /* crt files from sysroot */
-      if (tgt->sysroot[0]) {
+      if (tgt->sysroot[0])
+      {
         /* try common sysroot layout */
         snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
                  " %s/usr/lib/crt1.o"
@@ -779,7 +845,8 @@ static inline int ez_link_exe_for(EzTarget *tgt, const char **obj_files,
   }
 
   /* append object files */
-  for (int i = 0; i < nobj; i++) {
+  for (int i = 0; i < nobj; i++)
+  {
     strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
     strncat(cmd, obj_files[i], sizeof(cmd) - strlen(cmd) - 1);
   }
@@ -789,15 +856,18 @@ static inline int ez_link_exe_for(EzTarget *tgt, const char **obj_files,
   strncat(cmd, out_path, sizeof(cmd) - strlen(cmd) - 1);
 
   /* extra flags (linker scripts, --entry, etc.) */
-  for (int i = 0; i < nflags; i++) {
+  for (int i = 0; i < nflags; i++)
+  {
     strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
     strncat(cmd, extra_flags[i], sizeof(cmd) - strlen(cmd) - 1);
   }
 
   /* libc for non-bare-metal ELF */
-  if (!is_macho && !is_windows) {
+  if (!is_macho && !is_windows)
+  {
     int bare2 = (tgt->sysroot[0] == '\0' && tgt->dynamic_linker[0] == '\0');
-    if (!bare2) {
+    if (!bare2)
+    {
       if (tgt->sysroot[0])
         snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
                  " -L%s/usr/lib -L%s/lib", tgt->sysroot, tgt->sysroot);
@@ -822,15 +892,18 @@ static inline int ez_link_exe_for(EzTarget *tgt, const char **obj_files,
  * @return           0 on success.
  */
 static inline int ez_link_shared(const char **obj_files, int nobj,
-                                 const char *out_path) {
+                                 const char *out_path)
+{
   char linker[128];
-  if (!ez__find_linker("ld.lld", linker, sizeof(linker))) {
+  if (!ez__find_linker("ld.lld", linker, sizeof(linker)))
+  {
     fprintf(stderr, "ez_link_shared: no linker found.\n");
     return 1;
   }
   char cmd[4096];
   snprintf(cmd, sizeof(cmd), "%s -shared", linker);
-  for (int i = 0; i < nobj; i++) {
+  for (int i = 0; i < nobj; i++)
+  {
     strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
     strncat(cmd, obj_files[i], sizeof(cmd) - strlen(cmd) - 1);
   }
@@ -848,10 +921,12 @@ static inline int ez_link_shared(const char **obj_files, int nobj,
  * @return           0 on success.
  */
 static inline int ez_link_static(const char **obj_files, int nobj,
-                                 const char *out_path) {
+                                 const char *out_path)
+{
   char cmd[4096];
   snprintf(cmd, sizeof(cmd), "ar rcs %s", out_path);
-  for (int i = 0; i < nobj; i++) {
+  for (int i = 0; i < nobj; i++)
+  {
     strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
     strncat(cmd, obj_files[i], sizeof(cmd) - strlen(cmd) - 1);
   }
@@ -873,7 +948,8 @@ static inline int ez_link_static(const char **obj_files, int nobj,
  * @return           0 on success.
  */
 static inline int ez_build_exe(EzModule *m, const char *out_path,
-                               const char **extra_libs, int nlibs) {
+                               const char **extra_libs, int nlibs)
+{
   char obj[512];
   snprintf(obj, sizeof(obj), "%s.ez_tmp.o", out_path);
   if (ez_compile(m, obj) != 0)
@@ -903,7 +979,8 @@ static inline int ez_build_exe(EzModule *m, const char *out_path,
  */
 static inline int ez_build_exe_for(EzModule *m, EzTarget *tgt,
                                    const char *out_path,
-                                   const char **extra_flags, int nflags) {
+                                   const char **extra_flags, int nflags)
+{
   char obj[512];
   snprintf(obj, sizeof(obj), "%s.ez_tmp.o", out_path);
   if (ez_compile_for(m, tgt, obj) != 0)
@@ -929,19 +1006,24 @@ static inline EzType ez_f64(void) { return LLVMDoubleType(); }
 static inline EzType ez_void(void) { return LLVMVoidType(); }
 static inline EzType ez_ptr(void) { return LLVMPointerType(LLVMInt8Type(), 0); }
 static inline EzType ez_ptr_to(EzType elem) { return LLVMPointerType(elem, 0); }
-static inline EzType ez_array(EzType elem, unsigned count) {
+static inline EzType ez_array(EzType elem, unsigned count)
+{
   return LLVMArrayType(elem, count);
 }
-static inline EzType ez_struct(EzType *fields, unsigned count) {
+static inline EzType ez_struct(EzType *fields, unsigned count)
+{
   return LLVMStructType(fields, count, 0);
 }
-static inline EzType ez_struct_named(EzModule *m, const char *name) {
+static inline EzType ez_struct_named(EzModule *m, const char *name)
+{
   return LLVMStructCreateNamed(m->ctx, name);
 }
-static inline void ez_struct_body(EzType s, EzType *f, unsigned n) {
+static inline void ez_struct_body(EzType s, EzType *f, unsigned n)
+{
   LLVMStructSetBody(s, f, n, 0);
 }
-static inline EzType ez_func_type(EzType ret, EzType *p, unsigned n, int v) {
+static inline EzType ez_func_type(EzType ret, EzType *p, unsigned n, int v)
+{
   return LLVMFunctionType(ret, p, n, v);
 }
 
@@ -950,21 +1032,25 @@ static inline EzType ez_func_type(EzType ret, EzType *p, unsigned n, int v) {
    ═══════════════════════════════════════════════════════════════════════════
  */
 
-static inline EzVal ez_const_int(EzType ty, long long v) {
+static inline EzVal ez_const_int(EzType ty, long long v)
+{
   return LLVMConstInt(ty, (unsigned long long)v, 1);
 }
-static inline EzVal ez_const_uint(EzType ty, unsigned long long v) {
+static inline EzVal ez_const_uint(EzType ty, unsigned long long v)
+{
   return LLVMConstInt(ty, v, 0);
 }
-static inline EzVal ez_const_float(EzType ty, double v) {
+static inline EzVal ez_const_float(EzType ty, double v)
+{
   return LLVMConstReal(ty, v);
 }
 static inline EzVal ez_const_null(EzType ty) { return LLVMConstNull(ty); }
-static inline EzVal ez_const_bool(int v) {
+static inline EzVal ez_const_bool(int v)
+{
   return LLVMConstInt(LLVMInt1Type(), v ? 1 : 0, 0);
 }
-static inline EzVal ez_global_string(EzModule *m, const char *s,
-                                     const char *n) {
+static inline EzVal ez_global_string(EzModule *m, const char *s, const char *n)
+{
   return LLVMBuildGlobalStringPtr(m->builder, s, n);
 }
 
@@ -974,7 +1060,8 @@ static inline EzVal ez_global_string(EzModule *m, const char *s,
  */
 
 static inline EzFunc *ez_func(EzModule *m, const char *name, EzType ret,
-                              EzType *params, unsigned nparams, int vararg) {
+                              EzType *params, unsigned nparams, int vararg)
+{
   EzFunc *f = (EzFunc *)malloc(sizeof(EzFunc));
   assert(f);
   f->owner = m;
@@ -984,20 +1071,24 @@ static inline EzFunc *ez_func(EzModule *m, const char *name, EzType ret,
 }
 
 static inline EzFunc *ez_extern(EzModule *m, const char *name, EzType ret,
-                                EzType *params, unsigned nparams, int vararg) {
+                                EzType *params, unsigned nparams, int vararg)
+{
   EzFunc *f = ez_func(m, name, ret, params, nparams, vararg);
   LLVMSetLinkage(f->fn, LLVMExternalLinkage);
   return f;
 }
 
-static inline EzVal ez_param(EzFunc *f, unsigned i) {
+static inline EzVal ez_param(EzFunc *f, unsigned i)
+{
   return LLVMGetParam(f->fn, i);
 }
-static inline void ez_set_param_name(EzFunc *f, unsigned i, const char *n) {
+static inline void ez_set_param_name(EzFunc *f, unsigned i, const char *n)
+{
   LLVMSetValueName2(LLVMGetParam(f->fn, i), n, strlen(n));
 }
 
-static inline EzBlock *ez_block(EzFunc *f, const char *name) {
+static inline EzBlock *ez_block(EzFunc *f, const char *name)
+{
   EzBlock *b = (EzBlock *)malloc(sizeof(EzBlock));
   assert(b);
   b->owner = f;
@@ -1005,7 +1096,8 @@ static inline EzBlock *ez_block(EzFunc *f, const char *name) {
   return b;
 }
 
-static inline void ez_use(EzBlock *b) {
+static inline void ez_use(EzBlock *b)
+{
   LLVMPositionBuilderAtEnd(b->owner->owner->builder, b->bb);
 }
 
@@ -1014,64 +1106,84 @@ static inline void ez_use(EzBlock *b) {
    ═══════════════════════════════════════════════════════════════════════════
  */
 
-static inline EzVal ez_add(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_add(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildAdd(m->builder, a, b, n);
 }
-static inline EzVal ez_sub(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_sub(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildSub(m->builder, a, b, n);
 }
-static inline EzVal ez_mul(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_mul(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildMul(m->builder, a, b, n);
 }
-static inline EzVal ez_sdiv(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_sdiv(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildSDiv(m->builder, a, b, n);
 }
-static inline EzVal ez_udiv(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_udiv(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildUDiv(m->builder, a, b, n);
 }
-static inline EzVal ez_srem(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_srem(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildSRem(m->builder, a, b, n);
 }
-static inline EzVal ez_urem(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_urem(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildURem(m->builder, a, b, n);
 }
-static inline EzVal ez_neg(EzModule *m, EzVal a, const char *n) {
+static inline EzVal ez_neg(EzModule *m, EzVal a, const char *n)
+{
   return LLVMBuildNeg(m->builder, a, n);
 }
-static inline EzVal ez_and(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_and(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildAnd(m->builder, a, b, n);
 }
-static inline EzVal ez_or(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_or(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildOr(m->builder, a, b, n);
 }
-static inline EzVal ez_xor(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_xor(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildXor(m->builder, a, b, n);
 }
-static inline EzVal ez_not(EzModule *m, EzVal a, const char *n) {
+static inline EzVal ez_not(EzModule *m, EzVal a, const char *n)
+{
   return LLVMBuildNot(m->builder, a, n);
 }
-static inline EzVal ez_shl(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_shl(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildShl(m->builder, a, b, n);
 }
-static inline EzVal ez_ashr(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_ashr(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildAShr(m->builder, a, b, n);
 }
-static inline EzVal ez_lshr(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_lshr(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildLShr(m->builder, a, b, n);
 }
-static inline EzVal ez_fadd(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_fadd(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildFAdd(m->builder, a, b, n);
 }
-static inline EzVal ez_fsub(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_fsub(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildFSub(m->builder, a, b, n);
 }
-static inline EzVal ez_fmul(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_fmul(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildFMul(m->builder, a, b, n);
 }
-static inline EzVal ez_fdiv(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_fdiv(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildFDiv(m->builder, a, b, n);
 }
-static inline EzVal ez_fneg(EzModule *m, EzVal a, const char *n) {
+static inline EzVal ez_fneg(EzModule *m, EzVal a, const char *n)
+{
   return LLVMBuildFNeg(m->builder, a, n);
 }
 
@@ -1080,37 +1192,48 @@ static inline EzVal ez_fneg(EzModule *m, EzVal a, const char *n) {
    ═══════════════════════════════════════════════════════════════════════════
  */
 
-static inline EzVal ez_eq(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_eq(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildICmp(m->builder, LLVMIntEQ, a, b, n);
 }
-static inline EzVal ez_ne(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_ne(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildICmp(m->builder, LLVMIntNE, a, b, n);
 }
-static inline EzVal ez_slt(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_slt(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildICmp(m->builder, LLVMIntSLT, a, b, n);
 }
-static inline EzVal ez_sle(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_sle(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildICmp(m->builder, LLVMIntSLE, a, b, n);
 }
-static inline EzVal ez_sgt(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_sgt(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildICmp(m->builder, LLVMIntSGT, a, b, n);
 }
-static inline EzVal ez_sge(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_sge(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildICmp(m->builder, LLVMIntSGE, a, b, n);
 }
-static inline EzVal ez_ult(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_ult(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildICmp(m->builder, LLVMIntULT, a, b, n);
 }
-static inline EzVal ez_ugt(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_ugt(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildICmp(m->builder, LLVMIntUGT, a, b, n);
 }
-static inline EzVal ez_feq(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_feq(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildFCmp(m->builder, LLVMRealOEQ, a, b, n);
 }
-static inline EzVal ez_flt(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_flt(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildFCmp(m->builder, LLVMRealOLT, a, b, n);
 }
-static inline EzVal ez_fgt(EzModule *m, EzVal a, EzVal b, const char *n) {
+static inline EzVal ez_fgt(EzModule *m, EzVal a, EzVal b, const char *n)
+{
   return LLVMBuildFCmp(m->builder, LLVMRealOGT, a, b, n);
 }
 
@@ -1121,11 +1244,13 @@ static inline EzVal ez_fgt(EzModule *m, EzVal a, EzVal b, const char *n) {
 
 static inline void ez_ret(EzModule *m, EzVal v) { LLVMBuildRet(m->builder, v); }
 static inline void ez_ret_void(EzModule *m) { LLVMBuildRetVoid(m->builder); }
-static inline void ez_br(EzModule *m, EzBlock *dest) {
+static inline void ez_br(EzModule *m, EzBlock *dest)
+{
   LLVMBuildBr(m->builder, dest->bb);
 }
 static inline void ez_cond_br(EzModule *m, EzVal cond, EzBlock *then_b,
-                              EzBlock *else_b) {
+                              EzBlock *else_b)
+{
   LLVMBuildCondBr(m->builder, cond, then_b->bb, else_b->bb);
 }
 
@@ -1134,17 +1259,21 @@ static inline void ez_cond_br(EzModule *m, EzVal cond, EzBlock *then_b,
    ═══════════════════════════════════════════════════════════════════════════
  */
 
-static inline EzVal ez_alloca(EzModule *m, EzType ty, const char *n) {
+static inline EzVal ez_alloca(EzModule *m, EzType ty, const char *n)
+{
   return LLVMBuildAlloca(m->builder, ty, n);
 }
-static inline EzVal ez_load(EzModule *m, EzType ty, EzVal ptr, const char *n) {
+static inline EzVal ez_load(EzModule *m, EzType ty, EzVal ptr, const char *n)
+{
   return LLVMBuildLoad2(m->builder, ty, ptr, n);
 }
-static inline void ez_store(EzModule *m, EzVal val, EzVal ptr) {
+static inline void ez_store(EzModule *m, EzVal val, EzVal ptr)
+{
   LLVMBuildStore(m->builder, val, ptr);
 }
 static inline EzVal ez_gep(EzModule *m, EzType ty, EzVal ptr, EzVal *idx,
-                           unsigned nidx, const char *n) {
+                           unsigned nidx, const char *n)
+{
   return LLVMBuildGEP2(m->builder, ty, ptr, idx, nidx, n);
 }
 
@@ -1154,7 +1283,8 @@ static inline EzVal ez_gep(EzModule *m, EzType ty, EzVal ptr, EzVal *idx,
  */
 
 static inline EzVal ez_call(EzModule *m, EzFunc *fn, EzVal *args,
-                            unsigned nargs, const char *n) {
+                            unsigned nargs, const char *n)
+{
   return LLVMBuildCall2(m->builder, LLVMGlobalGetValueType(fn->fn), fn->fn,
                         args, nargs, n);
 }
@@ -1164,11 +1294,13 @@ static inline EzVal ez_call(EzModule *m, EzFunc *fn, EzVal *args,
    ═══════════════════════════════════════════════════════════════════════════
  */
 
-static inline EzVal ez_phi(EzModule *m, EzType ty, const char *n) {
+static inline EzVal ez_phi(EzModule *m, EzType ty, const char *n)
+{
   return LLVMBuildPhi(m->builder, ty, n);
 }
 static inline void ez_phi_add(EzVal phi, EzVal *vals, EzBlock **blocks,
-                              unsigned count) {
+                              unsigned count)
+{
   LLVMBasicBlockRef *bbs =
       (LLVMBasicBlockRef *)malloc(count * sizeof(LLVMBasicBlockRef));
   assert(bbs);
@@ -1183,34 +1315,44 @@ static inline void ez_phi_add(EzVal phi, EzVal *vals, EzBlock **blocks,
    ═══════════════════════════════════════════════════════════════════════════
  */
 
-static inline EzVal ez_sext(EzModule *m, EzVal v, EzType t, const char *n) {
+static inline EzVal ez_sext(EzModule *m, EzVal v, EzType t, const char *n)
+{
   return LLVMBuildSExt(m->builder, v, t, n);
 }
-static inline EzVal ez_zext(EzModule *m, EzVal v, EzType t, const char *n) {
+static inline EzVal ez_zext(EzModule *m, EzVal v, EzType t, const char *n)
+{
   return LLVMBuildZExt(m->builder, v, t, n);
 }
-static inline EzVal ez_trunc(EzModule *m, EzVal v, EzType t, const char *n) {
+static inline EzVal ez_trunc(EzModule *m, EzVal v, EzType t, const char *n)
+{
   return LLVMBuildTrunc(m->builder, v, t, n);
 }
-static inline EzVal ez_sitofp(EzModule *m, EzVal v, EzType t, const char *n) {
+static inline EzVal ez_sitofp(EzModule *m, EzVal v, EzType t, const char *n)
+{
   return LLVMBuildSIToFP(m->builder, v, t, n);
 }
-static inline EzVal ez_uitofp(EzModule *m, EzVal v, EzType t, const char *n) {
+static inline EzVal ez_uitofp(EzModule *m, EzVal v, EzType t, const char *n)
+{
   return LLVMBuildUIToFP(m->builder, v, t, n);
 }
-static inline EzVal ez_fptosi(EzModule *m, EzVal v, EzType t, const char *n) {
+static inline EzVal ez_fptosi(EzModule *m, EzVal v, EzType t, const char *n)
+{
   return LLVMBuildFPToSI(m->builder, v, t, n);
 }
-static inline EzVal ez_fptoui(EzModule *m, EzVal v, EzType t, const char *n) {
+static inline EzVal ez_fptoui(EzModule *m, EzVal v, EzType t, const char *n)
+{
   return LLVMBuildFPToUI(m->builder, v, t, n);
 }
-static inline EzVal ez_bitcast(EzModule *m, EzVal v, EzType t, const char *n) {
+static inline EzVal ez_bitcast(EzModule *m, EzVal v, EzType t, const char *n)
+{
   return LLVMBuildBitCast(m->builder, v, t, n);
 }
-static inline EzVal ez_ptrtoint(EzModule *m, EzVal p, EzType t, const char *n) {
+static inline EzVal ez_ptrtoint(EzModule *m, EzVal p, EzType t, const char *n)
+{
   return LLVMBuildPtrToInt(m->builder, p, t, n);
 }
-static inline EzVal ez_inttoptr(EzModule *m, EzVal v, EzType t, const char *n) {
+static inline EzVal ez_inttoptr(EzModule *m, EzVal v, EzType t, const char *n)
+{
   return LLVMBuildIntToPtr(m->builder, v, t, n);
 }
 
@@ -1220,10 +1362,12 @@ static inline EzVal ez_inttoptr(EzModule *m, EzVal v, EzType t, const char *n) {
  */
 
 static inline EzVal ez_select(EzModule *m, EzVal cond, EzVal a, EzVal b,
-                              const char *n) {
+                              const char *n)
+{
   return LLVMBuildSelect(m->builder, cond, a, b, n);
 }
-static inline void ez_unreachable(EzModule *m) {
+static inline void ez_unreachable(EzModule *m)
+{
   LLVMBuildUnreachable(m->builder);
 }
 

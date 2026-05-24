@@ -34,7 +34,8 @@ void set_errno(int val) { errno = val; }
 /* ── Safe arithmetic ────────────────────────────────────────────────────── */
 
 /* Returns 1 if overflow, 0 on success. Writes result to *out. */
-int add_i32_safe(int a, int b, int *out) {
+int add_i32_safe(int a, int b, int *out)
+{
   long long r = (long long)a + (long long)b;
   if (r > 0x7FFFFFFF || r < -(long long)0x80000000)
     return 1;
@@ -42,7 +43,8 @@ int add_i32_safe(int a, int b, int *out) {
   return 0;
 }
 
-int mul_i32_safe(int a, int b, int *out) {
+int mul_i32_safe(int a, int b, int *out)
+{
   long long r = (long long)a * (long long)b;
   if (r > 0x7FFFFFFF || r < -(long long)0x80000000)
     return 1;
@@ -53,7 +55,8 @@ int mul_i32_safe(int a, int b, int *out) {
 /* ── String helpers ─────────────────────────────────────────────────────── */
 
 /* Caller must free() the returned string. */
-char *str_concat(const char *a, const char *b) {
+char *str_concat(const char *a, const char *b)
+{
   if (!a)
     a = "";
   if (!b)
@@ -67,7 +70,8 @@ char *str_concat(const char *a, const char *b) {
   return r;
 }
 
-char *str_repeat(const char *s, int n) {
+char *str_repeat(const char *s, int n)
+{
   if (!s || n <= 0)
     return strdup("");
   size_t len = strlen(s);
@@ -82,7 +86,8 @@ char *str_repeat(const char *s, int n) {
 
 /* Returns a malloc'd substring s[start..end) (negative indices count from end).
  */
-char *str_slice(const char *s, int start, int end) {
+char *str_slice(const char *s, int start, int end)
+{
   if (!s)
     return strdup("");
   int len = (int)strlen(s);
@@ -106,7 +111,8 @@ char *str_slice(const char *s, int start, int end) {
 }
 
 /* Returns index of first occurrence of needle in s, or -1. */
-int str_index_of(const char *s, const char *needle) {
+int str_index_of(const char *s, const char *needle)
+{
   if (!s || !needle)
     return -1;
   const char *p = strstr(s, needle);
@@ -115,7 +121,8 @@ int str_index_of(const char *s, const char *needle) {
 
 /* Returns malloc'd copy of s with every occurrence of `from` replaced by `to`.
  */
-char *str_replace(const char *s, const char *from, const char *to) {
+char *str_replace(const char *s, const char *from, const char *to)
+{
   if (!s || !from || !to)
     return strdup(s ? s : "");
   size_t flen = strlen(from);
@@ -125,7 +132,8 @@ char *str_replace(const char *s, const char *from, const char *to) {
   /* Count occurrences */
   size_t count = 0;
   const char *p = s;
-  while ((p = strstr(p, from)) != NULL) {
+  while ((p = strstr(p, from)) != NULL)
+  {
     count++;
     p += flen;
   }
@@ -139,7 +147,8 @@ char *str_replace(const char *s, const char *from, const char *to) {
   char *w = result;
   p = s;
   const char *found;
-  while ((found = strstr(p, from)) != NULL) {
+  while ((found = strstr(p, from)) != NULL)
+  {
     size_t chunk = (size_t)(found - p);
     memcpy(w, p, chunk);
     w += chunk;
@@ -151,13 +160,15 @@ char *str_replace(const char *s, const char *from, const char *to) {
   return result;
 }
 
-char *int_to_str(long long val) {
+char *int_to_str(long long val)
+{
   char buf[32];
   snprintf(buf, sizeof(buf), "%lld", val);
   return strdup(buf);
 }
 
-char *float_to_str(double val, int precision) {
+char *float_to_str(double val, int precision)
+{
   char fmt[16], buf[64];
   snprintf(fmt, sizeof(fmt), "%%.%df", precision < 0 ? 6 : precision);
   snprintf(buf, sizeof(buf), fmt, val);
@@ -168,7 +179,8 @@ char *float_to_str(double val, int precision) {
 
 /* Reads one line from stdin (strips trailing '\n').  Returns malloc'd string.
  */
-char *read_line(void) {
+char *read_line(void)
+{
   char *line = NULL;
   size_t cap = 0;
 #ifdef _WIN32
@@ -181,7 +193,8 @@ char *read_line(void) {
   return strdup(buf);
 #else
   ssize_t n = getline(&line, &cap, stdin);
-  if (n < 0) {
+  if (n < 0)
+  {
     free(line);
     return strdup("");
   }
@@ -192,19 +205,22 @@ char *read_line(void) {
 }
 
 /* Reads entire file into a malloc'd null-terminated string. */
-char *read_file_s(const char *path) {
+char *read_file_s(const char *path)
+{
   FILE *f = fopen(path, "rb");
   if (!f)
     return NULL;
   fseek(f, 0, SEEK_END);
   long sz = ftell(f);
   rewind(f);
-  if (sz < 0) {
+  if (sz < 0)
+  {
     fclose(f);
     return NULL;
   }
   char *buf = (char *)malloc((size_t)sz + 1);
-  if (!buf) {
+  if (!buf)
+  {
     fclose(f);
     return NULL;
   }
@@ -215,7 +231,8 @@ char *read_file_s(const char *path) {
 }
 
 /* Writes null-terminated string to file. Returns 0 on success. */
-int write_file_s(const char *path, const char *contents) {
+int write_file_s(const char *path, const char *contents)
+{
   FILE *f = fopen(path, "wb");
   if (!f)
     return -1;
@@ -228,7 +245,8 @@ int write_file_s(const char *path, const char *contents) {
 /* ── Timing ──────────────────────────────────────────────────────────────── */
 
 /* Monotonic seconds with nanosecond resolution. */
-double now_seconds(void) {
+double now_seconds(void)
+{
 #ifdef _WIN32
   LARGE_INTEGER freq, count;
   QueryPerformanceFrequency(&freq);

@@ -6,9 +6,11 @@
 #include <unordered_map>
 #include <vector>
 
-class Lexer {
+class Lexer
+{
 public:
-  enum class TokenType {
+  enum class TokenType
+  {
     IDENTIFIER,
     KEYWORD,
     NUMBER,
@@ -17,7 +19,8 @@ public:
     END_OF_FILE
   };
 
-  struct Token {
+  struct Token
+  {
     TokenType type;
     std::string value;
     int64_t line = 0; // source line number (1-based)
@@ -74,14 +77,17 @@ private:
   size_t pos = 0;
   int64_t line = 1;
 
-  char peek(size_t offset = 0) const {
+  char peek(size_t offset = 0) const
+  {
     if (pos + offset >= src.length())
       return '\0';
     return src[pos + offset];
   }
 
-  char advance() {
-    if (pos < src.length()) {
+  char advance()
+  {
+    if (pos < src.length())
+    {
       if (src[pos] == '\n')
         line++;
       return src[pos++];
@@ -92,40 +98,48 @@ private:
 public:
   Lexer(const std::string &text) : src(text) {}
 
-  std::vector<Token> tokenize() {
+  std::vector<Token> tokenize()
+  {
     std::vector<Token> tokens;
-    while (pos < src.length()) {
+    while (pos < src.length())
+    {
       char current = peek();
 
       // Ignore whitespace
-      if (std::isspace(current)) {
+      if (std::isspace(current))
+      {
         advance();
         continue;
       }
 
       // Skip single-line comments
-      if (current == '/' && peek(1) == '/') {
+      if (current == '/' && peek(1) == '/')
+      {
         while (peek() != '\n' && peek() != '\0')
           advance();
         continue;
       }
 
       // Logic for C<< raw strings
-      if (src.compare(pos, 4, "raw<") == 0) {
+      if (src.compare(pos, 4, "raw<") == 0)
+      {
         tokens.push_back(readRawString());
         continue;
       }
 
       // Quoted strings
-      if (current == '"') {
+      if (current == '"')
+      {
         tokens.push_back(readString());
         continue;
       }
 
       // Multi-char/Single-char operators
       bool found_op = false;
-      for (const auto &[op, type] : operator_lookup) {
-        if (src.compare(pos, op.length(), op) == 0) {
+      for (const auto &[op, type] : operator_lookup)
+      {
+        if (src.compare(pos, op.length(), op) == 0)
+        {
           tokens.push_back({type, op, line});
           for (size_t i = 0; i < op.length(); ++i)
             advance();
@@ -137,13 +151,15 @@ public:
         continue;
 
       // Numbers (Int and Float)
-      if (std::isdigit(current)) {
+      if (std::isdigit(current))
+      {
         tokens.push_back(readNumber());
         continue;
       }
 
       // Identifiers and Keywords
-      if (std::isalpha(current) || current == '_') {
+      if (std::isalpha(current) || current == '_')
+      {
         tokens.push_back(readIdentifierOrKeyword());
         continue;
       }
@@ -157,10 +173,12 @@ public:
   }
 
 private:
-  Token readString() {
+  Token readString()
+  {
     advance(); // Skip "
     std::string val;
-    while (peek() != '"' && peek() != '\0') {
+    while (peek() != '"' && peek() != '\0')
+    {
       if (peek() == '\\')
         val += advance(); // Basic escape pass-through
       val += advance();
@@ -169,12 +187,14 @@ private:
     return {TokenType::STRING, val, line};
   }
 
-  Token readRawString() {
+  Token readRawString()
+  {
     for (int i = 0; i < 4; ++i)
       advance(); // Skip "raw<"
     std::string content;
 
-    if (src.compare(pos, 5, "until") == 0) {
+    if (src.compare(pos, 5, "until") == 0)
+    {
       // Case: raw<until "DELIM">
       for (int i = 0; i < 6; ++i)
         advance(); // Skip "until "
@@ -186,11 +206,14 @@ private:
         advance();
 
       size_t end = src.find(delim, pos);
-      if (end != std::string::npos) {
+      if (end != std::string::npos)
+      {
         content = src.substr(pos, end - pos);
         pos = end + delim.length();
       }
-    } else {
+    }
+    else
+    {
       // Case: raw<N> (N lines)
       std::string numStr;
       while (std::isdigit(peek()))
@@ -200,7 +223,8 @@ private:
         advance();
 
       int linesToRead = numStr.empty() ? 0 : std::stoi(numStr);
-      while (linesToRead > 0 && pos < src.length()) {
+      while (linesToRead > 0 && pos < src.length())
+      {
         char c = advance();
         content += c;
         if (c == '\n')
@@ -210,12 +234,14 @@ private:
     return {TokenType::STRING, content, line};
   }
 
-  Token readNumber() {
+  Token readNumber()
+  {
     std::string val;
     while (std::isdigit(peek()))
       val += advance();
     // Support decimal point for float32
-    if (peek() == '.' && std::isdigit(peek(1))) {
+    if (peek() == '.' && std::isdigit(peek(1)))
+    {
       val += advance();
       while (std::isdigit(peek()))
         val += advance();
@@ -223,7 +249,8 @@ private:
     return {TokenType::NUMBER, val, line};
   }
 
-  Token readIdentifierOrKeyword() {
+  Token readIdentifierOrKeyword()
+  {
     std::string val;
     while (std::isalnum(peek()) || peek() == '_')
       val += advance();
