@@ -1010,7 +1010,7 @@ if_stmt          ::= 'if' '(' expression ')' block
 
 while_stmt       ::= 'while' '(' expression ')' block
 
-for_stmt         ::= 'for' '(' declaration expression ';' expression ')' block
+for_stmt         ::= 'for' '(' declaration expression ';' condition ';' ')' block
 
 foreach_stmt     ::= 'foreach' '(' type_expr identifier ':' expression ')' block
 
