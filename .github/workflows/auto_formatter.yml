@@ -15,7 +15,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        ref: develop
+        ref: main
 
     - name: Install clang-format
       run: |
@@ -48,4 +48,4 @@ jobs:
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
         commit_message: "chore: auto-format C/C++ code (Allman style)"
-        branch: develop
+        branch: main
