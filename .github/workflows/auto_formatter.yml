@@ -1,50 +1,39 @@
-name: Scheduled C/C++ Auto Format
+name: Auto Format Code
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
-  workflow_dispatch:
-
-permissions:
-  contents: write
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
-  format-cpp:
+  format:
     runs-on: ubuntu-latest
+    # Prevent infinite loops if the action pushes changes
+    if: github.actor != 'github-actions[bot]'
 
     steps:
-    # 1. Pull the repository
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        ref: main
+        # Crucial for letting the action push changes back to the repo
+        token: ${{ secrets.GITHUB_TOKEN }}
+        ref: ${{ github.head_ref || github.ref }}
 
-    # 2. Setup clang-format
     - name: Install clang-format
       run: |
         sudo apt-get update
         sudo apt-get install -y clang-format
 
-    # 3. Clean up formatting roadblocks explicitly
-    - name: Purge Ghost Spaces & Normalize Line Endings
+    - name: Format C/C++ files (Allman Style)
       run: |
-        # Strip exact non-breaking space bytes (both UTF-8 variations)
-        find . -type f \( -name "*.cpp" -o -name "*.c" -o -name "*.h" -o -name "*.hh" \) -exec sed -i 's/\x20\xa0/  /g' {} +
-        find . -type f \( -name "*.cpp" -o -name "*.c" -o -name "*.h" -o -name "*.hh" \) -exec sed -i 's/\xc2\xa0/ /g' {} +
-        
-        # Strip Windows carriage returns to prevent ghost commits
-        find . -type f \( -name "*.cpp" -o -name "*.c" -o -name "*.h" -o -name "*.hh" \) -exec sed -i 's/\r//g' {} +
+        # Find all matching files and format them inline using Allman style fallback
+        find . -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hh" \) \
+        -not -path '*/.*' \
+        -exec clang-format -i -style="{BasedOnStyle: llvm, BreakBeforeBraces: Allman}" {} +
 
-    # 4. Enforce format via local configuration
-    - name: Run clang-format (Explicit Style)
-      run: |
-        # --style=file forces it to look for your root .clang-format rules
-        find . -type f \( -name "*.cpp" -o -name "*.c" -o -name "*.h" -o -name "*.hh" \) -exec clang-format -style=file -i {} +
-
-    # 5. Push changes
-    - name: Commit and Push Clean Code
+    - name: Commit and Push changes
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
-        commit_message: "chore: forced C/C++ Allman formatting cleanup"
-        commit_user_name: "github-actions[bot]"
-        commit_user_email: "github-actions[bot]@users.noreply.github.com"
+        commit_message: "chore: auto-format C/C++ code (Allman style)"
+        file_pattern: '*.c *.cpp *.h *.hh'
