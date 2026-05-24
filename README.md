@@ -240,6 +240,8 @@ Syntax:
 ```
 import <type> <fn_name> (<params>);
 ```
+## Full Specification
+You can find the whole syntax specification [here](raw.githubusercontent.com/LuxUmbris/C-Shift/main/Syntax_spec.md)
 
 ## License
 This Project is licensed under the [Apache 2.0 License](LICENSE)
