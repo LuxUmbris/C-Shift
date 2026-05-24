@@ -22,15 +22,30 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y clang-format
 
-    - name: Format C/C++ files (Strict Allman Style)
+    # Step 1: Generate a flawless, native config file on the runner
+    - name: Create Temporary Clang-Format Profile
+      run: |
+        cat << 'EOF' > .clang-format
+        BasedOnStyle: LLVM
+        BreakBeforeBraces: Allman
+        AllowShortBlocksOnASingleLine: false
+        AllowShortIfStatementsOnASingleLine: false
+        EOF
+
+    # Step 2: Run the formatter targeting the file configuration directly
+    - name: Format C/C++ files (Strict Allman)
       run: |
         find . -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hh" \) \
         -not -path '*/.*' \
-        -exec clang-format -i -style='{BasedOnStyle: "llvm", BreakBeforeBraces: "Allman"}' {} +
+        -exec clang-format -i -style=file {} +
 
+    # Step 3: Remove the temporary file so it doesn't pollute your repository
+    - name: Clean up temporary profile
+      run: rm .clang-format
+
+    # Step 4: Commit all formatting changes back to the branch
     - name: Commit and Push changes
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
         commit_message: "chore: auto-format C/C++ code (Allman style)"
-        file_pattern: 'compiler/*.hh compiler/*.h *.c *.cpp main.cpp frt.c'
         branch: develop
