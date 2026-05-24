@@ -5,7 +5,7 @@
 //  extensions. Just import this file and everything is available.
 //
 //  Usage:
-//    import "std.cll";
+//    import std;
 //
 //  The compiler resolves this at link time via -lc (automatic).
 // ============================================================
