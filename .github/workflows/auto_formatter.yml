@@ -1,24 +1,26 @@
 name: Auto Format Code
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+  schedule:
+    # Runs every 30 minutes
+    - cron: '*/30 * * * *'
+  # Allows you to manually trigger the workflow from the Actions tab anytime
+  workflow_dispatch: 
 
 jobs:
   format:
     runs-on: ubuntu-latest
-    # Prevent infinite loops if the action pushes changes
-    if: github.actor != 'github-actions[bot]'
+    
+    # CRITICAL: Grant write permissions so the bot can push changes back
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        # Crucial for letting the action push changes back to the repo
-        token: ${{ secrets.GITHUB_TOKEN }}
-        ref: ${{ github.head_ref || github.ref }}
+        # We explicitly fetch the 'develop' branch since the cron runs on the default branch by default
+        ref: develop
 
     - name: Install clang-format
       run: |
@@ -27,7 +29,6 @@ jobs:
 
     - name: Format C/C++ files (Allman Style)
       run: |
-        # Find all matching files and format them inline using Allman style fallback
         find . -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hh" \) \
         -not -path '*/.*' \
         -exec clang-format -i -style="{BasedOnStyle: llvm, BreakBeforeBraces: Allman}" {} +
@@ -36,4 +37,5 @@ jobs:
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
         commit_message: "chore: auto-format C/C++ code (Allman style)"
-        file_pattern: '*.c *.cpp *.h *.hh'
+        file_pattern: 'compiler/*.hh compiler/*.h *.c *.cpp'
+        branch: develop
