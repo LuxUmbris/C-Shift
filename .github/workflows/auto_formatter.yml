@@ -1,0 +1,39 @@
+name: Scheduled C/C++ Auto Format
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Allows manual triggering from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  format-cpp:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Check out the main branch
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: main
+
+    # 2. Install clang-format
+    - name: Install clang-format
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format
+
+    # 3. Find and format all .cpp, .c, .h, and .hh files
+    - name: Run clang-format (Allman Style)
+      run: |
+        find . -type f \( -name "*.cpp" -o -name "*.c" -o -name "*.h" -o -name "*.hh" \) -exec clang-format -i {} +
+
+    # 4. Commit and push changes back if any files were messy
+    - name: Commit and Push Clean Code
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "chore: scheduled 30-min C/C++ code formatting cleanup"
+        commit_user_name: "github-actions[bot]"
+        commit_user_email: "github-actions[bot]@users.noreply.github.com"
