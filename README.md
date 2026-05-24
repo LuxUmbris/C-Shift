@@ -241,7 +241,7 @@ Syntax:
 import <type> <fn_name> (<params>);
 ```
 ## Full Specification
-You can find the whole syntax specification [here](github.com/LuxUmbris/C-Shift/Syntax_spec.md)
+You can find the whole syntax specification [here](github.com/LuxUmbris/C-Shift/blob/main/Syntax_spec.md)
 
 ## License
 This Project is licensed under the [Apache 2.0 License](LICENSE)
