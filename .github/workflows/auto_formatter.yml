@@ -2,16 +2,12 @@ name: Auto Format Code
 
 on:
   schedule:
-    # Runs every 30 minutes
     - cron: '*/30 * * * *'
-  # Allows you to manually trigger the workflow from the Actions tab anytime
   workflow_dispatch: 
 
 jobs:
   format:
     runs-on: ubuntu-latest
-    
-    # CRITICAL: Grant write permissions so the bot can push changes back
     permissions:
       contents: write
 
@@ -19,7 +15,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        # We explicitly fetch the 'develop' branch since the cron runs on the default branch by default
         ref: develop
 
     - name: Install clang-format
@@ -27,15 +22,15 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y clang-format
 
-    - name: Format C/C++ files (Allman Style)
+    - name: Format C/C++ files (Strict Allman Style)
       run: |
         find . -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hh" \) \
         -not -path '*/.*' \
-        -exec clang-format -i -style="{BasedOnStyle: llvm, BreakBeforeBraces: Allman}" {} +
+        -exec clang-format -i -style='{BasedOnStyle: "llvm", BreakBeforeBraces: "Allman"}' {} +
 
     - name: Commit and Push changes
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
         commit_message: "chore: auto-format C/C++ code (Allman style)"
-        file_pattern: 'compiler/*.hh compiler/*.h *.c *.cpp'
+        file_pattern: 'compiler/*.hh compiler/*.h *.c *.cpp main.cpp frt.c'
         branch: develop
