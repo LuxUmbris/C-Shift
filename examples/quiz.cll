@@ -1,0 +1,82 @@
+import std;
+
+// tunnels int32 correct (1=right, 0=wrong)
+def ask(string question, string a, string b, string c, string d, string answer)
+{
+    printf("\n%s\n", question);
+    printf("  a) %s\n", a);
+    printf("  b) %s\n", b);
+    printf("  c) %s\n", c);
+    printf("  d) %s\n", d);
+    printf("Your answer: ");
+
+    string input = read_line();
+    int32 cmp = strcmp(input, answer);
+    free(input);
+
+    int32 result = 0;
+    if (cmp == 0) { result = 1; }
+    tunnel result -> int32 correct;
+}
+
+entry
+{
+    puts("==============================");
+    puts("    C<< Programming Quiz      ");
+    puts("==============================");
+
+    int32 score = 0;
+    reserve int32 correct;
+
+    ask("1. What does VOP stand for?",
+        "Virtual Object Programming",
+        "Vertical Ownership Programming",
+        "Variable Output Protocol",
+        "Void Object Passing",
+        "b");
+    if (correct == 1) { puts("Correct!"); score = score + 1; }
+    if (correct == 0) { puts("Wrong! Answer: b) Vertical Ownership Programming."); }
+
+    ask("2. What keyword reserves space for a tunnel result?",
+        "alloc",
+        "let",
+        "reserve",
+        "var",
+        "c");
+    if (correct == 1) { puts("Correct!"); score = score + 1; }
+    if (correct == 0) { puts("Wrong! Answer: c) reserve."); }
+
+    ask("3. What is the entry point keyword in C<<?",
+        "main",
+        "start",
+        "entry",
+        "begin",
+        "c");
+    if (correct == 1) { puts("Correct!"); score = score + 1; }
+    if (correct == 0) { puts("Wrong! Answer: c) entry."); }
+
+    ask("4. What is a voided variable?",
+        "A variable set to zero",
+        "A variable that has been moved and is no longer valid",
+        "A void pointer",
+        "A deleted variable",
+        "b");
+    if (correct == 1) { puts("Correct!"); score = score + 1; }
+    if (correct == 0) { puts("Wrong! Answer: b) a variable that has been moved."); }
+
+    ask("5. What does 'tunnel x -> int32 result' do?",
+        "Returns x from the function",
+        "Copies x into a global variable",
+        "Writes x into the caller's reserved result slot",
+        "Casts x to int32",
+        "c");
+    if (correct == 1) { puts("Correct!"); score = score + 1; }
+    if (correct == 0) { puts("Wrong! Answer: c) writes into the caller's reserved slot."); }
+
+    puts("\n==============================");
+    printf("Final score: %d / 5\n", score);
+    if (score == 5) { puts("Perfect! You know C<< inside out."); }
+    if (score == 4) { puts("Great job! Almost perfect."); }
+    if (score == 3) { puts("Not bad. Review the VOP docs."); }
+    if (score < 3)  { puts("Keep studying! C<< is unique."); }
+}
