@@ -21,7 +21,7 @@ import int32  puts      (string s);
 import int32  putchar   (int32 c);
 import int32  fputs     (string s, voided* stream);
 import int32  fputc     (int32 c, voided* stream);
-import int32  print     (string fmt, ...); // prints all arguments like: print("Score: ", score, "\n");
+import int32  print     (...); // prints all arguments like: print("Score: ", score, "\n");
 
 // --- Console input ---
 import int32  scanf     (string fmt, ...);
