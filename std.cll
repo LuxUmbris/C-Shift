@@ -21,6 +21,7 @@ import int32  puts      (string s);
 import int32  putchar   (int32 c);
 import int32  fputs     (string s, voided* stream);
 import int32  fputc     (int32 c, voided* stream);
+import int32  print     (string fmt, ...); // prints all arguments like: print("Score: ", score, "\n");
 
 // --- Console input ---
 import int32  scanf     (string fmt, ...);
@@ -442,8 +443,8 @@ import string  float_to_str (float64 val, int32 precision);
 
 // I/O helpers
 import string  read_line    ();                  // reads one line from stdin, malloc'd
-import string  read_file_s  (string path);       // entire file into malloc'd string
-import int32   write_file_s (string path, string contents);
+import string  read_file  (string path);       // entire file into malloc'd string
+import int32   write_file (string path, string contents, string mode); // a or r (attach or replace)
 
 // Timing
 import float64 now_seconds  ();                  // monotonic clock in seconds
