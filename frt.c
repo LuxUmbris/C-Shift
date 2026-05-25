@@ -263,12 +263,13 @@ double now_seconds(void)
 }
 
 // -- comfort -----------
-void print(const char* fmt, ...) {
+int print(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     vprintf(fmt, args);
     va_end(args);
-    fflush(stdout); 
+    fflush(stdout);
+    return 0;
 }
 
 char* read_file(const char* path) {
