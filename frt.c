@@ -1,7 +1,7 @@
 /*
  * frt.c  —  C<< Foundation Runtime
  *
- * Implements the thin helpers declared in stdlib.cs §20 that don't exist
+ * Implements the thin helpers declared in stdlib.cll §20 that don't exist
  * as plain libc symbols (errno wrappers, string builders, etc.).
  *
  * Compile & link with every C<< binary:
