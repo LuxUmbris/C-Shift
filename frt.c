@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdarg.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -259,4 +260,52 @@ double now_seconds(void)
 #else
   return (double)clock() / (double)CLOCKS_PER_SEC;
 #endif
+}
+
+// -- comfort -----------
+void print(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+    fflush(stdout); 
+}
+
+char* read_file(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return NULL;
+
+    // Find file size
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    rewind(f);
+
+    // Allocate buffer + null terminator
+    char* buffer = (char*)malloc(size + 1);
+    if (!buffer) {
+        fclose(f);
+        return NULL;
+    }
+
+    long bytes_read = fread(buffer, 1, size, f);
+    buffer[bytes_read] = '\0'; // Ensure valid C-string termination
+
+    fclose(f);
+    return buffer;
+}
+
+int write_file(const char* path, const char* payload, const char* mode) {
+    // Basic validation to protect against garbage mode flags
+    if (strcmp(mode, "w") != 0 && strcmp(mode, "a") != 0) {
+        return -1; 
+    }
+
+    FILE* f = fopen(path, mode);
+    if (!f) return -1;
+
+    size_t len = strlen(payload);
+    size_t bytes_written = fwrite(payload, 1, len, f);
+
+    fclose(f);
+    return (bytes_written == len) ? 0 : -1;
 }
