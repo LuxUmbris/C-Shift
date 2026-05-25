@@ -1,6 +1,18 @@
 import std;
 
+def add(int32 x, int32 y)
+{
+    tunnel x + y -> int32 result;
+}
+
 entry
 {
+    int32 x = 5;
+    for (int32 i = 0; i < 5;)
+    {
+        reserve int32 result = add(x, i);
+        printf("result = %i\n", result);
+        i += 1;
+    }
     puts("Hello, C<< world!");
 }

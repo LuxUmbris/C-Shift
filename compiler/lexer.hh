@@ -47,7 +47,9 @@ private:
       {"true", TokenType::KEYWORD},    {"false", TokenType::KEYWORD},
       {"import", TokenType::KEYWORD},  {"entry", TokenType::KEYWORD},
       {"const", TokenType::KEYWORD},   {"float64", TokenType::KEYWORD},
-      {"reset", TokenType::KEYWORD}};
+      {"reset", TokenType::KEYWORD},   {"break", TokenType::KEYWORD},
+      {"continue", TokenType::KEYWORD}, {"template", TokenType::KEYWORD},
+      {"typename", TokenType::KEYWORD}};
 
   // Operators sorted by length (Maximal Munch)
   std::vector<std::pair<std::string, TokenType>> operator_lookup = {
@@ -117,6 +119,24 @@ public:
       {
         while (peek() != '\n' && peek() != '\0')
           advance();
+        continue;
+      }
+
+      // Skip multiline comments
+      if (current == '/' && peek(1) == '*')
+      {
+        advance(); // Skip /
+        advance(); // Skip *
+        while (peek() != '\0')
+        {
+          if (peek() == '*' && peek(1) == '/')
+          {
+            advance(); // Skip *
+            advance(); // Skip /
+            break;
+          }
+          advance();
+        }
         continue;
       }
 

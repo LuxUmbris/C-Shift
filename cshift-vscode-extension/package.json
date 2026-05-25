@@ -1,0 +1,108 @@
+{
+  "name": "cshift-language",
+  "displayName": "C<< (C-Shift) Language Support",
+  "description": "Full syntax highlighting, IntelliSense, error checking, and autocomplete for the C<< systems language",
+  "version": "1.1.0",
+  "author": "C<< Contributors",
+  "license": "Apache 2.0",
+  "publisher": "cshift",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "c-shift",
+    "cll",
+    "systems",
+    "language",
+    "compiler",
+    "arena",
+    "vop"
+  ],
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LuxUmbris/C-Shift"
+  },
+  "bugs": {
+    "url": "https://github.com/LuxUmbris/C-Shift/issues"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:cshift"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "cshift",
+        "aliases": [
+          "C<<",
+          "C-Shift",
+          "cshift"
+        ],
+        "extensions": [
+          ".cll"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/cshift-light.svg",
+          "dark": "./icons/cshift-dark.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cshift",
+        "scopeName": "source.cshift",
+        "path": "./syntaxes/cshift.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "cshift",
+        "path": "./snippets/cshift.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "cshift.compileFile",
+        "title": "Compile C<< File",
+        "category": "C<<"
+      },
+      {
+        "command": "cshift.checkSyntax",
+        "title": "Check Syntax",
+        "category": "C<<"
+      },
+      {
+        "command": "cshift.formatDocument",
+        "title": "Format Document",
+        "category": "C<<"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "cshift.compileFile",
+        "key": "ctrl+shift+b",
+        "when": "editorLangId == cshift"
+      }
+    ],
+    "configurationDefaults": {
+      "[cshift]": {
+        "editor.formatOnSave": true,
+        "editor.wordBasedSuggestions": false,
+        "editor.tabSize": 2,
+        "editor.insertSpaces": true
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node ./build.js",
+    "test": "node ./test.js"
+  },
+  "devDependencies": {
+    "vscode": "^1.1.37"
+  }
+}

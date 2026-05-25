@@ -65,9 +65,14 @@ private:
   FuncSig *current_func = nullptr;
   bool in_function = false;
 
-  // Struct types
+  // Loop/Switch context tracking
+  int loop_depth = 0;      // for break/continue validation
+  int switch_depth = 0;    // for break validation
+
+  // Struct types and template types
   std::unordered_set<std::string> struct_types;
   std::unordered_set<std::string> enum_types;
+  std::unordered_set<std::string> template_types;
 
   void push_scope()
   {
@@ -170,6 +175,16 @@ private:
         if (colon != std::string::npos)
           name = name.substr(0, colon);
         enum_types.insert(name);
+      }
+      if (n->type == "Template")
+      {
+        // Extract the templated definition (Struct or Function)
+        if (n->children.size() >= 2)
+        {
+          auto *def = n->children[1];
+          // Recursively process the definition
+          collect_signatures({def});
+        }
       }
       // C-function declarations: register in func_table so calls don't warn
       if (n->type == "CImport")
@@ -294,6 +309,12 @@ private:
       check_foreach(n);
     else if (n->type == "Switch")
       check_switch(n);
+    else if (n->type == "Break")
+      check_break(n);
+    else if (n->type == "Continue")
+      check_continue(n);
+    else if (n->type == "Template")
+      check_template(n);
     else if (n->type == "Block")
       check_block(n);
     else if (n->type == "Import")
@@ -644,7 +665,9 @@ private:
     if (n->children.size() > 1)
     {
       push_scope();
+      loop_depth++;
       check_block(n->children[1]);
+      loop_depth--;
       pop_scope();
     }
   }
@@ -653,6 +676,7 @@ private:
   {
     push_scope();
     size_t i = 0;
+    loop_depth++;
     for (auto *c : n->children)
     {
       if (i == 0)
@@ -663,12 +687,14 @@ private:
         check_block(c);
       ++i;
     }
+    loop_depth--;
     pop_scope();
   }
 
   void check_foreach(Parser::ASTNode *n)
   {
     push_scope();
+    loop_depth++;
     std::string type = extract_base_type(n->value);
     std::string item = extract_name(n->value);
     declare(
@@ -677,6 +703,7 @@ private:
       check_expression(n->children[0]);
     if (n->children.size() > 1)
       check_block(n->children[1]);
+    loop_depth--;
     pop_scope();
   }
 
@@ -741,6 +768,7 @@ private:
     }
 
     // Check each case body
+    switch_depth++;
     for (size_t i = 1; i < n->children.size(); ++i)
     {
       auto *c = n->children[i];
@@ -779,6 +807,7 @@ private:
         pop_scope();
       }
     }
+    switch_depth--;
   }
 
   void check_expression(Parser::ASTNode *n)
@@ -815,6 +844,82 @@ private:
       check_expression_tokens(c);
   }
 
+  void check_break(Parser::ASTNode *n)
+  {
+    if (loop_depth == 0 && switch_depth == 0)
+    {
+      add_error(n->line, "break statement outside of loop or switch");
+    }
+  }
+
+  void check_continue(Parser::ASTNode *n)
+  {
+    if (loop_depth == 0)
+    {
+      add_error(n->line, "continue statement outside of loop");
+    }
+  }
+
+  void check_template(Parser::ASTNode *n)
+  {
+    if (n->children.empty())
+    {
+      add_error(n->line, "Template node has no children");
+      return;
+    }
+
+    // First child should be TemplateParams
+    auto *params = n->children[0];
+    if (!params || params->type != "TemplateParams")
+    {
+      add_error(n->line, "Template missing TemplateParams");
+      return;
+    }
+
+    // Collect template parameter names
+    std::unordered_set<std::string> template_params;
+    for (auto *p : params->children)
+    {
+      if (p && p->type == "TypeParam")
+      {
+        template_params.insert(p->value);
+      }
+    }
+
+    // Second child should be the templated definition (Struct or Function)
+    if (n->children.size() < 2)
+    {
+      add_error(n->line, "Template missing definition");
+      return;
+    }
+
+    auto *def = n->children[1];
+    if (!def)
+    {
+      add_error(n->line, "Template definition is null");
+      return;
+    }
+
+    if (def->type == "Struct")
+    {
+      // Register templated struct type
+      std::string templ_name = def->value + "<...>";
+      template_types.insert(templ_name);
+      check_struct(def);
+    }
+    else if (def->type == "Function")
+    {
+      // Register templated function
+      std::string templ_name = def->value + "<...>";
+      // Could track template functions separately if needed
+      check_function(def);
+    }
+    else
+    {
+      add_error(n->line, "Template can only precede struct or function definitions");
+    }
+  }
+
   bool is_known_type(const std::string &t) const
   {
     static const std::unordered_set<std::string> primitives = {
@@ -833,6 +938,9 @@ private:
     if (struct_types.count(base))
       return true;
     if (enum_types.count(base))
+      return true;
+    // Check template types (e.g., "Vector<int32>")
+    if (template_types.count(base))
       return true;
     return false;
   }

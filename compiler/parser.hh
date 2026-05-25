@@ -98,6 +98,12 @@ private:
         return parse_while();
       if (kw == "switch")
         return parse_switch();
+      if (kw == "break")
+        return parse_break();
+      if (kw == "continue")
+        return parse_continue();
+      if (kw == "template")
+        return parse_template();
       if (kw == "struct")
         return parse_struct();
       if (kw == "def")
@@ -828,5 +834,85 @@ private:
     current_depth--;
     match_token(Lexer::TokenType::OPERATOR, "}");
     return node;
+  }
+
+  ASTNode *parse_break()
+  {
+    size_t ln = current_line();
+    match_token(Lexer::TokenType::KEYWORD, "break");
+    match_token(Lexer::TokenType::OPERATOR, ";");
+    return new ASTNode("Break", "", ln, current_depth);
+  }
+
+  ASTNode *parse_continue()
+  {
+    size_t ln = current_line();
+    match_token(Lexer::TokenType::KEYWORD, "continue");
+    match_token(Lexer::TokenType::OPERATOR, ";");
+    return new ASTNode("Continue", "", ln, current_depth);
+  }
+
+  ASTNode *parse_template()
+  {
+    size_t ln = current_line();
+    match_token(Lexer::TokenType::KEYWORD, "template");
+    match_token(Lexer::TokenType::OPERATOR, "<");
+    
+    ASTNode *template_node = new ASTNode("Template", "", ln, current_depth);
+    
+    // Parse template parameters: typename T, typename U, etc.
+    ASTNode *params = new ASTNode("TemplateParams", "", ln, current_depth);
+    while (peek_token().value != ">")
+    {
+      if (peek_token().type == Lexer::TokenType::KEYWORD &&
+          peek_token().value == "typename")
+      {
+        advance_token();
+        std::string param_name = match_token(Lexer::TokenType::IDENTIFIER).value;
+        params->children.push_back(
+            new ASTNode("TypeParam", param_name, ln, current_depth));
+        
+        if (peek_token().value == ",")
+        {
+          advance_token();
+        }
+      }
+      else
+      {
+        throw std::runtime_error("[SYNTAX ERROR] Line " +
+                                 std::to_string(current_line()) +
+                                 ": Expected 'typename' in template parameters");
+      }
+    }
+    match_token(Lexer::TokenType::OPERATOR, ">");
+    template_node->children.push_back(params);
+    
+    // Parse the templated definition (struct or function)
+    if (peek_token().type == Lexer::TokenType::KEYWORD)
+    {
+      const std::string &kw = peek_token().value;
+      if (kw == "struct")
+      {
+        template_node->children.push_back(parse_struct());
+      }
+      else if (kw == "def")
+      {
+        template_node->children.push_back(parse_function());
+      }
+      else
+      {
+        throw std::runtime_error("[SYNTAX ERROR] Line " +
+                                 std::to_string(current_line()) +
+                                 ": Template can only precede 'struct' or 'def'");
+      }
+    }
+    else
+    {
+      throw std::runtime_error("[SYNTAX ERROR] Line " +
+                               std::to_string(current_line()) +
+                               ": Expected 'struct' or 'def' after template");
+    }
+    
+    return template_node;
   }
 };

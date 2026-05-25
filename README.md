@@ -87,6 +87,15 @@ VOP (Vertical Ownership Programming) can be explained like this:
 
 ## Syntax
 
+### Comments
+Single-line and multiline comments are supported:
+```CShift
+// Single-line comment
+
+/* Multiline comment
+   spanning multiple lines */
+```
+
 ### Primitve Types
 C<< contains the following primitive Types:
 ```CShift
@@ -227,13 +236,62 @@ for (int32 i = 0; i < 5;)
 
 ### Control Flow
 Supported constructs:
-if / else
-switch / case
-while
-for
-foreach
+- `if` / `else`
+- `switch` / `case` / `default`
+- `while`
+- `for`
+- `foreach`
+- `break` — exit innermost loop or switch
+- `continue` — restart next loop iteration
 
 Each iteration of while/for/foreach is its own sub-arena. Tunnels inside switch/case must target variables in the parent scope.
+
+### Templates
+
+Generic programming via compile-time template instantiation:
+
+```cll
+template<typename T>
+struct Vector
+{
+    T*    data;
+    uint64 len;
+    uint64 capacity;
+}
+
+template<typename T>
+def vec_push(Vector<T>* v, T elem)
+{
+    // implementation
+    tunnel result -> int32 success;
+}
+```
+
+Templates are fully instantiated at compile time, enabling zero-runtime polymorphism and safe generic containers.
+
+### Standard Library Comfort Containers
+
+The standard library (`std.cll`) provides 16+ high-performance generic containers:
+
+**Core Containers:**
+- `Vector<T>` — chunk-based dynamic array (zero-copy allocation)
+- `HashMap<K, V>` — hash table with chaining
+- `LinkedList<T>` — doubly-linked list
+- `Set<T>` — hash set for unique elements
+- `Deque<T>` — double-ended queue with ring buffer
+- `RingBuffer<T>` — fixed-size circular buffer (lock-free safe)
+- `Pool<T>` — object pool for allocation-free patterns
+
+**Utility Types:**
+- `Pair<A, B>` — simple tuple
+- `Lazy<T>` — compute-on-demand caching
+- `BitSet` — compact bitfield operations
+- `Guard` — RAII-style scope guards for cleanup
+- `StringBuilder` — efficient chunked string building
+- `Buffer<T>` — safe typed buffers with capacity management
+- `SortedVec<T>` — sorted containers with custom comparators
+
+All use template-based generic monomorphization for compile-time type safety and zero-runtime overhead.
 
 ### C-ABI-interop
 Syntax:

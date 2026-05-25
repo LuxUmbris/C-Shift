@@ -1,0 +1,229 @@
+{
+  "Function Definition": {
+    "prefix": "fn",
+    "body": [
+      "def ${1:functionName}(${2:parameters})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Define a C<< function"
+  },
+  "Function with Tunnel": {
+    "prefix": "fn_tunnel",
+    "body": [
+      "def ${1:functionName}(${2:parameters})",
+      "{",
+      "\ttunnel ${3:expression} -> ${4:type} ${5:result};",
+      "}"
+    ],
+    "description": "Function with tunnel output"
+  },
+  "Struct Definition": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:StructName}",
+      "{",
+      "\t${2:int32 field1};",
+      "\t${3:float32 field2};",
+      "}"
+    ],
+    "description": "Define a struct"
+  },
+  "Enum Definition": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:EnumName} : ${2:int32}",
+      "{",
+      "\t${3:Value1},",
+      "\t${4:Value2}",
+      "}"
+    ],
+    "description": "Define an enum"
+  },
+  "Template Struct": {
+    "prefix": "template_struct",
+    "body": [
+      "template<typename ${1:T}>",
+      "struct ${2:GenericName}",
+      "{",
+      "\t${1:T} data;",
+      "\tuint64 length;",
+      "}"
+    ],
+    "description": "Generic template struct"
+  },
+  "Template Function": {
+    "prefix": "template_fn",
+    "body": [
+      "template<typename ${1:T}>",
+      "def ${2:functionName}(${1:T} ${3:param})",
+      "{",
+      "\ttunnel ${4:expression} -> ${1:T} ${5:result};",
+      "}"
+    ],
+    "description": "Generic template function"
+  },
+  "If Statement": {
+    "prefix": "if",
+    "body": [
+      "if (${1:condition})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "if statement"
+  },
+  "If-Else": {
+    "prefix": "ifelse",
+    "body": [
+      "if (${1:condition})",
+      "{",
+      "\t${2:// if body}",
+      "}",
+      "else",
+      "{",
+      "\t${3:// else body}",
+      "}"
+    ],
+    "description": "if-else statement"
+  },
+  "While Loop": {
+    "prefix": "while",
+    "body": [
+      "while (${1:condition})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "while loop"
+  },
+  "For Loop": {
+    "prefix": "for",
+    "body": [
+      "for (${1:int32 i = 0}; ${2:i < 10}; ${3:i += 1})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "for loop"
+  },
+  "Foreach Loop": {
+    "prefix": "foreach",
+    "body": [
+      "foreach (${1:int32 item} : ${2:array})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "foreach loop"
+  },
+  "Switch Statement": {
+    "prefix": "switch",
+    "body": [
+      "switch (${1:expr})",
+      "{",
+      "\tcase ${2:value1}:",
+      "\t{",
+      "\t\t$0",
+      "\t}",
+      "\tdefault:",
+      "\t{",
+      "\t\tbreak;",
+      "\t}",
+      "}"
+    ],
+    "description": "switch statement"
+  },
+  "Voided State Guard": {
+    "prefix": "voided_guard",
+    "body": [
+      "switch (${1:pointer})",
+      "{",
+      "\tcase valid",
+      "\t{",
+      "\t\t${2:// pointer is valid}",
+      "\t}",
+      "\tcase voided",
+      "\t{",
+      "\t\t${3:// pointer is voided}",
+      "\t}",
+      "}"
+    ],
+    "description": "Guard for voided state"
+  },
+  "Reserve Statement": {
+    "prefix": "reserve",
+    "body": [
+      "reserve ${1:int32} ${2:result} = ${3:function}();"
+    ],
+    "description": "Reserve and call function"
+  },
+  "Move Statement": {
+    "prefix": "move",
+    "body": [
+      "move ${1:variable};"
+    ],
+    "description": "Move variable to voided state"
+  },
+  "Import Standard Library": {
+    "prefix": "import_std",
+    "body": [
+      "import std;"
+    ],
+    "description": "Import standard library"
+  },
+  "Import C Function": {
+    "prefix": "import_c",
+    "body": [
+      "import ${1:int32} ${2:functionName}(${3:parameters});"
+    ],
+    "description": "Import C function"
+  },
+  "Entry Point": {
+    "prefix": "entry",
+    "body": [
+      "entry",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Program entry point"
+  },
+  "Hello World": {
+    "prefix": "hello",
+    "body": [
+      "import std;",
+      "",
+      "entry",
+      "{",
+      "\tputs(\"Hello, C<< world!\");",
+      "}"
+    ],
+    "description": "Hello world program"
+  },
+  "Namespace": {
+    "prefix": "namespace",
+    "body": [
+      "namespace ${1:MyNamespace}",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Define a namespace"
+  },
+  "Const Declaration": {
+    "prefix": "const",
+    "body": [
+      "const ${1:int32} ${2:CONSTANT_NAME} = ${3:value};"
+    ],
+    "description": "Declare a constant"
+  },
+  "Variable Declaration": {
+    "prefix": "var",
+    "body": [
+      "${1:int32} ${2:variableName}${3: = ${4:value}};$0"
+    ],
+    "description": "Declare a variable"
+  }
+}

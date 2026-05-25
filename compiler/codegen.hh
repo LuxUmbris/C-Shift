@@ -51,6 +51,15 @@ class Codegen
   };
   std::unordered_map<std::string, std::vector<TunnelParam>> func_tunnels;
 
+  // Loop/Switch context for break/continue
+  struct LoopContext
+  {
+    EzBlock *loop_end;   // where break jumps to
+    EzBlock *loop_cond;  // where continue jumps to (nullptr for do-while semantics)
+    bool is_switch;      // true if this is a switch, false if loop
+  };
+  std::vector<LoopContext> loop_stack;
+
   // Collect all unique tunnel targets from a function body (recursive)
   void collect_tunnels(Parser::ASTNode *node, std::vector<TunnelParam> &out)
   {
@@ -256,6 +265,12 @@ private:
       forward_function(n);
     if (n->type == "Entry")
       forward_entry(n);
+    if (n->type == "Template")
+    {
+      // Extract and forward-declare the templated definition
+      if (n->children.size() >= 2)
+        forward_declare(n->children[1]);
+    }
     if (n->type == "Namespace")
       for (auto *c : n->children)
         forward_declare(c);
@@ -372,6 +387,12 @@ private:
       emit_entry(n);
     else if (n->type == "Struct")
     { /* body already set in forward pass */
+    }
+    else if (n->type == "Template")
+    {
+      // Emit the templated definition
+      if (n->children.size() >= 2)
+        emit_top(n->children[1]);
     }
     else if (n->type == "Namespace")
       for (auto *c : n->children)
@@ -494,6 +515,10 @@ private:
     else if (t == "Reset")
     { /* no runtime action */
     }
+    else if (t == "Break")
+      emit_break(n);
+    else if (t == "Continue")
+      emit_continue(n);
     else if (t == "If")
       emit_if(n);
     else if (t == "While")
@@ -903,6 +928,44 @@ private:
     ez_store(mod, rhs, ptr);
   }
 
+  void emit_break(Parser::ASTNode *)
+  {
+    if (!loop_stack.empty())
+    {
+      EzBlock *exit_b = loop_stack.back().loop_end;
+      ez_br(mod, exit_b);
+      // Current block is now terminated; any subsequent statements are
+      // unreachable but must still be processed by the parser/checker
+      EzBlock *unreachable_b =
+          ez_block(current_func, "break.unreachable");
+      current_block = unreachable_b;
+      ez_use(unreachable_b);
+    }
+  }
+
+  void emit_continue(Parser::ASTNode *)
+  {
+    if (!loop_stack.empty() && !loop_stack.back().is_switch)
+    {
+      EzBlock *cont_b = loop_stack.back().loop_cond;
+      if (cont_b)
+      {
+        ez_br(mod, cont_b);
+        // Current block is now terminated
+        EzBlock *unreachable_b =
+            ez_block(current_func, "continue.unreachable");
+        current_block = unreachable_b;
+        ez_use(unreachable_b);
+      }
+    }
+  }
+
+  void emit_template(Parser::ASTNode *)
+  {
+    // Templates don't emit code themselves; their templated definitions
+    // (struct or function) are processed during forward_declare and emit_top
+  }
+
   // ── Control flow ──────────────────────────────────────────────────────────
 
   void emit_if(Parser::ASTNode *n)
@@ -956,11 +1019,15 @@ private:
                                           : ez_const_bool(1);
     ez_cond_br(mod, cond, body_b, end_b);
 
+    loop_stack.push_back({end_b, cond_b, false});
     current_block = body_b;
     ez_use(body_b);
     if (n->children.size() > 1)
       emit_block_body(n->children[1]);
-    ez_br(mod, cond_b);
+    // Guard against double terminator (break already added one)
+    if (!current_block_has_terminator())
+      ez_br(mod, cond_b);
+    loop_stack.pop_back();
 
     current_block = end_b;
     ez_use(end_b);
@@ -986,11 +1053,15 @@ private:
                                           : ez_const_bool(1);
     ez_cond_br(mod, cond, body_b, end_b);
 
+    loop_stack.push_back({end_b, incr_b, false});
     current_block = body_b;
     ez_use(body_b);
     if (n->children.size() > 3)
       emit_block_body(n->children[3]);
-    ez_br(mod, incr_b);
+    // Guard against double terminator (break already added one)
+    if (!current_block_has_terminator())
+      ez_br(mod, incr_b);
+    loop_stack.pop_back();
 
     current_block = incr_b;
     ez_use(incr_b);
@@ -1038,6 +1109,7 @@ private:
     EzVal cond = ez_slt(mod, idx_val, limit, "foreach.cond");
     ez_cond_br(mod, cond, body_b, end_b);
 
+    loop_stack.push_back({end_b, cond_b, false});
     current_block = body_b;
     ez_use(body_b);
     push_scope();
@@ -1051,9 +1123,14 @@ private:
     emit_block_body(n->children[1]);
     pop_scope();
 
-    EzVal idx_next = ez_add(mod, idx_val, ez_const_int(i32_ty, 1), "idx.next");
-    ez_store(mod, idx_next, idx_slot);
-    ez_br(mod, cond_b);
+    // Guard against double terminator (break already added one)
+    if (!current_block_has_terminator())
+    {
+      EzVal idx_next = ez_add(mod, idx_val, ez_const_int(i32_ty, 1), "idx.next");
+      ez_store(mod, idx_next, idx_slot);
+      ez_br(mod, cond_b);
+    }
+    loop_stack.pop_back();
 
     current_block = end_b;
     ez_use(end_b);
@@ -1114,6 +1191,9 @@ private:
                   case_blocks[i]->bb);
     }
 
+    // Push switch context for break handling
+    loop_stack.push_back({end_b, nullptr, true});
+
     // Emit case bodies
     for (size_t i = 0; i < cases.size(); ++i)
     {
@@ -1121,7 +1201,9 @@ private:
       ez_use(case_blocks[i]);
       for (auto *stmt : cases[i]->children)
         emit_stmt(stmt);
-      ez_br(mod, end_b);
+      // Guard against double terminator (break already added one)
+      if (!current_block_has_terminator())
+        ez_br(mod, end_b);
     }
     if (default_node)
     {
@@ -1129,8 +1211,12 @@ private:
       ez_use(default_b);
       for (auto *stmt : default_node->children)
         emit_stmt(stmt);
-      ez_br(mod, end_b);
+      // Guard against double terminator
+      if (!current_block_has_terminator())
+        ez_br(mod, end_b);
     }
+
+    loop_stack.pop_back();
 
     current_block = end_b;
     ez_use(end_b);

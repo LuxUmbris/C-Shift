@@ -1,0 +1,14 @@
+.git
+.gitignore
+*.vsix
+build/
+test/
+**/*.ts
+**/*.tsx
+**/*.map
+node_modules/
+.vscode/
+.DS_Store
+*.md
+!README.md
+!CHANGELOG.md

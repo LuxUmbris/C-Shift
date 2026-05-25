@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.vsix
+.DS_Store
+.vscode/
+*.log
+*.swp
+*.swo
+*~
+.env
