@@ -27,6 +27,28 @@
 #include <unistd.h>
 #endif
 
+#define PRINT_SINGLE(x) _Generic((x), \
+    int: printf("%d", (int)(x)), \
+    double: printf("%f", (double)(x)), \
+    float: printf("%f", (float)(x)), \
+    char*: printf("%s", (char*)(x)), \
+    const char*: printf("%s", (const char*)(x)), \
+    default: printf("[Unbekannter Typ]") \
+)
+
+#define GET_4TH_ARG(arg1, arg2, arg3, arg4, ...) arg4
+#define PRINT_MACRO_CHOOSER(...) \
+    GET_4TH_ARG(__VA_ARGS__, PRINT_3, PRINT_2, PRINT_1)
+
+#define PRINT_1(a)      { PRINT_SINGLE(a); }
+#define PRINT_2(a,b)    { PRINT_SINGLE(a); PRINT_SINGLE(b); }
+#define PRINT_3(a,b,c)  { PRINT_SINGLE(a); PRINT_SINGLE(b); PRINT_SINGLE(c); }
+
+#define print(...) do { \
+    PRINT_MACRO_CHOOSER(__VA_ARGS__)(__VA_ARGS__); \
+    fflush(stdout); \
+} while(0)
+
 /* ── errno ──────────────────────────────────────────────────────────────── */
 
 int get_errno(void) { return errno; }
@@ -263,14 +285,6 @@ double now_seconds(void)
 }
 
 // -- comfort -----------
-int print(const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    vprintf(fmt, args);
-    va_end(args);
-    fflush(stdout);
-    return 0;
-}
 
 char* read_file(const char* path) {
     FILE* f = fopen(path, "rb");
