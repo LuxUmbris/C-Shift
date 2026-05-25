@@ -66,8 +66,8 @@ private:
   bool in_function = false;
 
   // Loop/Switch context tracking
-  int loop_depth = 0;      // for break/continue validation
-  int switch_depth = 0;    // for break validation
+  int loop_depth = 0;   // for break/continue validation
+  int switch_depth = 0; // for break validation
 
   // Struct types and template types
   std::unordered_set<std::string> struct_types;
@@ -916,7 +916,8 @@ private:
     }
     else
     {
-      add_error(n->line, "Template can only precede struct or function definitions");
+      add_error(n->line,
+                "Template can only precede struct or function definitions");
     }
   }
 

@@ -857,9 +857,9 @@ private:
     size_t ln = current_line();
     match_token(Lexer::TokenType::KEYWORD, "template");
     match_token(Lexer::TokenType::OPERATOR, "<");
-    
+
     ASTNode *template_node = new ASTNode("Template", "", ln, current_depth);
-    
+
     // Parse template parameters: typename T, typename U, etc.
     ASTNode *params = new ASTNode("TemplateParams", "", ln, current_depth);
     while (peek_token().value != ">")
@@ -868,10 +868,11 @@ private:
           peek_token().value == "typename")
       {
         advance_token();
-        std::string param_name = match_token(Lexer::TokenType::IDENTIFIER).value;
+        std::string param_name =
+            match_token(Lexer::TokenType::IDENTIFIER).value;
         params->children.push_back(
             new ASTNode("TypeParam", param_name, ln, current_depth));
-        
+
         if (peek_token().value == ",")
         {
           advance_token();
@@ -879,14 +880,14 @@ private:
       }
       else
       {
-        throw std::runtime_error("[SYNTAX ERROR] Line " +
-                                 std::to_string(current_line()) +
-                                 ": Expected 'typename' in template parameters");
+        throw std::runtime_error(
+            "[SYNTAX ERROR] Line " + std::to_string(current_line()) +
+            ": Expected 'typename' in template parameters");
       }
     }
     match_token(Lexer::TokenType::OPERATOR, ">");
     template_node->children.push_back(params);
-    
+
     // Parse the templated definition (struct or function)
     if (peek_token().type == Lexer::TokenType::KEYWORD)
     {
@@ -901,9 +902,9 @@ private:
       }
       else
       {
-        throw std::runtime_error("[SYNTAX ERROR] Line " +
-                                 std::to_string(current_line()) +
-                                 ": Template can only precede 'struct' or 'def'");
+        throw std::runtime_error(
+            "[SYNTAX ERROR] Line " + std::to_string(current_line()) +
+            ": Template can only precede 'struct' or 'def'");
       }
     }
     else
@@ -912,7 +913,7 @@ private:
                                std::to_string(current_line()) +
                                ": Expected 'struct' or 'def' after template");
     }
-    
+
     return template_node;
   }
 };

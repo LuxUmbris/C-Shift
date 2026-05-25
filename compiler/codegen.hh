@@ -54,9 +54,10 @@ class Codegen
   // Loop/Switch context for break/continue
   struct LoopContext
   {
-    EzBlock *loop_end;   // where break jumps to
-    EzBlock *loop_cond;  // where continue jumps to (nullptr for do-while semantics)
-    bool is_switch;      // true if this is a switch, false if loop
+    EzBlock *loop_end; // where break jumps to
+    EzBlock
+        *loop_cond; // where continue jumps to (nullptr for do-while semantics)
+    bool is_switch; // true if this is a switch, false if loop
   };
   std::vector<LoopContext> loop_stack;
 
@@ -936,8 +937,7 @@ private:
       ez_br(mod, exit_b);
       // Current block is now terminated; any subsequent statements are
       // unreachable but must still be processed by the parser/checker
-      EzBlock *unreachable_b =
-          ez_block(current_func, "break.unreachable");
+      EzBlock *unreachable_b = ez_block(current_func, "break.unreachable");
       current_block = unreachable_b;
       ez_use(unreachable_b);
     }
@@ -952,8 +952,7 @@ private:
       {
         ez_br(mod, cont_b);
         // Current block is now terminated
-        EzBlock *unreachable_b =
-            ez_block(current_func, "continue.unreachable");
+        EzBlock *unreachable_b = ez_block(current_func, "continue.unreachable");
         current_block = unreachable_b;
         ez_use(unreachable_b);
       }
@@ -1126,7 +1125,8 @@ private:
     // Guard against double terminator (break already added one)
     if (!current_block_has_terminator())
     {
-      EzVal idx_next = ez_add(mod, idx_val, ez_const_int(i32_ty, 1), "idx.next");
+      EzVal idx_next =
+          ez_add(mod, idx_val, ez_const_int(i32_ty, 1), "idx.next");
       ez_store(mod, idx_next, idx_slot);
       ez_br(mod, cond_b);
     }
