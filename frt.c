@@ -12,13 +12,13 @@
  */
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <stdarg.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -27,27 +27,41 @@
 #include <unistd.h>
 #endif
 
-#define PRINT_SINGLE(x) _Generic((x), \
-    int: printf("%d", (int)(x)), \
-    double: printf("%f", (double)(x)), \
-    float: printf("%f", (float)(x)), \
-    char*: printf("%s", (char*)(x)), \
-    const char*: printf("%s", (const char*)(x)), \
-    default: printf("[Unbekannter Typ]") \
-)
+#define PRINT_SINGLE(x)                                                        \
+  _Generic((x),                                                                \
+      int: printf("%d", (int)(x)),                                             \
+      double: printf("%f", (double)(x)),                                       \
+      float: printf("%f", (float)(x)),                                         \
+      char *: printf("%s", (char *)(x)),                                       \
+      const char *: printf("%s", (const char *)(x)),                           \
+      default: printf("[Unbekannter Typ]"))
 
 #define GET_4TH_ARG(arg1, arg2, arg3, arg4, ...) arg4
-#define PRINT_MACRO_CHOOSER(...) \
-    GET_4TH_ARG(__VA_ARGS__, PRINT_3, PRINT_2, PRINT_1)
+#define PRINT_MACRO_CHOOSER(...)                                               \
+  GET_4TH_ARG(__VA_ARGS__, PRINT_3, PRINT_2, PRINT_1)
 
-#define PRINT_1(a)      { PRINT_SINGLE(a); }
-#define PRINT_2(a,b)    { PRINT_SINGLE(a); PRINT_SINGLE(b); }
-#define PRINT_3(a,b,c)  { PRINT_SINGLE(a); PRINT_SINGLE(b); PRINT_SINGLE(c); }
+#define PRINT_1(a)                                                             \
+  {                                                                            \
+    PRINT_SINGLE(a);                                                           \
+  }
+#define PRINT_2(a, b)                                                          \
+  {                                                                            \
+    PRINT_SINGLE(a);                                                           \
+    PRINT_SINGLE(b);                                                           \
+  }
+#define PRINT_3(a, b, c)                                                       \
+  {                                                                            \
+    PRINT_SINGLE(a);                                                           \
+    PRINT_SINGLE(b);                                                           \
+    PRINT_SINGLE(c);                                                           \
+  }
 
-#define print(...) do { \
-    PRINT_MACRO_CHOOSER(__VA_ARGS__)(__VA_ARGS__); \
-    fflush(stdout); \
-} while(0)
+#define print(...)                                                             \
+  do                                                                           \
+  {                                                                            \
+    PRINT_MACRO_CHOOSER(__VA_ARGS__)(__VA_ARGS__);                             \
+    fflush(stdout);                                                            \
+  } while (0)
 
 /* ── errno ──────────────────────────────────────────────────────────────── */
 
@@ -286,41 +300,47 @@ double now_seconds(void)
 
 // -- comfort -----------
 
-char* read_file(const char* path) {
-    FILE* f = fopen(path, "rb");
-    if (!f) return NULL;
+char *read_file(const char *path)
+{
+  FILE *f = fopen(path, "rb");
+  if (!f)
+    return NULL;
 
-    // Find file size
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    rewind(f);
+  // Find file size
+  fseek(f, 0, SEEK_END);
+  long size = ftell(f);
+  rewind(f);
 
-    // Allocate buffer + null terminator
-    char* buffer = (char*)malloc(size + 1);
-    if (!buffer) {
-        fclose(f);
-        return NULL;
-    }
-
-    long bytes_read = fread(buffer, 1, size, f);
-    buffer[bytes_read] = '\0'; // Ensure valid C-string termination
-
+  // Allocate buffer + null terminator
+  char *buffer = (char *)malloc(size + 1);
+  if (!buffer)
+  {
     fclose(f);
-    return buffer;
+    return NULL;
+  }
+
+  long bytes_read = fread(buffer, 1, size, f);
+  buffer[bytes_read] = '\0'; // Ensure valid C-string termination
+
+  fclose(f);
+  return buffer;
 }
 
-int write_file(const char* path, const char* payload, const char* mode) {
-    // Basic validation to protect against garbage mode flags
-    if (strcmp(mode, "w") != 0 && strcmp(mode, "a") != 0) {
-        return -1; 
-    }
+int write_file(const char *path, const char *payload, const char *mode)
+{
+  // Basic validation to protect against garbage mode flags
+  if (strcmp(mode, "w") != 0 && strcmp(mode, "a") != 0)
+  {
+    return -1;
+  }
 
-    FILE* f = fopen(path, mode);
-    if (!f) return -1;
+  FILE *f = fopen(path, mode);
+  if (!f)
+    return -1;
 
-    size_t len = strlen(payload);
-    size_t bytes_written = fwrite(payload, 1, len, f);
+  size_t len = strlen(payload);
+  size_t bytes_written = fwrite(payload, 1, len, f);
 
-    fclose(f);
-    return (bytes_written == len) ? 0 : -1;
+  fclose(f);
+  return (bytes_written == len) ? 0 : -1;
 }
