@@ -1,4 +1,3 @@
-[Syntax_spec.md](https://github.com/user-attachments/files/28277335/Syntax_spec.md)
 # C<< (C-Shift) Language Syntax Specification
 
 > **Language version:** C-Shift 0.6 (2026)  
