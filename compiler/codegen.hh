@@ -271,8 +271,7 @@ private:
       // Extract and forward-declare the templated definition
       if (n->children.size() >= 2)
         forward_declare(n->children[1]);
-    }
-    if (n->type == "Namespace")
+    }    if (n->type == "Namespace")
       for (auto *c : n->children)
         forward_declare(c);
   }
@@ -530,6 +529,8 @@ private:
       emit_foreach(n);
     else if (t == "Switch")
       emit_switch(n);
+    else if (t == "ArrayAppend")
+      emit_array_append(n);
     else if (t == "Block")
       emit_block_body(n);
     else if (t == "Expression")
@@ -538,11 +539,153 @@ private:
 
   // ── Variables ─────────────────────────────────────────────────────────────
 
+  // name → element type for arena arrays (T[])
+  std::unordered_map<std::string, std::string> arena_array_elem_type;
+
+  // Ensure malloc/realloc/free are declared (for arena arrays)
+  void ensure_alloc_fns()
+  {
+    if (!func_map.count("malloc"))
+    {
+      EzType params[] = {ez_i64()};
+      func_map["malloc"] = ez_extern(mod, "malloc", ez_ptr(), params, 1, 0);
+    }
+    if (!func_map.count("realloc"))
+    {
+      EzType params[] = {ez_ptr(), ez_i64()};
+      func_map["realloc"] = ez_extern(mod, "realloc", ez_ptr(), params, 2, 0);
+    }
+    if (!func_map.count("free"))
+    {
+      EzType params[] = {ez_ptr()};
+      func_map["free"] = ez_extern(mod, "free", ez_void(), params, 1, 0);
+    }
+  }
+
+  // Arena array layout: for variable "arr" of type T[]:
+  //   arr_data  : ptr  (T*)
+  //   arr_len   : i64
+  //   arr_cap   : i64
+  EzVal get_arena_len_ptr(const std::string &name)
+  {
+    return lookup_var(name + "__len");
+  }
+  EzVal get_arena_cap_ptr(const std::string &name)
+  {
+    return lookup_var(name + "__cap");
+  }
+  EzVal get_arena_data_ptr(const std::string &name)
+  {
+    return lookup_var(name + "__data");
+  }
+
+  void emit_arena_array_declaration(const std::string &name,
+                                    const std::string &elem_type_s)
+  {
+    ensure_alloc_fns();
+    arena_array_elem_type[name] = elem_type_s;
+    EzType i64 = ez_i64();
+
+    // Allocate len, cap, data slots
+    EzVal len_slot = alloca_in_entry(current_func, i64, (name + "__len").c_str());
+    EzVal cap_slot = alloca_in_entry(current_func, i64, (name + "__cap").c_str());
+    EzVal data_slot = alloca_in_entry(current_func, ez_ptr(), (name + "__data").c_str());
+
+    ez_store(mod, ez_const_int(i64, 0), len_slot);
+    ez_store(mod, ez_const_int(i64, 0), cap_slot);
+    ez_store(mod, LLVMConstNull(ez_ptr()), data_slot);
+
+    declare_var(name + "__len",  len_slot,  "int64");
+    declare_var(name + "__cap",  cap_slot,  "int64");
+    declare_var(name + "__data", data_slot, "voided*");
+    // Register the variable name itself for .len access
+    declare_var(name, len_slot, "int64"); // main slot = len for .len reads
+    var_type_map[name] = "int64"; // arr.len loads from len_slot
+  }
+
+  void emit_array_append(Parser::ASTNode *n)
+  {
+    // n->value = array variable name, n->children[0] = value expr
+    const std::string &arr = n->value;
+    EzVal len_ptr = get_arena_len_ptr(arr);
+    EzVal cap_ptr = get_arena_cap_ptr(arr);
+    EzVal data_ptr = get_arena_data_ptr(arr);
+    if (!len_ptr || !cap_ptr || !data_ptr)
+      return; // not an arena array
+
+    std::string elem_s = "int32";
+    auto eit = arena_array_elem_type.find(arr);
+    if (eit != arena_array_elem_type.end())
+      elem_s = eit->second;
+    EzType elem_ty = cshift_type(elem_s);
+    EzType i64 = ez_i64();
+
+    EzVal val = emit_expression_val(n->children.empty() ? nullptr : n->children[0], elem_s);
+    if (!val)
+      return;
+
+    EzVal len = ez_load(mod, i64, len_ptr, "len");
+    EzVal cap = ez_load(mod, i64, cap_ptr, "cap");
+
+    // if (len >= cap) { cap = cap ? cap*2 : 8; data = realloc(data, cap * sizeof(T)) }
+    EzBlock *grow_b = ez_block(current_func, "arr.grow");
+    EzBlock *store_b = ez_block(current_func, "arr.store");
+
+    EzVal need_grow = ez_sge(mod, len, cap, "need_grow");
+    ez_cond_br(mod, need_grow, grow_b, store_b);
+
+    // grow block
+    current_block = grow_b;
+    ez_use(grow_b);
+    EzVal cap_zero = ez_eq(mod, cap, ez_const_int(i64, 0), "cap_zero");
+    EzVal new_cap = LLVMBuildSelect(mod->builder, cap_zero,
+                                    ez_const_int(i64, 8),
+                                    ez_mul(mod, cap, ez_const_int(i64, 2), "cap2"),
+                                    "new_cap");
+    ez_store(mod, new_cap, cap_ptr);
+    // elem size via LLVM
+    unsigned elem_bits = LLVMSizeOfTypeInBits(LLVMGetModuleDataLayout(mod->mod), elem_ty);
+    EzVal elem_size = ez_const_int(i64, elem_bits / 8);
+    EzVal new_bytes = ez_mul(mod, new_cap, elem_size, "new_bytes");
+    EzVal old_data = ez_load(mod, ez_ptr(), data_ptr, "old_data");
+    EzFunc *realloc_fn = func_map["realloc"];
+    EzVal rargs[] = {old_data, new_bytes};
+    EzVal new_data = ez_call(mod, realloc_fn, rargs, 2, "new_data");
+    ez_store(mod, new_data, data_ptr);
+    ez_br(mod, store_b);
+
+    // store block
+    current_block = store_b;
+    ez_use(store_b);
+    // Reload len/data (may have changed)
+    EzVal len2  = ez_load(mod, i64, len_ptr, "len2");
+    EzVal data2 = ez_load(mod, ez_ptr(), data_ptr, "data2");
+    EzVal gep_idx[] = {len2};
+    EzVal elem_ptr = ez_gep(mod, elem_ty, data2, gep_idx, 1, "elem_ptr");
+    ez_store(mod, val, elem_ptr);
+    EzVal new_len = ez_add(mod, len2, ez_const_int(i64, 1), "new_len");
+    ez_store(mod, new_len, len_ptr);
+    // Also update the "name" slot (= len slot for .len reads)
+    EzVal main_slot = lookup_var(arr);
+    if (main_slot && main_slot != len_ptr)
+      ez_store(mod, new_len, main_slot);
+  }
+
   void emit_declaration(Parser::ASTNode *n)
   {
     auto sp = n->value.find(' ');
     std::string type_s = n->value.substr(0, sp);
     std::string vname = n->value.substr(sp + 1);
+
+    // Arena array: T[]
+    if (type_s.size() > 2 &&
+        type_s.substr(type_s.size() - 2) == "[]")
+    {
+      std::string elem = type_s.substr(0, type_s.size() - 2);
+      emit_arena_array_declaration(vname, elem);
+      return;
+    }
+
     EzType ty = cshift_type(type_s);
 
     EzVal slot = alloca_in_entry(current_func, ty, vname.c_str());
@@ -1267,6 +1410,13 @@ private:
     if (tokens.empty())
       return nullptr;
 
+    // Handle 'move VAR' — just load the variable value; voiding is static
+    if (tokens.size() == 2 && tokens[0]->value == "move" &&
+        tokens[1]->type == "Token")
+    {
+      return eval_token(tokens[1], hint);
+    }
+
     // Detect function call: IDENT ( args... )
     if (tokens.size() >= 3 && tokens[0]->type == "Token" &&
         tokens[0]->token_type == Lexer::TokenType::IDENTIFIER &&
@@ -1313,12 +1463,50 @@ private:
       return eval_expr_children(inner, hint);
     }
 
+    // Array index access: IDENT [ expr ]
+    if (tokens.size() >= 4 && tokens[0]->type == "Token" &&
+        tokens[1]->value == "[")
+    {
+      std::string arr = tokens[0]->value;
+      // Find matching ]
+      std::vector<Parser::ASTNode *> idx_toks;
+      for (size_t i = 2; i < tokens.size() - 1; ++i)
+        idx_toks.push_back(tokens[i]);
+      EzVal idx = eval_expr_children(idx_toks, "int64");
+      if (!idx) return nullptr;
+      // Widen index to i64 if needed
+      EzType idx_ty = LLVMTypeOf(idx);
+      if (LLVMGetTypeKind(idx_ty) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(idx_ty) < 64)
+        idx = LLVMBuildSExt(mod->builder, idx, ez_i64(), "idx64");
+
+      // Check if it's an arena array
+      auto eit = arena_array_elem_type.find(arr);
+      if (eit != arena_array_elem_type.end())
+      {
+        EzVal data_ptr = get_arena_data_ptr(arr);
+        if (!data_ptr) return nullptr;
+        EzType elem_ty = cshift_type(eit->second);
+        EzVal data = ez_load(mod, ez_ptr(), data_ptr, "data");
+        EzVal gep_idx[] = {idx};
+        EzVal elem_ptr = ez_gep(mod, elem_ty, data, gep_idx, 1, "elem_ptr");
+        return ez_load(mod, elem_ty, elem_ptr, "elem");
+      }
+    }
+
     // Field access: IDENT . FIELD  (or chained: a.b.c)
     if (tokens.size() >= 3 && tokens[1]->value == ".")
     {
-      // Build "base.field" string and GEP
       std::string base = tokens[0]->value;
       std::string field = tokens[2]->value;
+
+      // Arena array .len
+      if (field == "len" && arena_array_elem_type.count(base))
+      {
+        EzVal len_ptr = get_arena_len_ptr(base);
+        if (len_ptr)
+          return ez_load(mod, ez_i64(), len_ptr, "arr_len");
+      }
+
       EzVal base_ptr = lookup_var(base);
       if (base_ptr)
       {
