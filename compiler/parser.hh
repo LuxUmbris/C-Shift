@@ -323,6 +323,7 @@ private:
     size_t ln = current_line();
     ASTNode *expr = new ASTNode("Expression", "", ln, current_depth);
     int paren_depth = 0;
+    int bracket_depth = 0;
 
     while (peek_token().type != Lexer::TokenType::END_OF_FILE)
     {
@@ -342,8 +343,22 @@ private:
         expr->children.push_back(make_token_node(advance_token()));
         continue;
       }
-      if (paren_depth == 0 &&
-          (val == ";" || val == "}" || val == "]" || val == "->"))
+      if (val == "[")
+      {
+        bracket_depth++;
+        expr->children.push_back(make_token_node(advance_token()));
+        continue;
+      }
+      if (val == "]")
+      {
+        if (bracket_depth == 0 && paren_depth == 0)
+          break;
+        bracket_depth--;
+        expr->children.push_back(make_token_node(advance_token()));
+        continue;
+      }
+      if (paren_depth == 0 && bracket_depth == 0 &&
+          (val == ";" || val == "}" || val == "->"))
         break;
 
       expr->children.push_back(make_token_node(advance_token()));
