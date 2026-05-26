@@ -415,7 +415,23 @@ private:
     declare(
         {name, type, arena_depth, false, is_pointer_type(type), false, false});
     if (!n->children.empty())
-      check_expression(n->children[0]);
+    {
+      auto *init = n->children[0];
+      // Type-mismatch check: string literal assigned to non-string type
+      if (init->type == "Expression" && init->children.size() == 1)
+      {
+        auto *tok = init->children[0];
+        if (tok->token_type == Lexer::TokenType::STRING &&
+            type != "string" && type != "char*" && !is_pointer_type(type))
+          add_error(n->line, "Type mismatch: string literal assigned to '" +
+                                 type + " " + name + "'");
+        if ((tok->token_type == Lexer::TokenType::NUMBER) &&
+            (type == "string"))
+          add_error(n->line, "Type mismatch: numeric literal assigned to '" +
+                                 type + " " + name + "'");
+      }
+      check_expression(init);
+    }
   }
 
   void check_const(Parser::ASTNode *n)
@@ -609,7 +625,25 @@ private:
                                "' (may be external)");
     if (!n->children.empty())
       for (auto *a : n->children[0]->children)
-        check_expression(a);
+      {
+        // Handle 'move VAR' inside call arguments
+        if (a->type == "Expression" && a->children.size() == 2 &&
+            a->children[0]->value == "move" &&
+            a->children[1]->type == "Token")
+        {
+          const std::string &mname = a->children[1]->value;
+          Symbol *sym = lookup(mname);
+          if (!sym)
+            add_error(n->line, "move: variable '" + mname + "' not declared");
+          else if (sym->is_voided)
+            add_error(n->line, "move: variable '" + mname + "' is already voided");
+          else if (sym->is_const)
+            add_error(n->line, "move: cannot move const variable '" + mname + "'");
+          if (sym) sym->is_voided = true;
+        }
+        else
+          check_expression(a);
+      }
   }
 
   void check_c_import(Parser::ASTNode *n)
@@ -840,6 +874,45 @@ private:
       }
       return;
     }
+    // Handle 'move VAR' as an Expression node with two Token children
+    if (n->type == "Expression" && n->children.size() == 2 &&
+        n->children[0]->value == "move" &&
+        n->children[1]->type == "Token")
+    {
+      const std::string &mname = n->children[1]->value;
+      Symbol *sym = lookup(mname);
+      if (!sym)
+        add_error(n->children[1]->line, "move: variable '" + mname + "' not declared");
+      else if (sym->is_voided)
+        add_error(n->children[1]->line, "move: variable '" + mname + "' is already voided");
+      else if (sym->is_const)
+        add_error(n->children[1]->line, "move: cannot move const variable '" + mname + "'");
+      if (sym) sym->is_voided = true;
+      return;
+    }
+    // Handle flat token list: look for 'move' keyword token followed by IDENT
+    if (n->type == "Expression")
+    {
+      for (size_t i = 0; i + 1 < n->children.size(); ++i)
+      {
+        if (n->children[i]->value == "move" &&
+            n->children[i + 1]->type == "Token" &&
+            n->children[i + 1]->token_type == Lexer::TokenType::IDENTIFIER)
+        {
+          const std::string &mname = n->children[i + 1]->value;
+          Symbol *sym = lookup(mname);
+          if (!sym)
+            add_error(n->children[i]->line, "move: variable '" + mname + "' not declared");
+          else if (sym->is_voided)
+            add_error(n->children[i]->line, "move: variable '" + mname + "' is already voided");
+          else if (sym->is_const)
+            add_error(n->children[i]->line, "move: cannot move const variable '" + mname + "'");
+          if (sym) sym->is_voided = true;
+          ++i; // skip the variable token
+          continue;
+        }
+      }
+    }
     for (auto *c : n->children)
       check_expression_tokens(c);
   }
@@ -914,10 +987,21 @@ private:
       // Could track template functions separately if needed
       check_function(def);
     }
+    else if (def->type == "CImport" || def->type == "ModuleImport" ||
+             def->type == "Import")
+    {
+      // template<typename T> import rettype fn(params); — treat as plain CImport
+      check_node(def);
+    }
+    else if (def->type == "Template")
+    {
+      // nested template<K> template<V> struct/import — recurse
+      check_template(def);
+    }
     else
     {
       add_error(n->line,
-                "Template can only precede struct or function definitions");
+                "Template can only precede struct, function, or import definitions");
     }
   }
 
@@ -931,10 +1015,19 @@ private:
     while (!base.empty() && (base.back() == '*' || base.back() == ']' ||
                              base.back() == ':' || base.back() == '['))
       base.pop_back();
+    // Strip generic type params: Vector<T> → Vector, Foo<A,B> → Foo
+    auto lt = base.find('<');
+    if (lt != std::string::npos)
+      base = base.substr(0, lt);
     if (primitives.count(base))
       return true;
     // treat 'voided' as a known primitive type
     if (base == "voided")
+      return true;
+    // Single-letter or short uppercase names are template type parameters (T, K, V, etc.)
+    if (!base.empty() && base.size() <= 2 &&
+        std::isupper((unsigned char)base[0]) &&
+        (base.size() == 1 || std::isupper((unsigned char)base[1])))
       return true;
     if (struct_types.count(base))
       return true;
@@ -943,6 +1036,9 @@ private:
     // Check template types (e.g., "Vector<int32>")
     if (template_types.count(base))
       return true;
+    // If any struct type is registered with matching prefix (templated struct)
+    for (auto &s : struct_types)
+      if (s == base) return true;
     return false;
   }
 };
