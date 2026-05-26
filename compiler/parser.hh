@@ -156,6 +156,9 @@ private:
           peek_token(la).value == "-=" || peek_token(la).value == "*=" ||
           peek_token(la).value == "/=")
         return parse_assignment();
+      // Array append: IDENT << expr ;
+      if (peek_token(la).value == "<<")
+        return parse_array_append();
       // Struct-typed declaration: IDENT IDENT
       if (peek_token(la).type == Lexer::TokenType::IDENTIFIER)
         return parse_declaration();
@@ -239,7 +242,7 @@ private:
   }
 
   // Parses a type including pointer/slice suffixes: int32, int32*, int32[],
-  // int32[:]
+  // int32[:], and generic types like Vector<T>, HashMap<K, V>
   std::string parse_type_string()
   {
     std::string type;
@@ -253,6 +256,20 @@ private:
       throw std::runtime_error("[SYNTAX ERROR] Line " +
                                std::to_string(current_line()) +
                                ": Expected type, got: " + peek_token().value);
+    }
+    // Generic type parameters: Foo<T>  Foo<T, U>  Foo<Bar<T>>
+    if (peek_token().value == "<")
+    {
+      advance_token(); // consume <
+      type += "<";
+      int depth = 1;
+      while (depth > 0 && peek_token().type != Lexer::TokenType::END_OF_FILE)
+      {
+        const std::string &v = peek_token().value;
+        if (v == "<") { depth++; type += advance_token().value; }
+        else if (v == ">") { depth--; if (depth > 0) type += advance_token().value; else { advance_token(); type += ">"; } }
+        else { type += advance_token().value; }
+      }
     }
     // pointer
     while (peek_token().value == "*")
@@ -363,6 +380,17 @@ private:
     return node;
   }
 
+  ASTNode *parse_array_append()
+  {
+    size_t ln = current_line();
+    std::string arr_name = advance_token().value; // IDENT
+    advance_token();                              // consume <<
+    ASTNode *node = new ASTNode("ArrayAppend", arr_name, ln, current_depth);
+    node->children.push_back(parse_expression());
+    match_token(Lexer::TokenType::OPERATOR, ";");
+    return node;
+  }
+
   ASTNode *parse_assignment()
   {
     size_t ln = current_line();
@@ -439,6 +467,18 @@ private:
           t0.type == Lexer::TokenType::IDENTIFIER)
       {
         la++;
+        // skip generic type params: Foo<T>  Foo<T, U>  Foo<Bar<T>>
+        if (peek_token(la).value == "<")
+        {
+          la++;
+          int depth = 1;
+          while (depth > 0 && peek_token(la).type != Lexer::TokenType::END_OF_FILE)
+          {
+            if (peek_token(la).value == "<") depth++;
+            else if (peek_token(la).value == ">") depth--;
+            la++;
+          }
+        }
         // skip pointer stars
         while (peek_token(la).value == "*")
           la++;
@@ -888,7 +928,7 @@ private:
     match_token(Lexer::TokenType::OPERATOR, ">");
     template_node->children.push_back(params);
 
-    // Parse the templated definition (struct or function)
+    // Parse the templated definition (struct, function, or import)
     if (peek_token().type == Lexer::TokenType::KEYWORD)
     {
       const std::string &kw = peek_token().value;
@@ -900,18 +940,30 @@ private:
       {
         template_node->children.push_back(parse_function());
       }
+      else if (kw == "import")
+      {
+        // template<typename T> import ... ; — treat as a plain CImport
+        // (generics in std.cll are type-annotated C externs, not real templates)
+        template_node->children.push_back(parse_import());
+      }
+      else if (kw == "template")
+      {
+        // Nested template params: template<K> template<V> struct ...
+        // Collect additional type params and recurse into the inner definition
+        template_node->children.push_back(parse_template());
+      }
       else
       {
         throw std::runtime_error(
             "[SYNTAX ERROR] Line " + std::to_string(current_line()) +
-            ": Template can only precede 'struct' or 'def'");
+            ": Template can only precede 'struct', 'def', or 'import'");
       }
     }
     else
     {
       throw std::runtime_error("[SYNTAX ERROR] Line " +
                                std::to_string(current_line()) +
-                               ": Expected 'struct' or 'def' after template");
+                               ": Expected 'struct', 'def', or 'import' after template");
     }
 
     return template_node;
