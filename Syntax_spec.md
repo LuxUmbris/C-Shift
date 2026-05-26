@@ -1,6 +1,7 @@
+[Syntax_spec.md](https://github.com/user-attachments/files/28277335/Syntax_spec.md)
 # C<< (C-Shift) Language Syntax Specification
 
-> **Language version:** C-Shift 0.3 (2026)  
+> **Language version:** C-Shift 0.6 (2026)  
 > **Source extension:** `.cll`  
 > **Entry point:** `entry { … }`  
 > **Paradigm:** Arena-based, VOP (Vertical Ownership Programming), C-ABI-compatible
@@ -230,6 +231,14 @@ add(5, 7);
 reserve int32 result = add(5, 7);
 ```
 
+**Type-inferred inline form** — omit the type when the function has exactly one tunnel output:
+
+```cll
+reserve result = add(5, 7);   // type inferred as int32 from add's single tunnel
+```
+
+If the callee has multiple tunnel outputs, the type must be stated explicitly.
+
 In the inline form the function must tunnel at least one value whose type matches the declared type of the reserve variable. If multiple tunnels of the same type exist, the one whose name matches the reserve variable name is preferred; otherwise any type-matching tunnel is accepted.
 
 **Multiple tunnel targets:**
@@ -251,7 +260,15 @@ entry
 
 All `reserve`d variables in the calling scope whose names and types match a tunnel in the function are filled by a single call. Unmatched tunnel targets are silently ignored.
 
-### 6.4 Inline Usage Restriction
+### 6.5 Implicit Tunnel Value (inline argument)
+
+When a function with **exactly one** tunnel output is called inside an expression — for example as an argument to another call — the tunnel value is automatically materialized and used in-place:
+
+```cll
+print(add(4, 8));   // add tunnels int32 out; that value is passed to print
+```
+
+This is only permitted when the callee has a single unambiguous tunnel output. A function with multiple tunnels cannot be used this way; its output must be captured via `reserve` first.
 
 Using a function call in any position other than a `reserve` initializer or as a standalone call statement is **forbidden**:
 
@@ -370,15 +387,11 @@ move x;
 
 switch (p)
 {
-    case valid
-    {
+    case valid:
         // p is safe to use here
         printf("%d\n", *p);
-    }
-    case voided
-    {
+    case voided:
         puts("p is voided");
-    }
 }
 ```
 
@@ -590,21 +603,17 @@ case_clause  ::= 'case' identifier ':' statement*
                | 'default' ':' statement*
 ```
 
-There are no fallthrough semantics; each case is independent. Cases do not need braces (the body ends when the next `case`, `default`, or `}` is reached).
+There are no fallthrough semantics; each case is independent. Cases use a **colon** (`:`) after the label — not braces. The body ends when the next `case`, `default`, or `}` is reached.
 
 **Voided-state guard form:**
 
 ```cll
 switch (ptr)
 {
-    case valid
-    {
+    case valid:
         // ptr is usable here
-    }
-    case voided
-    {
+    case voided:
         // ptr has been moved
-    }
 }
 ```
 
@@ -613,18 +622,12 @@ switch (ptr)
 ```cll
 switch (status)
 {
-    case Active
-    {
+    case Active:
         puts("active");
-    }
-    case Inactive
-    {
+    case Inactive:
         puts("inactive");
-    }
-    default
-    {
+    default:
         puts("unknown");
-    }
 }
 ```
 
@@ -1167,14 +1170,10 @@ entry
 
     switch (p)
     {
-        case valid
-        {
+        case valid:
             printf("value: %d\n", *p);
-        }
-        case voided
-        }
+        case voided:
             puts("p is voided");
-        }
     }
 }
 ```
