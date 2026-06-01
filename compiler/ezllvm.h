@@ -59,6 +59,7 @@
 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitWriter.h>
+#include <llvm-c/Transforms/PassBuilder.h>
 #include <llvm-c/Core.h>
 #include <llvm-c/Target.h>
 #include <llvm-c/TargetMachine.h>
@@ -376,7 +377,8 @@ static inline int ez_verify(EzModule *m)
 
 /* ─── Internal: build a TargetMachine from an EzTarget ───────────────────────
  */
-static inline LLVMTargetMachineRef ez__make_tm(EzTarget *tgt)
+static inline LLVMTargetMachineRef
+ez__make_tm(EzTarget *tgt, LLVMCodeGenOptLevel opt_level)
 {
   LLVMInitializeAllTargetInfos();
   LLVMInitializeAllTargets();
@@ -393,8 +395,41 @@ static inline LLVMTargetMachineRef ez__make_tm(EzTarget *tgt)
     return NULL;
   }
   return LLVMCreateTargetMachine(target_ref, tgt->triple, tgt->cpu,
-                                 tgt->features, LLVMCodeGenLevelDefault,
+                                 tgt->features, opt_level,
                                  LLVMRelocPIC, LLVMCodeModelDefault);
+}
+
+/**
+ * ez_optimize — run the LLVM new-pass-manager optimization pipeline.
+ *
+ * @param m         The module to optimize (modified in-place).
+ * @param tm        Target machine for target-specific passes (may be NULL
+ *                  for a target-independent run, though passing it is better).
+ * @param pipeline  Pass pipeline string.  Common values:
+ *                    "default<O0>"  — no optimization (debug builds)
+ *                    "default<O1>"  — fast, minimal-size optimizations
+ *                    "default<O2>"  — standard release optimization
+ *                    "default<O3>"  — aggressive (inlining, vectorization…)
+ *                    "default<Os>"  — optimize for size
+ *                    "default<Oz>"  — optimize aggressively for size
+ * @return  0 on success, non-zero on error (message printed to stderr).
+ */
+static inline int ez_optimize(EzModule *m, LLVMTargetMachineRef tm,
+                               const char *pipeline)
+{
+  LLVMPassBuilderOptionsRef opts = LLVMCreatePassBuilderOptions();
+  LLVMPassBuilderOptionsSetVerifyEach(opts, 0);
+  LLVMErrorRef err = LLVMRunPasses(m->mod, pipeline, tm, opts);
+  LLVMDisposePassBuilderOptions(opts);
+  if (err)
+  {
+    char *msg = LLVMGetErrorMessage(err);
+    fprintf(stderr, "ez_optimize: %s\n", msg ? msg : "(unknown)");
+    LLVMDisposeErrorMessage(msg);
+    LLVMConsumeError(err);
+    return 1;
+  }
+  return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -407,10 +442,11 @@ static inline LLVMTargetMachineRef ez__make_tm(EzTarget *tgt)
  * @param path  Output path, e.g. "out.o".
  * @return      0 on success, non-zero on error.
  */
-static inline int ez_compile(EzModule *m, const char *path)
+static inline int ez_compile(EzModule *m, const char *path,
+                              LLVMCodeGenOptLevel opt_level)
 {
   EzTarget *native = ez_target_native();
-  LLVMTargetMachineRef tm = ez__make_tm(native);
+  LLVMTargetMachineRef tm = ez__make_tm(native, opt_level);
   ez_target_free(native);
   if (!tm)
     return 1;
@@ -441,9 +477,10 @@ static inline int ez_compile(EzModule *m, const char *path)
  *   // ... build IR ...
  *   ez_compile_for(mod, arm, "app-arm64.o");
  */
-static inline int ez_compile_for(EzModule *m, EzTarget *tgt, const char *path)
+static inline int ez_compile_for(EzModule *m, EzTarget *tgt, const char *path,
+                                   LLVMCodeGenOptLevel opt_level)
 {
-  LLVMTargetMachineRef tm = ez__make_tm(tgt);
+  LLVMTargetMachineRef tm = ez__make_tm(tgt, opt_level);
   if (!tm)
     return 1;
   LLVMSetTarget(m->mod, tgt->triple);
@@ -464,10 +501,11 @@ static inline int ez_compile_for(EzModule *m, EzTarget *tgt, const char *path)
  * Writes a .s file you can inspect or feed to an assembler.
  * @return 0 on success.
  */
-static inline int ez_compile_asm(EzModule *m, const char *path)
+static inline int ez_compile_asm(EzModule *m, const char *path,
+                                  LLVMCodeGenOptLevel opt_level)
 {
   EzTarget *native = ez_target_native();
-  LLVMTargetMachineRef tm = ez__make_tm(native);
+  LLVMTargetMachineRef tm = ez__make_tm(native, opt_level);
   ez_target_free(native);
   if (!tm)
     return 1;
@@ -487,9 +525,10 @@ static inline int ez_compile_asm(EzModule *m, const char *path)
  * ez_compile_asm_for — emit assembly for a specific target.
  */
 static inline int ez_compile_asm_for(EzModule *m, EzTarget *tgt,
-                                     const char *path)
+                                     const char *path,
+                                     LLVMCodeGenOptLevel opt_level)
 {
-  LLVMTargetMachineRef tm = ez__make_tm(tgt);
+  LLVMTargetMachineRef tm = ez__make_tm(tgt, opt_level);
   if (!tm)
     return 1;
   LLVMSetTarget(m->mod, tgt->triple);
@@ -952,7 +991,7 @@ static inline int ez_build_exe(EzModule *m, const char *out_path,
 {
   char obj[512];
   snprintf(obj, sizeof(obj), "%s.ez_tmp.o", out_path);
-  if (ez_compile(m, obj) != 0)
+  if (ez_compile(m, obj, LLVMCodeGenLevelDefault) != 0)
     return 1;
   const char *objs[] = {obj};
   int rc = ez_link_exe(objs, 1, out_path, extra_libs, nlibs);
@@ -983,7 +1022,7 @@ static inline int ez_build_exe_for(EzModule *m, EzTarget *tgt,
 {
   char obj[512];
   snprintf(obj, sizeof(obj), "%s.ez_tmp.o", out_path);
-  if (ez_compile_for(m, tgt, obj) != 0)
+  if (ez_compile_for(m, tgt, obj, LLVMCodeGenLevelDefault) != 0)
     return 1;
   const char *objs[] = {obj};
   int rc = ez_link_exe_for(tgt, objs, 1, extra_flags, nflags, out_path);

@@ -321,7 +321,10 @@ private:
     { /* file import — nothing to validate semantically */
     }
     else if (n->type == "ModuleImport")
-    { /* module import — resolved at link time */
+    { /* module import — resolved by ModuleLoader before checker runs */
+    }
+    else if (n->type == "HeaderImport")
+    { /* C-header import — resolved by ModuleLoader before checker runs */
     }
     else if (n->type == "CImport")
       check_c_import(n);
@@ -421,11 +424,12 @@ private:
       if (init->type == "Expression" && init->children.size() == 1)
       {
         auto *tok = init->children[0];
-        if (tok->token_type == Lexer::TokenType::STRING && type != "string" &&
-            type != "char*" && !is_pointer_type(type))
+        if (tok->token_type == Lexer::TokenType::STRING &&
+            type != "string" && type != "char*" && !is_pointer_type(type))
           add_error(n->line, "Type mismatch: string literal assigned to '" +
                                  type + " " + name + "'");
-        if ((tok->token_type == Lexer::TokenType::NUMBER) && (type == "string"))
+        if ((tok->token_type == Lexer::TokenType::NUMBER) &&
+            (type == "string"))
           add_error(n->line, "Type mismatch: numeric literal assigned to '" +
                                  type + " " + name + "'");
       }
@@ -497,13 +501,13 @@ private:
       if (want_type == "__infer__")
       {
         if (sig.tunnels.empty())
-          add_error(reserve_node->line, "reserve without type: '" + func_name +
-                                            "' has no tunnel outputs.");
+          add_error(reserve_node->line,
+                    "reserve without type: '" + func_name +
+                        "' has no tunnel outputs.");
         else if (sig.tunnels.size() > 1)
-          add_error(
-              reserve_node->line,
-              "reserve without type: '" + func_name +
-                  "' has multiple tunnels — specify the type explicitly.");
+          add_error(reserve_node->line,
+                    "reserve without type: '" + func_name +
+                        "' has multiple tunnels — specify the type explicitly.");
         // single tunnel: OK
         check_expression(expr);
         return;
@@ -644,20 +648,18 @@ private:
       {
         // Handle 'move VAR' inside call arguments
         if (a->type == "Expression" && a->children.size() == 2 &&
-            a->children[0]->value == "move" && a->children[1]->type == "Token")
+            a->children[0]->value == "move" &&
+            a->children[1]->type == "Token")
         {
           const std::string &mname = a->children[1]->value;
           Symbol *sym = lookup(mname);
           if (!sym)
             add_error(n->line, "move: variable '" + mname + "' not declared");
           else if (sym->is_voided)
-            add_error(n->line,
-                      "move: variable '" + mname + "' is already voided");
+            add_error(n->line, "move: variable '" + mname + "' is already voided");
           else if (sym->is_const)
-            add_error(n->line,
-                      "move: cannot move const variable '" + mname + "'");
-          if (sym)
-            sym->is_voided = true;
+            add_error(n->line, "move: cannot move const variable '" + mname + "'");
+          if (sym) sym->is_voided = true;
         }
         else
           check_expression(a);
@@ -894,21 +896,18 @@ private:
     }
     // Handle 'move VAR' as an Expression node with two Token children
     if (n->type == "Expression" && n->children.size() == 2 &&
-        n->children[0]->value == "move" && n->children[1]->type == "Token")
+        n->children[0]->value == "move" &&
+        n->children[1]->type == "Token")
     {
       const std::string &mname = n->children[1]->value;
       Symbol *sym = lookup(mname);
       if (!sym)
-        add_error(n->children[1]->line,
-                  "move: variable '" + mname + "' not declared");
+        add_error(n->children[1]->line, "move: variable '" + mname + "' not declared");
       else if (sym->is_voided)
-        add_error(n->children[1]->line,
-                  "move: variable '" + mname + "' is already voided");
+        add_error(n->children[1]->line, "move: variable '" + mname + "' is already voided");
       else if (sym->is_const)
-        add_error(n->children[1]->line,
-                  "move: cannot move const variable '" + mname + "'");
-      if (sym)
-        sym->is_voided = true;
+        add_error(n->children[1]->line, "move: cannot move const variable '" + mname + "'");
+      if (sym) sym->is_voided = true;
       return;
     }
     // Handle flat token list: look for 'move' keyword token followed by IDENT
@@ -923,16 +922,12 @@ private:
           const std::string &mname = n->children[i + 1]->value;
           Symbol *sym = lookup(mname);
           if (!sym)
-            add_error(n->children[i]->line,
-                      "move: variable '" + mname + "' not declared");
+            add_error(n->children[i]->line, "move: variable '" + mname + "' not declared");
           else if (sym->is_voided)
-            add_error(n->children[i]->line,
-                      "move: variable '" + mname + "' is already voided");
+            add_error(n->children[i]->line, "move: variable '" + mname + "' is already voided");
           else if (sym->is_const)
-            add_error(n->children[i]->line,
-                      "move: cannot move const variable '" + mname + "'");
-          if (sym)
-            sym->is_voided = true;
+            add_error(n->children[i]->line, "move: cannot move const variable '" + mname + "'");
+          if (sym) sym->is_voided = true;
           ++i; // skip the variable token
           continue;
         }
@@ -1015,8 +1010,7 @@ private:
     else if (def->type == "CImport" || def->type == "ModuleImport" ||
              def->type == "Import")
     {
-      // template<typename T> import rettype fn(params); — treat as plain
-      // CImport
+      // template<typename T> import rettype fn(params); — treat as plain CImport
       check_node(def);
     }
     else if (def->type == "Template")
@@ -1026,9 +1020,8 @@ private:
     }
     else
     {
-      add_error(
-          n->line,
-          "Template can only precede struct, function, or import definitions");
+      add_error(n->line,
+                "Template can only precede struct, function, or import definitions");
     }
   }
 
@@ -1051,8 +1044,7 @@ private:
     // treat 'voided' as a known primitive type
     if (base == "voided")
       return true;
-    // Single-letter or short uppercase names are template type parameters (T,
-    // K, V, etc.)
+    // Single-letter or short uppercase names are template type parameters (T, K, V, etc.)
     if (!base.empty() && base.size() <= 2 &&
         std::isupper((unsigned char)base[0]) &&
         (base.size() == 1 || std::isupper((unsigned char)base[1])))
@@ -1066,8 +1058,7 @@ private:
       return true;
     // If any struct type is registered with matching prefix (templated struct)
     for (auto &s : struct_types)
-      if (s == base)
-        return true;
+      if (s == base) return true;
     return false;
   }
 };

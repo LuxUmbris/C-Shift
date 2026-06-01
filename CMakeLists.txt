@@ -22,11 +22,57 @@ message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
+# ── Find libclang (optional — enables import <header.h>) ──────────────────────
+
+find_library(LIBCLANG_LIB
+    NAMES clang libclang
+    HINTS ${LLVM_LIBRARY_DIR} /usr/lib/llvm-18/lib /usr/lib/x86_64-linux-gnu
+)
+find_path(LIBCLANG_INCLUDE_DIR
+    NAMES clang-c/Index.h
+    HINTS ${LLVM_INCLUDE_DIR} /usr/lib/llvm-18/include
+)
+
+if(LIBCLANG_LIB AND LIBCLANG_INCLUDE_DIR)
+    message(STATUS "Found libclang: ${LIBCLANG_LIB}")
+    set(CSHIFT_HAVE_CHEADER ON)
+else()
+    message(STATUS "libclang not found — C-header import will emit a warning at runtime")
+    set(CSHIFT_HAVE_CHEADER OFF)
+endif()
+
 # ── cshift binary ─────────────────────────────────────────────────────────────
 
 add_executable(cshift main.cpp)
 target_compile_options(cshift PRIVATE -Wall -Wextra -O2)
 target_link_libraries(cshift PRIVATE LLVM)
+
+# Ubuntu packages LLVM-C headers under llvm-c-<ver>/llvm-c/ — add both paths
+foreach(_llvmc_hint
+    "/usr/include/llvm-c-18"
+    "/usr/include/llvm-c-17"
+    "/usr/include/llvm-c-16"
+    "${LLVM_INCLUDE_DIR}/..")
+  if(EXISTS "${_llvmc_hint}/llvm-c/Core.h")
+    target_include_directories(cshift SYSTEM PRIVATE "${_llvmc_hint}")
+    message(STATUS "LLVM-C headers: ${_llvmc_hint}")
+    break()
+  endif()
+endforeach()
+
+if(CSHIFT_HAVE_CHEADER)
+    # Expose both the libclang header dir and the clang-c subdir
+    target_include_directories(cshift SYSTEM PRIVATE
+        ${LIBCLANG_INCLUDE_DIR}
+        ${LIBCLANG_INCLUDE_DIR}/clang-c
+    )
+    target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_CHEADER=1)
+    target_link_libraries(cshift PRIVATE ${LIBCLANG_LIB})
+endif()
+
+# Enable LLVM bitcode read/write for std.bc cache
+# (LLVM is already linked, but we add the define so the code activates)
+target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_LLVM_BITCODE=1)
 
 # ── Precompile frt.c ──────────────────────────────────────────────────────────
 #
@@ -126,4 +172,7 @@ message(STATUS "  Install prefix : ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  LLVM version   : ${LLVM_PACKAGE_VERSION}")
 message(STATUS "  Precompile frt : ${CSHIFT_PRECOMPILE_FRT}")
 message(STATUS "  Bundle frt     : ${CSHIFT_BUNDLE_FRT}")
+message(STATUS "  C-header import: ${CSHIFT_HAVE_CHEADER} (libclang)")
+message(STATUS "  Opt levels      : -O0 / -O1 / -O2 / -O3 / -Os / -Oz  (via LLVM new PM)")
+message(STATUS "  CPU tuning      : --mcpu / --mattr")
 message(STATUS "")

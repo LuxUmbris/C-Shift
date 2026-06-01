@@ -266,26 +266,9 @@ private:
       while (depth > 0 && peek_token().type != Lexer::TokenType::END_OF_FILE)
       {
         const std::string &v = peek_token().value;
-        if (v == "<")
-        {
-          depth++;
-          type += advance_token().value;
-        }
-        else if (v == ">")
-        {
-          depth--;
-          if (depth > 0)
-            type += advance_token().value;
-          else
-          {
-            advance_token();
-            type += ">";
-          }
-        }
-        else
-        {
-          type += advance_token().value;
-        }
+        if (v == "<") { depth++; type += advance_token().value; }
+        else if (v == ">") { depth--; if (depth > 0) type += advance_token().value; else { advance_token(); type += ">"; } }
+        else { type += advance_token().value; }
       }
     }
     // pointer
@@ -471,11 +454,29 @@ private:
     size_t ln = current_line();
     match_token(Lexer::TokenType::KEYWORD, "import");
 
-    // Form 1: import "path/to/module";  (string literal — file import)
+    // Form 0b: import <stdio.h>;  — angle-bracket C header
+    if (peek_token().value == "<")
+    {
+      advance_token(); // consume <
+      std::string header;
+      while (peek_token().value != ">" &&
+             peek_token().type != Lexer::TokenType::END_OF_FILE)
+        header += advance_token().value;
+      match_token(Lexer::TokenType::OPERATOR, ">");
+      match_token(Lexer::TokenType::OPERATOR, ";");
+      return new ASTNode("HeaderImport", "<" + header + ">", ln, current_depth);
+    }
+
+    // Form 1: import "path/to/module";  (string literal)
+    // Sub-form 1a: .h extension -> C header (quoted include)
+    // Sub-form 1b: otherwise -> .cll file import
     if (peek_token().type == Lexer::TokenType::STRING)
     {
       std::string module_path = advance_token().value;
       match_token(Lexer::TokenType::OPERATOR, ";");
+      if (module_path.size() > 2 &&
+          module_path.substr(module_path.size() - 2) == ".h")
+        return new ASTNode("HeaderImport", module_path, ln, current_depth);
       return new ASTNode("Import", module_path, ln, current_depth);
     }
 
@@ -504,13 +505,10 @@ private:
         {
           la++;
           int depth = 1;
-          while (depth > 0 &&
-                 peek_token(la).type != Lexer::TokenType::END_OF_FILE)
+          while (depth > 0 && peek_token(la).type != Lexer::TokenType::END_OF_FILE)
           {
-            if (peek_token(la).value == "<")
-              depth++;
-            else if (peek_token(la).value == ">")
-              depth--;
+            if (peek_token(la).value == "<") depth++;
+            else if (peek_token(la).value == ">") depth--;
             la++;
           }
         }
@@ -994,8 +992,7 @@ private:
       else if (kw == "import")
       {
         // template<typename T> import ... ; — treat as a plain CImport
-        // (generics in std.cll are type-annotated C externs, not real
-        // templates)
+        // (generics in std.cll are type-annotated C externs, not real templates)
         template_node->children.push_back(parse_import());
       }
       else if (kw == "template")
@@ -1013,9 +1010,9 @@ private:
     }
     else
     {
-      throw std::runtime_error(
-          "[SYNTAX ERROR] Line " + std::to_string(current_line()) +
-          ": Expected 'struct', 'def', or 'import' after template");
+      throw std::runtime_error("[SYNTAX ERROR] Line " +
+                               std::to_string(current_line()) +
+                               ": Expected 'struct', 'def', or 'import' after template");
     }
 
     return template_node;
