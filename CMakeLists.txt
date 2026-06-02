@@ -4,10 +4,6 @@ project(cshift CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Force MSVC on Windows
-# ──────────────────────────────────────────────────────────────────────────────
-
 if(WIN32 AND NOT MSVC)
     message(FATAL_ERROR
         "On Windows, cshift must be built with MSVC (cl.exe). "
@@ -17,33 +13,20 @@ if(WIN32 AND NOT MSVC)
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# STATIC CRT (/MT)
-# ──────────────────────────────────────────────────────────────────────────────
-
-if(MSVC)
-    foreach(flag_var
-        CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
-        CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE)
-        if(${flag_var} MATCHES "/MD")
-            string(REGEX REPLACE "/MD" "/MT" ${flag_var} "${${flag_var}}")
-        endif()
-    endforeach()
-endif()
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Options
 # ──────────────────────────────────────────────────────────────────────────────
 
-option(CSHIFT_PRECOMPILE_FRT "Pre-compile frt.c" ON)
-option(CSHIFT_BUNDLE_FRT "Bundle frt.o blobs" ON)
+option(CSHIFT_PRECOMPILE_FRT
+    "Pre-compile frt.c for the host and every cross-target that has a toolchain"
+    ON)
+
+option(CSHIFT_BUNDLE_FRT
+    "Copy precompiled frt.o blobs into the install tree under share/cshift/frt/"
+    ON)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# LLVM STATIC CONFIG
+# Find LLVM
 # ──────────────────────────────────────────────────────────────────────────────
-
-set(LLVM_LINK_LLVM_DYLIB OFF)
-set(LLVM_ENABLE_RTTI ON)
-set(LLVM_ENABLE_EH ON)
 
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
@@ -55,24 +38,39 @@ endif()
 add_definitions(${LLVM_DEFINITIONS})
 
 # ──────────────────────────────────────────────────────────────────────────────
-# libclang (optional)
+# Find libclang (optional)
 # ──────────────────────────────────────────────────────────────────────────────
 
-find_library(LIBCLANG_CPP NAMES clang-cpp HINTS ${LLVM_LIBRARY_DIRS})
-find_library(LIBLLVM_C NAMES LLVM-C HINTS ${LLVM_LIBRARY_DIRS})
-
-if(LIBCLANG_CPP)
-    message(STATUS "Found clang-cpp: ${LIBCLANG_CPP}")
-endif()
-
-if(LIBLLVM_C)
-    message(STATUS "Found LLVM-C: ${LIBLLVM_C}")
+if(WIN32)
+    find_library(LIBCLANG_LIB
+        NAMES libclang clang
+        HINTS ${LLVM_LIBRARY_DIRS}
+    )
+    find_path(LIBCLANG_INCLUDE_DIR
+        NAMES clang-c/Index.h
+        HINTS ${LLVM_INCLUDE_DIRS}
+    )
 else()
-    message(FATAL_ERROR "LLVM-C (C API) not found — required for your code")
+    find_library(LIBCLANG_LIB
+        NAMES clang libclang
+        HINTS ${LLVM_LIBRARY_DIR} /usr/lib/llvm-18/lib /usr/lib/x86_64-linux-gnu
+    )
+    find_path(LIBCLANG_INCLUDE_DIR
+        NAMES clang-c/Index.h
+        HINTS ${LLVM_INCLUDE_DIR} /usr/lib/llvm-18/include
+    )
+endif()
+
+if(LIBCLANG_LIB AND LIBCLANG_INCLUDE_DIR)
+    message(STATUS "Found libclang: ${LIBCLANG_LIB}")
+    set(CSHIFT_HAVE_CHEADER ON)
+else()
+    message(STATUS "libclang not found — C-header import disabled")
+    set(CSHIFT_HAVE_CHEADER OFF)
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Executable
+# cshift binary
 # ──────────────────────────────────────────────────────────────────────────────
 
 add_executable(cshift main.cpp)
@@ -83,30 +81,32 @@ else()
     target_compile_options(cshift PRIVATE -Wall -Wextra -O2)
 endif()
 
-# ──────────────────────────────────────────────────────────────────────────────
-# STATIC LLVM COMPONENTS — ALL TARGETS
-# ──────────────────────────────────────────────────────────────────────────────
+target_link_libraries(cshift PRIVATE LLVM)
 
-llvm_map_components_to_libnames(LLVM_LIBS all)
-
-target_link_libraries(cshift PRIVATE
-    ${LLVM_LIBS}
-    ${LIBLLVM_C}      # ← C API (fixes 90% of your undefined refs)
-    ${LIBCLANG_CPP}   # ← optional, if present
+# LLVM-C headers (Linux distros put them in weird places)
+foreach(_llvmc_hint
+    "/usr/include/llvm-c-18"
+    "/usr/include/llvm-c-17"
+    "/usr/include/llvm-c-16"
+    "${LLVM_INCLUDE_DIR}/.."
 )
+  if(EXISTS "${_llvmc_hint}/llvm-c/Core.h")
+    target_include_directories(cshift SYSTEM PRIVATE "${_llvmc_hint}")
+    message(STATUS "LLVM-C headers: ${_llvmc_hint}")
+    break()
+  endif()
+endforeach()
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Windows static system libs
-# ──────────────────────────────────────────────────────────────────────────────
-
-if(MSVC)
-    target_link_libraries(cshift PRIVATE
-        version
-        shlwapi
-        ws2_32
-        bcrypt
+if(CSHIFT_HAVE_CHEADER)
+    target_include_directories(cshift SYSTEM PRIVATE
+        ${LIBCLANG_INCLUDE_DIR}
+        ${LIBCLANG_INCLUDE_DIR}/clang-c
     )
+    target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_CHEADER=1)
+    target_link_libraries(cshift PRIVATE ${LIBCLANG_LIB})
 endif()
+
+target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_LLVM_BITCODE=1)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Precompile frt.c
@@ -145,21 +145,30 @@ function(add_frt_target triple cc)
     add_dependencies(cshift "frt_${triple}")
 
     if(CSHIFT_BUNDLE_FRT)
-        install(FILES "${out_obj}" DESTINATION "share/cshift/frt/${triple}")
+        install(FILES "${out_obj}"
+            DESTINATION "share/cshift/frt/${triple}"
+        )
     endif()
 endfunction()
 
 if(CSHIFT_PRECOMPILE_FRT)
     message(STATUS "Precompiling frt.c for available targets:")
 
+    # Native compiler
     add_frt_target("native" "${CMAKE_C_COMPILER}")
 
+    # Linux cross-targets
     if(NOT WIN32)
         add_frt_target("x86_64-linux-gnu"   "x86_64-linux-gnu-gcc")
         add_frt_target("aarch64-linux-gnu"  "aarch64-linux-gnu-gcc")
+    endif()
+
+    # Windows cross-target (only when building on non-Windows hosts)
+    if(NOT WIN32)
         add_frt_target("x86_64-w64-mingw32" "x86_64-w64-mingw32-gcc")
     endif()
 
+    # macOS cross-targets
     if(APPLE)
         add_frt_target("x86_64-apple-darwin" "clang")
         add_frt_target("arm64-apple-darwin"  "clang")
@@ -198,4 +207,5 @@ message(STATUS "  Install prefix : ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  LLVM version   : ${LLVM_PACKAGE_VERSION}")
 message(STATUS "  Precompile frt : ${CSHIFT_PRECOMPILE_FRT}")
 message(STATUS "  Bundle frt     : ${CSHIFT_BUNDLE_FRT}")
+message(STATUS "  C-header import: ${CSHIFT_HAVE_CHEADER} (libclang)")
 message(STATUS "")
