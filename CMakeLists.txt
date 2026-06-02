@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Windows: MSVC erzwingen (LLVM ist MSVC‑gebaut)
+# Force MSVC on Windows
 # ──────────────────────────────────────────────────────────────────────────────
 
 if(WIN32 AND NOT MSVC)
@@ -14,6 +14,20 @@ if(WIN32 AND NOT MSVC)
         "LLVM for Windows is built with MSVC and cannot be linked with MinGW. "
         "Use: cmake -G \"Visual Studio 17 2022\" -A x64"
     )
+endif()
+
+# ──────────────────────────────────────────────────────────────────────────────
+# STATIC CRT (/MT)
+# ──────────────────────────────────────────────────────────────────────────────
+
+if(MSVC)
+    foreach(flag_var
+        CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
+        CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE)
+        if(${flag_var} MATCHES "/MD")
+            string(REGEX REPLACE "/MD" "/MT" ${flag_var} "${${flag_var}}")
+        endif()
+    endforeach()
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -29,8 +43,12 @@ option(CSHIFT_BUNDLE_FRT
     ON)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Find LLVM
+# LLVM STATIC CONFIG
 # ──────────────────────────────────────────────────────────────────────────────
+
+set(LLVM_LINK_LLVM_DYLIB OFF)
+set(LLVM_ENABLE_RTTI ON)
+set(LLVM_ENABLE_EH ON)
 
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
@@ -42,7 +60,7 @@ endif()
 add_definitions(${LLVM_DEFINITIONS})
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Find libclang (optional)
+# libclang (optional)
 # ──────────────────────────────────────────────────────────────────────────────
 
 if(WIN32)
@@ -74,7 +92,7 @@ else()
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# cshift binary
+# Executable
 # ──────────────────────────────────────────────────────────────────────────────
 
 add_executable(cshift main.cpp)
@@ -85,9 +103,28 @@ else()
     target_compile_options(cshift PRIVATE -Wall -Wextra -O2)
 endif()
 
-target_link_libraries(cshift PRIVATE LLVM)
+# ──────────────────────────────────────────────────────────────────────────────
+# STATIC LLVM COMPONENTS
+# ──────────────────────────────────────────────────────────────────────────────
 
-# LLVM-C headers (Linux distros put them in weird places)
+llvm_map_components_to_libnames(LLVM_LIBS
+    core
+    support
+    irreader
+    bitreader
+    bitwriter
+    mc
+    mcparser
+    option
+    x86codegen
+    x86asmparser
+    x86desc
+    x86info
+)
+
+target_link_libraries(cshift PRIVATE ${LLVM_LIBS})
+
+# LLVM-C headers
 foreach(_llvmc_hint
     "/usr/include/llvm-c-18"
     "/usr/include/llvm-c-17"
@@ -101,6 +138,7 @@ foreach(_llvmc_hint
   endif()
 endforeach()
 
+# libclang static
 if(CSHIFT_HAVE_CHEADER)
     target_include_directories(cshift SYSTEM PRIVATE
         ${LIBCLANG_INCLUDE_DIR}
@@ -111,6 +149,19 @@ if(CSHIFT_HAVE_CHEADER)
 endif()
 
 target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_LLVM_BITCODE=1)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Windows static system libs
+# ──────────────────────────────────────────────────────────────────────────────
+
+if(MSVC)
+    target_link_libraries(cshift PRIVATE
+        version
+        shlwapi
+        ws2_32
+        bcrypt
+    )
+endif()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Precompile frt.c
@@ -158,21 +209,17 @@ endfunction()
 if(CSHIFT_PRECOMPILE_FRT)
     message(STATUS "Precompiling frt.c for available targets:")
 
-    # Native compiler
     add_frt_target("native" "${CMAKE_C_COMPILER}")
 
-    # Linux cross-targets
     if(NOT WIN32)
         add_frt_target("x86_64-linux-gnu"   "x86_64-linux-gnu-gcc")
         add_frt_target("aarch64-linux-gnu"  "aarch64-linux-gnu-gcc")
     endif()
 
-    # Windows cross-target (only when building on non-Windows hosts)
     if(NOT WIN32)
         add_frt_target("x86_64-w64-mingw32" "x86_64-w64-mingw32-gcc")
     endif()
 
-    # macOS cross-targets
     if(APPLE)
         add_frt_target("x86_64-apple-darwin" "clang")
         add_frt_target("arm64-apple-darwin"  "clang")
