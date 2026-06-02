@@ -8,114 +8,66 @@ on:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: Linux
-            artifact: cshift-linux
-
-          - os: macos-latest
-            name: macOS
-            artifact: cshift-macos
-
-          - os: windows-latest
-            name: Windows
-            artifact: cshift-windows
-
-    runs-on: ${{ matrix.os }}
-    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
       # ───────────────────────────────────────────────────────────────
-      # Linux
+      # Install dependencies
       # ───────────────────────────────────────────────────────────────
-      - name: Install LLVM (Linux)
-        if: runner.os == 'Linux'
+      - name: Install LLVM + MinGW
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-dev lld
+          sudo apt-get install -y \
+            llvm-dev \
+            clang \
+            lld \
+            mingw-w64 \
+            gcc-mingw-w64-x86-64 \
+            g++-mingw-w64-x86-64
 
+      # ───────────────────────────────────────────────────────────────
+      # Native Linux build
+      # ───────────────────────────────────────────────────────────────
       - name: Configure (Linux)
-        if: runner.os == 'Linux'
+        run: cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Linux)
+        run: cmake --build build-linux --config Release
+
+      - name: Install (Linux)
+        run: cmake --install build-linux --prefix dist-linux
+
+      # ───────────────────────────────────────────────────────────────
+      # Windows Cross‑Compile
+      # ───────────────────────────────────────────────────────────────
+      - name: Configure (Windows cross)
         run: |
-          cmake -S . -B build \
-            -DCMAKE_INSTALL_PREFIX=dist
+          cmake -S . -B build-win \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+            -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
+            -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Windows cross)
+        run: cmake --build build-win --config Release
+
+      - name: Install (Windows cross)
+        run: cmake --install build-win --prefix dist-windows
 
       # ───────────────────────────────────────────────────────────────
-      # macOS
+      # Upload artifacts
       # ───────────────────────────────────────────────────────────────
-      - name: Install LLVM (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install llvm
-          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
-
-      - name: Configure (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          cmake -S . -B build \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix llvm)" \
-            -DCMAKE_INSTALL_PREFIX=dist
-
-      # ───────────────────────────────────────────────────────────────
-      # Windows (MSVC + LLVM selbst bauen)
-      # ───────────────────────────────────────────────────────────────
-      - name: Activate MSVC
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Clone LLVM
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          git clone --depth 1 https://github.com/llvm/llvm-project.git
-
-      - name: Build LLVM (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cmake -S llvm-project/llvm -B llvm-build `
-            -G "Ninja" `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DLLVM_ENABLE_PROJECTS="clang;lld" `
-            -DLLVM_TARGETS_TO_BUILD="X86" `
-            -DLLVM_ENABLE_RTTI=ON `
-            -DLLVM_ENABLE_EH=ON
-
-          cmake --build llvm-build --config Release --target install
-
-          # LLVM installiert sich nach: C:\Program Files\LLVM
-          $llvmDir = "C:\Program Files\LLVM\lib\cmake\llvm"
-          echo "LLVM_DIR=$llvmDir" >> $env:GITHUB_ENV
-
-      - name: Configure (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cmake -S . -B build `
-            -DLLVM_DIR="$env:LLVM_DIR" `
-            -DCMAKE_INSTALL_PREFIX=dist `
-            -G "Ninja"
-
-      # ───────────────────────────────────────────────────────────────
-      # Build + Install
-      # ───────────────────────────────────────────────────────────────
-      - name: Build
-        run: cmake --build build --config Release
-
-      - name: Install into dist/
-        run: cmake --install build --config Release
-
-      # ───────────────────────────────────────────────────────────────
-      # Upload artifact
-      # ───────────────────────────────────────────────────────────────
-      - name: Upload artifact
+      - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/
-          if-no-files-found: error
+          name: cshift-linux
+          path: dist-linux/
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cshift-windows
+          path: dist-windows/
