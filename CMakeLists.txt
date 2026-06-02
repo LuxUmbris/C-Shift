@@ -33,6 +33,11 @@ if(NOT CMAKE_CROSSCOMPILING)
 endif()
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 
+if(CMAKE_CROSSCOMPILING)
+    include_directories(SYSTEM /usr/lib/llvm-18/include)
+endif()
+
+
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 if(LLVM_LIBRARY_DIRS)
     link_directories(${LLVM_LIBRARY_DIRS})
