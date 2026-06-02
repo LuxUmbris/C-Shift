@@ -62,25 +62,25 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=dist
 
       # ───────────────────────────────────────────────────────────────
-      # Windows (MSVC + LLVM installation)
+      # Windows (MSVC + vorhandenes LLVM 20)
       # ───────────────────────────────────────────────────────────────
       - name: Activate MSVC
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Install LLVM (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install llvm --version=18.1.8 -y
-          echo "LLVM_DIR=C:\Program Files\LLVM\lib\cmake\llvm" >> $env:GITHUB_ENV
-
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $llvmDir = "C:\Program Files\LLVM\lib\cmake\llvm"
+          if (-not (Test-Path $llvmDir)) {
+              Write-Error "LLVM not found at $llvmDir"
+              exit 1
+          }
+          echo "LLVM_DIR=$llvmDir" >> $env:GITHUB_ENV
+
           cmake -S . -B build `
-            -DLLVM_DIR="$env:LLVM_DIR" `
+            -DLLVM_DIR="$llvmDir" `
             -DCMAKE_INSTALL_PREFIX=dist `
             -G "Ninja"
 
