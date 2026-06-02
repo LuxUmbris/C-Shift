@@ -4,7 +4,9 @@ project(cshift CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ── Options ───────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Options
+# ──────────────────────────────────────────────────────────────────────────────
 
 option(CSHIFT_PRECOMPILE_FRT
     "Pre-compile frt.c for the host and every cross-target that has a toolchain"
@@ -14,45 +16,70 @@ option(CSHIFT_BUNDLE_FRT
     "Copy precompiled frt.o blobs into the install tree under share/cshift/frt/"
     ON)
 
-# ── Find LLVM ─────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Find LLVM
+# ──────────────────────────────────────────────────────────────────────────────
 
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
+link_directories(${LLVM_LIBRARY_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
-# ── Find libclang (optional — enables import <header.h>) ──────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Find libclang (optional)
+# ──────────────────────────────────────────────────────────────────────────────
 
-find_library(LIBCLANG_LIB
-    NAMES clang libclang
-    HINTS ${LLVM_LIBRARY_DIR} /usr/lib/llvm-18/lib /usr/lib/x86_64-linux-gnu
-)
-find_path(LIBCLANG_INCLUDE_DIR
-    NAMES clang-c/Index.h
-    HINTS ${LLVM_INCLUDE_DIR} /usr/lib/llvm-18/include
-)
+if(WIN32)
+    find_library(LIBCLANG_LIB
+        NAMES libclang clang
+        HINTS ${LLVM_LIBRARY_DIRS}
+    )
+    find_path(LIBCLANG_INCLUDE_DIR
+        NAMES clang-c/Index.h
+        HINTS ${LLVM_INCLUDE_DIRS}
+    )
+else()
+    find_library(LIBCLANG_LIB
+        NAMES clang libclang
+        HINTS ${LLVM_LIBRARY_DIR} /usr/lib/llvm-18/lib /usr/lib/x86_64-linux-gnu
+    )
+    find_path(LIBCLANG_INCLUDE_DIR
+        NAMES clang-c/Index.h
+        HINTS ${LLVM_INCLUDE_DIR} /usr/lib/llvm-18/include
+    )
+endif()
 
 if(LIBCLANG_LIB AND LIBCLANG_INCLUDE_DIR)
     message(STATUS "Found libclang: ${LIBCLANG_LIB}")
     set(CSHIFT_HAVE_CHEADER ON)
 else()
-    message(STATUS "libclang not found — C-header import will emit a warning at runtime")
+    message(STATUS "libclang not found — C-header import disabled")
     set(CSHIFT_HAVE_CHEADER OFF)
 endif()
 
-# ── cshift binary ─────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# cshift binary
+# ──────────────────────────────────────────────────────────────────────────────
 
 add_executable(cshift main.cpp)
-target_compile_options(cshift PRIVATE -Wall -Wextra -O2)
+
+if(MSVC)
+    target_compile_options(cshift PRIVATE /W4 /O2)
+else()
+    target_compile_options(cshift PRIVATE -Wall -Wextra -O2)
+endif()
+
 target_link_libraries(cshift PRIVATE LLVM)
 
-# Ubuntu packages LLVM-C headers under llvm-c-<ver>/llvm-c/ — add both paths
+# LLVM-C headers (Linux distros put them in weird places)
 foreach(_llvmc_hint
     "/usr/include/llvm-c-18"
     "/usr/include/llvm-c-17"
     "/usr/include/llvm-c-16"
-    "${LLVM_INCLUDE_DIR}/..")
+    "${LLVM_INCLUDE_DIR}/.."
+)
   if(EXISTS "${_llvmc_hint}/llvm-c/Core.h")
     target_include_directories(cshift SYSTEM PRIVATE "${_llvmc_hint}")
     message(STATUS "LLVM-C headers: ${_llvmc_hint}")
@@ -61,7 +88,6 @@ foreach(_llvmc_hint
 endforeach()
 
 if(CSHIFT_HAVE_CHEADER)
-    # Expose both the libclang header dir and the clang-c subdir
     target_include_directories(cshift SYSTEM PRIVATE
         ${LIBCLANG_INCLUDE_DIR}
         ${LIBCLANG_INCLUDE_DIR}/clang-c
@@ -70,59 +96,44 @@ if(CSHIFT_HAVE_CHEADER)
     target_link_libraries(cshift PRIVATE ${LIBCLANG_LIB})
 endif()
 
-# Enable LLVM bitcode read/write for std.bc cache
-# (LLVM is already linked, but we add the define so the code activates)
 target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_LLVM_BITCODE=1)
 
-# ── Precompile frt.c ──────────────────────────────────────────────────────────
-#
-# We compile frt.c once per target triple into:
-#   ${CMAKE_BINARY_DIR}/frt/<triple>/frt.o
-#
-# The install step copies those blobs to:
-#   share/cshift/frt/<triple>/frt.o
-#
-# Supported triples (requires the appropriate cross-compiler):
-#   native             – always built if a C compiler is available
-#   x86_64-linux-gnu
-#   aarch64-linux-gnu
-#   x86_64-apple-darwin   (macOS x86-64 — skip on non-Darwin unless cross-CC)
-#   arm64-apple-darwin    (Apple Silicon)
-#   x86_64-w64-mingw32    (Windows — requires mingw-w64)
+# ──────────────────────────────────────────────────────────────────────────────
+# Precompile frt.c
+# ──────────────────────────────────────────────────────────────────────────────
 
 set(FRT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/frt.c")
 
-# Helper to register one frt.o precompile target
-# Usage: add_frt_target(<triple> <cc_binary>)
 function(add_frt_target triple cc)
-    # Detect whether this cross-compiler exists on the host
-    find_program(_CC_${triple} "${cc}" QUIET)
-    if(NOT _CC_${triple} AND NOT triple STREQUAL "native")
+    find_program(CC_${triple} "${cc}" QUIET)
+
+    if(NOT CC_${triple})
         message(STATUS "  frt: skipping ${triple} (${cc} not found)")
         return()
     endif()
 
     set(out_dir "${CMAKE_BINARY_DIR}/frt/${triple}")
-    set(out_obj "${out_dir}/frt.o")
     file(MAKE_DIRECTORY "${out_dir}")
 
-    if(triple STREQUAL "native")
-        set(cc_bin "${CMAKE_C_COMPILER}")
+    if(MSVC AND triple STREQUAL "native")
+        set(out_obj "${out_dir}/frt.obj")
+        set(cmd ${CC_${triple}} /O2 /c "${FRT_SOURCE}" /Fo"${out_obj}")
     else()
-        set(cc_bin "${_CC_${triple}}")
+        set(out_obj "${out_dir}/frt.o")
+        set(cmd ${CC_${triple}} -O2 -c "${FRT_SOURCE}" -o "${out_obj}")
     endif()
 
     add_custom_command(
-        OUTPUT  "${out_obj}"
-        COMMAND "${cc_bin}" -O2 -c "${FRT_SOURCE}" -o "${out_obj}"
+        OUTPUT "${out_obj}"
+        COMMAND ${cmd}
         DEPENDS "${FRT_SOURCE}"
-        COMMENT "Compiling frt.c → frt/${triple}/frt.o  (${cc_bin})"
+        COMMENT "Compiling frt.c → frt/${triple}/frt.o (${CC_${triple}})"
         VERBATIM
     )
+
     add_custom_target("frt_${triple}" ALL DEPENDS "${out_obj}")
     add_dependencies(cshift "frt_${triple}")
 
-    # Install the blob
     if(CSHIFT_BUNDLE_FRT)
         install(FILES "${out_obj}"
             DESTINATION "share/cshift/frt/${triple}"
@@ -132,25 +143,35 @@ endfunction()
 
 if(CSHIFT_PRECOMPILE_FRT)
     message(STATUS "Precompiling frt.c for available targets:")
-    add_frt_target("native"              "cc")
-    add_frt_target("x86_64-linux-gnu"   "x86_64-linux-gnu-gcc")
-    add_frt_target("aarch64-linux-gnu"  "aarch64-linux-gnu-gcc")
+
+    # Native compiler
+    add_frt_target("native" "${CMAKE_C_COMPILER}")
+
+    # Linux cross-targets
+    if(NOT WIN32)
+        add_frt_target("x86_64-linux-gnu"   "x86_64-linux-gnu-gcc")
+        add_frt_target("aarch64-linux-gnu"  "aarch64-linux-gnu-gcc")
+    endif()
+
+    # Windows cross-target
     add_frt_target("x86_64-w64-mingw32" "x86_64-w64-mingw32-gcc")
 
-    # macOS targets — only try on Darwin or if cross-clang is present
-    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-        add_frt_target("x86_64-apple-darwin"  "clang")
-        add_frt_target("arm64-apple-darwin"   "clang")
+    # macOS cross-targets
+    if(APPLE)
+        add_frt_target("x86_64-apple-darwin" "clang")
+        add_frt_target("arm64-apple-darwin"  "clang")
     else()
-        find_program(_OSXCROSS "x86_64-apple-darwin-clang" QUIET)
-        if(_OSXCROSS)
+        find_program(OSXCROSS_CLANG "x86_64-apple-darwin-clang" QUIET)
+        if(OSXCROSS_CLANG)
             add_frt_target("x86_64-apple-darwin" "x86_64-apple-darwin-clang")
             add_frt_target("arm64-apple-darwin"  "arm64-apple-darwin-clang")
         endif()
     endif()
 endif()
 
-# ── Install rules ─────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Install rules
+# ──────────────────────────────────────────────────────────────────────────────
 
 install(TARGETS cshift RUNTIME DESTINATION bin)
 
@@ -164,7 +185,9 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/examples"
     DESTINATION share/cshift
 )
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Summary
+# ──────────────────────────────────────────────────────────────────────────────
 
 message(STATUS "")
 message(STATUS "C<< (cshift) build summary")
@@ -173,6 +196,4 @@ message(STATUS "  LLVM version   : ${LLVM_PACKAGE_VERSION}")
 message(STATUS "  Precompile frt : ${CSHIFT_PRECOMPILE_FRT}")
 message(STATUS "  Bundle frt     : ${CSHIFT_BUNDLE_FRT}")
 message(STATUS "  C-header import: ${CSHIFT_HAVE_CHEADER} (libclang)")
-message(STATUS "  Opt levels      : -O0 / -O1 / -O2 / -O3 / -Os / -Oz  (via LLVM new PM)")
-message(STATUS "  CPU tuning      : --mcpu / --mattr")
 message(STATUS "")
