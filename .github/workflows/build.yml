@@ -62,29 +62,34 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=dist
 
       # ───────────────────────────────────────────────────────────────
-      # Windows (MSVC + LLVM 17 ZIP)
+      # Windows (MSVC + LLVM selbst bauen)
       # ───────────────────────────────────────────────────────────────
       - name: Activate MSVC
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Download & Extract LLVM (Windows)
+      - name: Clone LLVM
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-win64.zip"
-          Invoke-WebRequest -Uri $url -OutFile llvm.zip
+          git clone --depth 1 https://github.com/llvm/llvm-project.git
 
-          Expand-Archive llvm.zip -DestinationPath llvm
+      - name: Build LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S llvm-project/llvm -B llvm-build `
+            -G "Ninja" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DLLVM_ENABLE_PROJECTS="clang;lld" `
+            -DLLVM_TARGETS_TO_BUILD="X86" `
+            -DLLVM_ENABLE_RTTI=ON `
+            -DLLVM_ENABLE_EH=ON
 
-          $folder = Get-ChildItem llvm | Select-Object -First 1
-          $llvmDir = "$($folder.FullName)\lib\cmake\llvm"
+          cmake --build llvm-build --config Release --target install
 
-          if (-not (Test-Path $llvmDir)) {
-              Write-Error "LLVMConfig.cmake not found in extracted LLVM"
-              exit 1
-          }
-
+          # LLVM installiert sich nach: C:\Program Files\LLVM
+          $llvmDir = "C:\Program Files\LLVM\lib\cmake\llvm"
           echo "LLVM_DIR=$llvmDir" >> $env:GITHUB_ENV
 
       - name: Configure (Windows)
