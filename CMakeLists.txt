@@ -28,7 +28,9 @@ option(CSHIFT_BUNDLE_FRT
 # Find LLVM
 # ──────────────────────────────────────────────────────────────────────────────
 
-find_package(LLVM REQUIRED CONFIG)
+if(NOT CMAKE_CROSSCOMPILING)
+    find_package(LLVM REQUIRED CONFIG)
+endif()
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
