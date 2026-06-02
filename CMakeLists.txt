@@ -4,28 +4,34 @@ project(cshift VERSION 0.1.0 LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ── Options ───────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Options
+# ─────────────────────────────────────────────────────────────────────────────
 
 option(CSHIFT_PRECOMPILE_FRT "Precompile frt.c" ON)
 option(CSHIFT_BUNDLE_FRT "Bundle frt.o blobs" ON)
 option(CSHIFT_LINK_STATIC "Static link LLVM" OFF)
 option(CSHIFT_BUNDLE_LIBCLANG "Bundle libclang" ON)
 
-# ── Find LLVM ─────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# LLVM
+# ─────────────────────────────────────────────────────────────────────────────
 
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 
-# LLVM_DEFINITIONS fix for Windows/MSYS2
+# Windows/MSYS2 FIX: split LLVM_DEFINITIONS correctly
 separate_arguments(LLVM_DEFINITIONS)
 add_compile_options(${LLVM_DEFINITIONS})
 
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 
-# Always dynamic linking → use monolithic LLVM
+# Always dynamic linking → monolithic LLVM
 set(CSHIFT_LLVM_LIBS LLVM)
 
-# ── LLVM-C headers (Ubuntu versioned) ─────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# LLVM-C headers (Ubuntu versioned)
+# ─────────────────────────────────────────────────────────────────────────────
 
 set(CSHIFT_LLVMC_INCLUDE "")
 foreach(_hint
@@ -41,7 +47,9 @@ foreach(_hint
   endif()
 endforeach()
 
-# ── libclang (optional) ───────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# libclang (optional)
+# ─────────────────────────────────────────────────────────────────────────────
 
 find_library(LIBCLANG_LIB
     NAMES clang-${LLVM_VERSION_MAJOR} clang libclang
@@ -66,7 +74,9 @@ else()
     set(CSHIFT_BUNDLE_LIBCLANG OFF)
 endif()
 
-# ── Executable ────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Executable
+# ─────────────────────────────────────────────────────────────────────────────
 
 add_executable(cshift main.cpp)
 
@@ -86,8 +96,19 @@ endif()
 
 target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_LLVM_BITCODE=1)
 
-# ── Linking (always dynamic) ──────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Linking (OS‑abhängig)
+# ─────────────────────────────────────────────────────────────────────────────
 
+# Always link LLVM first
+target_link_libraries(cshift PRIVATE ${CSHIFT_LLVM_LIBS})
+
+# Optional libclang
+if(CSHIFT_HAVE_CHEADER)
+    target_link_libraries(cshift PRIVATE ${LIBCLANG_LIB})
+endif()
+
+# OS‑specific system libs
 if(UNIX AND NOT APPLE)
     target_link_libraries(cshift PRIVATE dl pthread)
 elseif(APPLE)
@@ -96,14 +117,9 @@ elseif(WIN32)
     target_link_libraries(cshift PRIVATE kernel32)
 endif()
 
-
-if(CSHIFT_HAVE_CHEADER)
-    target_link_libraries(cshift PRIVATE ${LIBCLANG_LIB})
-endif()
-
-target_link_libraries(cshift PRIVATE dl pthread)
-
-# ── Precompile frt.c ──────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Precompile frt.c
+# ─────────────────────────────────────────────────────────────────────────────
 
 set(FRT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/frt.c")
 
@@ -140,7 +156,9 @@ if(CSHIFT_PRECOMPILE_FRT)
     add_frt_target("x86_64-w64-mingw32" "x86_64-w64-mingw32-gcc")
 endif()
 
-# ── Install rules ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Install rules
+# ─────────────────────────────────────────────────────────────────────────────
 
 include(GNUInstallDirs)
 
@@ -165,7 +183,9 @@ if(CSHIFT_HAVE_CHEADER AND CSHIFT_BUNDLE_LIBCLANG)
     )
 endif()
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Summary
+# ─────────────────────────────────────────────────────────────────────────────
 
 message(STATUS "")
 message(STATUS "C<< (cshift) build summary")
