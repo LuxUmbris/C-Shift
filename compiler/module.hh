@@ -27,8 +27,8 @@
 // silently falls back to the normal AST path.
 // ============================================================
 
-#include "parser.hh"
 #include "cheader.hh"
+#include "parser.hh"
 
 #include <algorithm>
 #include <fstream>
@@ -44,9 +44,9 @@
 // We include the LLVM-C headers only if they were found at configure time.
 // The CMakeLists adds -DCSHIFT_HAVE_LLVM_BITCODE=1 when LLVM is present.
 #ifdef CSHIFT_HAVE_LLVM_BITCODE
-#  include <llvm-c/BitWriter.h>
-#  include <llvm-c/BitReader.h>
-#  include <llvm-c/Core.h>
+#include <llvm-c/BitReader.h>
+#include <llvm-c/BitWriter.h>
+#include <llvm-c/Core.h>
 #endif
 
 // ── Utilities ─────────────────────────────────────────────────────────────
@@ -99,7 +99,7 @@ static inline std::string mod_stem(const std::string &path)
 
 struct ModuleExports
 {
-  std::string canonical_path; // absolute path of the source .cll
+  std::string canonical_path;           // absolute path of the source .cll
   std::vector<Parser::ASTNode *> nodes; // owned AST nodes
 
   // Bitcode cache path (empty if not applicable / not cached yet)
@@ -116,8 +116,7 @@ struct ModuleExports
   ModuleExports(const ModuleExports &) = delete;
   ModuleExports &operator=(const ModuleExports &) = delete;
   ModuleExports(ModuleExports &&o) noexcept
-      : canonical_path(std::move(o.canonical_path)),
-        nodes(std::move(o.nodes)),
+      : canonical_path(std::move(o.canonical_path)), nodes(std::move(o.nodes)),
         bc_cache_path(std::move(o.bc_cache_path))
   {
   }
@@ -287,10 +286,12 @@ public:
   static bool write_bc_cache(const std::string &cll_path, void *llvm_module_ref)
   {
 #ifndef CSHIFT_HAVE_LLVM_BITCODE
-    (void)cll_path; (void)llvm_module_ref;
+    (void)cll_path;
+    (void)llvm_module_ref;
     return false;
 #else
-    if (!llvm_module_ref) return false;
+    if (!llvm_module_ref)
+      return false;
     ensure_bc_dir();
     std::string bcp = bc_path_for(cll_path);
     LLVMModuleRef mod = reinterpret_cast<LLVMModuleRef>(llvm_module_ref);
@@ -376,8 +377,8 @@ public:
     catch (const std::exception &e)
     {
       loading_.erase(path);
-      throw std::runtime_error(std::string("[MODULE PARSE ERROR] in '") +
-                               path + "': " + e.what());
+      throw std::runtime_error(std::string("[MODULE PARSE ERROR] in '") + path +
+                               "': " + e.what());
     }
 
     // Recursively resolve any imports *within* the module
@@ -399,8 +400,8 @@ public:
         catch (const std::exception &e)
         {
           // Non-fatal — warn and continue
-          std::cerr << "[MODULE WARNING] " << e.what()
-                    << " (skipping, in " << path << ")\n";
+          std::cerr << "[MODULE WARNING] " << e.what() << " (skipping, in "
+                    << path << ")\n";
         }
         delete n; // discard the ModuleImport node itself
       }
@@ -415,8 +416,8 @@ public:
         }
         catch (const std::exception &e)
         {
-          std::cerr << "[MODULE WARNING] " << e.what()
-                    << " (skipping, in " << path << ")\n";
+          std::cerr << "[MODULE WARNING] " << e.what() << " (skipping, in "
+                    << path << ")\n";
         }
         delete n;
       }
@@ -470,8 +471,9 @@ public:
 // done; the loader-owned nodes in `imported_nodes` must NOT be deleted by the
 // caller.
 //
-// For convenience, `all_nodes` is the combined ordered list for codegen/checker.
-// It is a flat view — do not delete its elements directly; use the split output.
+// For convenience, `all_nodes` is the combined ordered list for
+// codegen/checker. It is a flat view — do not delete its elements directly; use
+// the split output.
 
 struct ResolvedAST
 {
@@ -488,10 +490,8 @@ struct ResolvedAST
 };
 
 static inline ResolvedAST
-resolve_all_imports(std::vector<Parser::ASTNode *> &ast,
-                    ModuleLoader &loader,
-                    const std::string &src_path,
-                    bool verbose)
+resolve_all_imports(std::vector<Parser::ASTNode *> &ast, ModuleLoader &loader,
+                    const std::string &src_path, bool verbose)
 {
   std::string src_dir = mod_dirname(src_path);
   ResolvedAST result;
@@ -499,7 +499,8 @@ resolve_all_imports(std::vector<Parser::ASTNode *> &ast,
   // Track which canonical paths have already been injected (dedup)
   std::unordered_set<std::string> injected;
 
-  auto inject_module = [&](const ModuleExports &m) {
+  auto inject_module = [&](const ModuleExports &m)
+  {
     if (injected.count(m.canonical_path))
       return;
     injected.insert(m.canonical_path);
@@ -527,7 +528,8 @@ resolve_all_imports(std::vector<Parser::ASTNode *> &ast,
         std::cerr << e.what() << "\n";
         delete n;
         // Clean up already-collected owned nodes before exit
-        for (auto *owned : main_nodes) delete owned;
+        for (auto *owned : main_nodes)
+          delete owned;
         std::exit(1);
       }
       delete n; // discard the import node itself (owned by main ast)
@@ -544,7 +546,8 @@ resolve_all_imports(std::vector<Parser::ASTNode *> &ast,
       {
         std::cerr << e.what() << "\n";
         delete n;
-        for (auto *owned : main_nodes) delete owned;
+        for (auto *owned : main_nodes)
+          delete owned;
         std::exit(1);
       }
       delete n;
@@ -555,9 +558,8 @@ resolve_all_imports(std::vector<Parser::ASTNode *> &ast,
       std::string header_name;
       is_header_import(n->value, is_system, header_name);
       if (verbose)
-        std::cerr << "[import] C header "
-                  << (is_system ? "<" : "\"") << header_name
-                  << (is_system ? ">" : "\"") << "\n";
+        std::cerr << "[import] C header " << (is_system ? "<" : "\"")
+                  << header_name << (is_system ? ">" : "\"") << "\n";
       // parse_c_header returns freshly-allocated nodes — treat as owned
       std::vector<Parser::ASTNode *> hnodes =
           parse_c_header(header_name, is_system, {}, verbose);

@@ -266,9 +266,26 @@ private:
       while (depth > 0 && peek_token().type != Lexer::TokenType::END_OF_FILE)
       {
         const std::string &v = peek_token().value;
-        if (v == "<") { depth++; type += advance_token().value; }
-        else if (v == ">") { depth--; if (depth > 0) type += advance_token().value; else { advance_token(); type += ">"; } }
-        else { type += advance_token().value; }
+        if (v == "<")
+        {
+          depth++;
+          type += advance_token().value;
+        }
+        else if (v == ">")
+        {
+          depth--;
+          if (depth > 0)
+            type += advance_token().value;
+          else
+          {
+            advance_token();
+            type += ">";
+          }
+        }
+        else
+        {
+          type += advance_token().value;
+        }
       }
     }
     // pointer
@@ -505,10 +522,13 @@ private:
         {
           la++;
           int depth = 1;
-          while (depth > 0 && peek_token(la).type != Lexer::TokenType::END_OF_FILE)
+          while (depth > 0 &&
+                 peek_token(la).type != Lexer::TokenType::END_OF_FILE)
           {
-            if (peek_token(la).value == "<") depth++;
-            else if (peek_token(la).value == ">") depth--;
+            if (peek_token(la).value == "<")
+              depth++;
+            else if (peek_token(la).value == ">")
+              depth--;
             la++;
           }
         }
@@ -992,7 +1012,8 @@ private:
       else if (kw == "import")
       {
         // template<typename T> import ... ; — treat as a plain CImport
-        // (generics in std.cll are type-annotated C externs, not real templates)
+        // (generics in std.cll are type-annotated C externs, not real
+        // templates)
         template_node->children.push_back(parse_import());
       }
       else if (kw == "template")
@@ -1010,9 +1031,9 @@ private:
     }
     else
     {
-      throw std::runtime_error("[SYNTAX ERROR] Line " +
-                               std::to_string(current_line()) +
-                               ": Expected 'struct', 'def', or 'import' after template");
+      throw std::runtime_error(
+          "[SYNTAX ERROR] Line " + std::to_string(current_line()) +
+          ": Expected 'struct', 'def', or 'import' after template");
     }
 
     return template_node;

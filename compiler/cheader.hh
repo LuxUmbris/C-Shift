@@ -29,14 +29,14 @@
 
 #include "parser.hh"
 
-#include <string>
-#include <vector>
-#include <unordered_set>
 #include <cstring>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 #ifdef CSHIFT_HAVE_CHEADER
 // clang-c headers may be under a versioned path — CMake adds the right -I
-#  include <clang-c/Index.h>
+#include <clang-c/Index.h>
 #endif
 
 // ── Type mapping ──────────────────────────────────────────────────────────
@@ -53,23 +53,39 @@ static std::string clang_type_to_cshift(CXType t)
 
   switch (canon.kind)
   {
-  case CXType_Void:     return "voided";
-  case CXType_Bool:     return "bool";
+  case CXType_Void:
+    return "voided";
+  case CXType_Bool:
+    return "bool";
   case CXType_Char_S:
-  case CXType_Char_U:   return "int8";
-  case CXType_SChar:    return "int8";
-  case CXType_UChar:    return "uint8";
-  case CXType_Short:    return "int16";
-  case CXType_UShort:   return "uint16";
-  case CXType_Int:      return "int32";
-  case CXType_UInt:     return "uint32";
-  case CXType_Long:     return "int64";  // assume 64-bit LP64
-  case CXType_ULong:    return "uint64";
-  case CXType_LongLong: return "int64";
-  case CXType_ULongLong:return "uint64";
-  case CXType_Float:    return "float32";
-  case CXType_Double:   return "float64";
-  case CXType_LongDouble: return "float64"; // best approximation
+  case CXType_Char_U:
+    return "int8";
+  case CXType_SChar:
+    return "int8";
+  case CXType_UChar:
+    return "uint8";
+  case CXType_Short:
+    return "int16";
+  case CXType_UShort:
+    return "uint16";
+  case CXType_Int:
+    return "int32";
+  case CXType_UInt:
+    return "uint32";
+  case CXType_Long:
+    return "int64"; // assume 64-bit LP64
+  case CXType_ULong:
+    return "uint64";
+  case CXType_LongLong:
+    return "int64";
+  case CXType_ULongLong:
+    return "uint64";
+  case CXType_Float:
+    return "float32";
+  case CXType_Double:
+    return "float64";
+  case CXType_LongDouble:
+    return "float64"; // best approximation
 
   case CXType_Pointer:
   {
@@ -135,12 +151,11 @@ struct HeaderVisitorCtx
 {
   std::vector<Parser::ASTNode *> *nodes;
   std::unordered_set<std::string> *seen; // dedup by function name
-  size_t line_offset; // for ASTNode line numbers
+  size_t line_offset;                    // for ASTNode line numbers
   bool verbose;
 };
 
-static CXChildVisitResult header_visitor(CXCursor cursor,
-                                         CXCursor /*parent*/,
+static CXChildVisitResult header_visitor(CXCursor cursor, CXCursor /*parent*/,
                                          CXClientData client_data)
 {
   HeaderVisitorCtx *ctx = reinterpret_cast<HeaderVisitorCtx *>(client_data);
@@ -165,13 +180,13 @@ static CXChildVisitResult header_visitor(CXCursor cursor,
   ctx->seen->insert(fname);
 
   CXType func_type = clang_getCursorType(cursor);
-  CXType ret_type  = clang_getResultType(func_type);
+  CXType ret_type = clang_getResultType(func_type);
 
   std::string ret_s = clang_type_to_cshift(ret_type);
 
   // Build ASTNode value:  "rettype funcname"
-  auto *node = new Parser::ASTNode("CImport", ret_s + " " + fname,
-                                   ctx->line_offset, 0);
+  auto *node =
+      new Parser::ASTNode("CImport", ret_s + " " + fname, ctx->line_offset, 0);
 
   // Build CParams child
   auto *cparams = new Parser::ASTNode("CParams", "", ctx->line_offset, 0);
@@ -182,7 +197,7 @@ static CXChildVisitResult header_visitor(CXCursor cursor,
   for (int i = 0; i < nargs; ++i)
   {
     CXCursor arg_cursor = clang_Cursor_getArgument(cursor, i);
-    CXType   arg_type   = clang_getCursorType(arg_cursor);
+    CXType arg_type = clang_getCursorType(arg_cursor);
     CXString arg_name_cx = clang_getCursorSpelling(arg_cursor);
     std::string arg_name = clang_getCString(arg_name_cx);
     clang_disposeString(arg_name_cx);
@@ -224,15 +239,17 @@ static CXChildVisitResult header_visitor(CXCursor cursor,
 // Returns an empty list (with a warning) when libclang is not available.
 
 static inline std::vector<Parser::ASTNode *>
-parse_c_header(const std::string &header,
-               bool is_system,
+parse_c_header(const std::string &header, bool is_system,
                const std::vector<std::string> &extra_include_dirs = {},
                bool verbose = false)
 {
   std::vector<Parser::ASTNode *> nodes;
 
 #ifndef CSHIFT_HAVE_CHEADER
-  (void)header; (void)is_system; (void)extra_include_dirs; (void)verbose;
+  (void)header;
+  (void)is_system;
+  (void)extra_include_dirs;
+  (void)verbose;
   std::cerr << "[cheader] WARNING: C-header import not supported "
                "(cshift was built without libclang).\n"
                "          Re-build with libclang-dev installed.\n";
@@ -240,9 +257,8 @@ parse_c_header(const std::string &header,
 #else
 
   // Build a minimal in-memory translation unit that just includes the header
-  std::string tu_source = is_system
-      ? ("#include <" + header + ">\n")
-      : ("#include \"" + header + "\"\n");
+  std::string tu_source = is_system ? ("#include <" + header + ">\n")
+                                    : ("#include \"" + header + "\"\n");
 
   // Build clang args
   std::vector<const char *> clang_args;
@@ -263,15 +279,13 @@ parse_c_header(const std::string &header,
   CXUnsavedFile unsaved;
   unsaved.Filename = "<cshift_header_import>";
   unsaved.Contents = tu_source.c_str();
-  unsaved.Length   = (unsigned long)tu_source.size();
+  unsaved.Length = (unsigned long)tu_source.size();
 
   CXTranslationUnit tu = clang_parseTranslationUnit(
-      index,
-      unsaved.Filename,
-      clang_args.data(), (int)clang_args.size(),
+      index, unsaved.Filename, clang_args.data(), (int)clang_args.size(),
       &unsaved, 1,
       CXTranslationUnit_SkipFunctionBodies |
-      CXTranslationUnit_DetailedPreprocessingRecord);
+          CXTranslationUnit_DetailedPreprocessingRecord);
 
   if (!tu)
   {
@@ -299,15 +313,14 @@ parse_c_header(const std::string &header,
   // Walk the AST
   std::unordered_set<std::string> seen;
   HeaderVisitorCtx ctx{&nodes, &seen, 1, verbose};
-  clang_visitChildren(clang_getTranslationUnitCursor(tu),
-                      header_visitor, &ctx);
+  clang_visitChildren(clang_getTranslationUnitCursor(tu), header_visitor, &ctx);
 
   clang_disposeTranslationUnit(tu);
   clang_disposeIndex(index);
 
   if (verbose)
-    std::cerr << "[cheader] " << nodes.size()
-              << " functions imported from <" << header << ">\n";
+    std::cerr << "[cheader] " << nodes.size() << " functions imported from <"
+              << header << ">\n";
 
   return nodes;
 #endif

@@ -28,8 +28,8 @@
 //   --mcpu <cpu>       Target CPU (e.g. "skylake", "cortex-a72").
 //   --mattr <feat>     Target CPU features (e.g. "+avx2,+bmi2").
 
-#include "compiler/module.hh"   // must come before codegen.hh
 #include "compiler/codegen.hh"
+#include "compiler/module.hh" // must come before codegen.hh
 
 #include <cstring>
 #include <fstream>
@@ -109,8 +109,7 @@ static std::string find_std_cll(const std::string &src_path,
   {
     std::string ep(env);
     // If it points directly to the file, use it as-is
-    if (file_exists(ep) &&
-        ep.size() >= 7 &&
+    if (file_exists(ep) && ep.size() >= 7 &&
         ep.compare(ep.size() - 7, 7, "std.cll") == 0)
       return ep;
     // If it points to a directory containing std.cll
@@ -191,20 +190,30 @@ static std::string compile_frt_to_cache(const std::string &frt_c,
 
   // Shell-safe: wrap path in single quotes for POSIX shell.
   // Embedded single-quotes are replaced with '''
-  auto sh_quote = [](const std::string &p) -> std::string {
+  auto sh_quote = [](const std::string &p) -> std::string
+  {
     std::string r(1, char(39));
-    for (char c : p) {
-      if (c == char(39)) { r += char(39); r += char(92); r += char(39); r += char(39); }
-      else r += c;
+    for (char c : p)
+    {
+      if (c == char(39))
+      {
+        r += char(39);
+        r += char(92);
+        r += char(39);
+        r += char(39);
+      }
+      else
+        r += c;
     }
     r += char(39);
     return r;
   };
   for (auto &cc : compilers)
   {
-    // Use the caller's opt level for frt so debug/release builds stay consistent
-    std::string cmd = cc + " " + opt_flag + " -c " + sh_quote(frt_c) +
-                      " -o " + sh_quote(cache_path) + " 2>/dev/null";
+    // Use the caller's opt level for frt so debug/release builds stay
+    // consistent
+    std::string cmd = cc + " " + opt_flag + " -c " + sh_quote(frt_c) + " -o " +
+                      sh_quote(cache_path) + " 2>/dev/null";
     if (verbose)
       std::cerr << "[frt] trying: " << cmd << "\n";
     if (std::system(cmd.c_str()) == 0 && file_exists(cache_path))
@@ -219,8 +228,8 @@ static std::string compile_frt_to_cache(const std::string &frt_c,
 
 static std::string find_frt_o(const std::string &exe_path,
                               const std::string &target_triple,
-                              const std::string &opt_flag,
-                              bool verbose, bool no_frt)
+                              const std::string &opt_flag, bool verbose,
+                              bool no_frt)
 {
   if (no_frt)
     return "";
@@ -343,9 +352,9 @@ int main(int argc, char **argv)
   // Optimization level: 0=none(debug), 1=less, 2=default, 3=aggressive
   // Stored as the LLVM pipeline string for LLVMRunPasses.
   // Also controls the TargetMachine CodeGenOptLevel.
-  int            opt_int    = 0;         // numeric level (0-3)
-  bool           opt_size   = false;     // -Os
-  bool           opt_size_z = false;     // -Oz
+  int opt_int = 0;                                   // numeric level (0-3)
+  bool opt_size = false;                             // -Os
+  bool opt_size_z = false;                           // -Oz
   LLVMCodeGenOptLevel tm_opt = LLVMCodeGenLevelNone; // for TargetMachine
 
   for (int i = 1; i < argc; ++i)
@@ -368,17 +377,43 @@ int main(int argc, char **argv)
     else if (a == "--verbose" || a == "-v")
       verbose = true;
     else if (a == "-O0")
-    { opt_int = 0; tm_opt = LLVMCodeGenLevelNone;      opt_size = opt_size_z = false; }
+    {
+      opt_int = 0;
+      tm_opt = LLVMCodeGenLevelNone;
+      opt_size = opt_size_z = false;
+    }
     else if (a == "-O1")
-    { opt_int = 1; tm_opt = LLVMCodeGenLevelLess;      opt_size = opt_size_z = false; }
+    {
+      opt_int = 1;
+      tm_opt = LLVMCodeGenLevelLess;
+      opt_size = opt_size_z = false;
+    }
     else if (a == "-O2")
-    { opt_int = 2; tm_opt = LLVMCodeGenLevelDefault;   opt_size = opt_size_z = false; }
+    {
+      opt_int = 2;
+      tm_opt = LLVMCodeGenLevelDefault;
+      opt_size = opt_size_z = false;
+    }
     else if (a == "-O3")
-    { opt_int = 3; tm_opt = LLVMCodeGenLevelAggressive;opt_size = opt_size_z = false; }
+    {
+      opt_int = 3;
+      tm_opt = LLVMCodeGenLevelAggressive;
+      opt_size = opt_size_z = false;
+    }
     else if (a == "-Os")
-    { opt_int = 2; tm_opt = LLVMCodeGenLevelDefault;   opt_size = true; opt_size_z = false; }
+    {
+      opt_int = 2;
+      tm_opt = LLVMCodeGenLevelDefault;
+      opt_size = true;
+      opt_size_z = false;
+    }
     else if (a == "-Oz")
-    { opt_int = 2; tm_opt = LLVMCodeGenLevelDefault;   opt_size_z = true; opt_size = false; }
+    {
+      opt_int = 2;
+      tm_opt = LLVMCodeGenLevelDefault;
+      opt_size_z = true;
+      opt_size = false;
+    }
     else if (a == "--mcpu" && i + 1 < argc)
       mcpu = argv[++i];
     else if (a.size() > 7 && a.substr(0, 7) == "--mcpu=")
@@ -419,12 +454,18 @@ int main(int argc, char **argv)
 
   // Build the compiler opt flag string for frt.c compilation
   std::string opt_flag;
-  if (opt_size_z)      opt_flag = "-Oz";
-  else if (opt_size)   opt_flag = "-Os";
-  else if (opt_int == 3) opt_flag = "-O3";
-  else if (opt_int == 2) opt_flag = "-O2";
-  else if (opt_int == 1) opt_flag = "-O1";
-  else                   opt_flag = "-O0";
+  if (opt_size_z)
+    opt_flag = "-Oz";
+  else if (opt_size)
+    opt_flag = "-Os";
+  else if (opt_int == 3)
+    opt_flag = "-O3";
+  else if (opt_int == 2)
+    opt_flag = "-O2";
+  else if (opt_int == 1)
+    opt_flag = "-O1";
+  else
+    opt_flag = "-O0";
 
   // Warn if not a .cll file
   if (src_path.size() < 4 ||
@@ -496,10 +537,11 @@ int main(int argc, char **argv)
   // Each module is parsed exactly once; duplicate imports are silently deduped.
   //
   // OWNERSHIP: resolved.owned = nodes from this file (caller deletes)
-  //            resolved.borrowed = nodes from modules (loader deletes at scope end)
-  //            resolved.all = combined view for checker/codegen
+  //            resolved.borrowed = nodes from modules (loader deletes at scope
+  //            end) resolved.all = combined view for checker/codegen
   ResolvedAST resolved = resolve_all_imports(ast, loader, src_path, verbose);
-  // From here on use resolved.all for processing and resolved.owned for cleanup.
+  // From here on use resolved.all for processing and resolved.owned for
+  // cleanup.
   auto &ast_view = resolved.all;
 
   Checker checker;
@@ -591,12 +633,18 @@ int main(int argc, char **argv)
   // We always run at least -O0 (which still canonicalizes the IR).
   {
     std::string pipeline;
-    if (opt_size_z)      pipeline = "default<Oz>";
-    else if (opt_size)   pipeline = "default<Os>";
-    else if (opt_int == 3) pipeline = "default<O3>";
-    else if (opt_int == 2) pipeline = "default<O2>";
-    else if (opt_int == 1) pipeline = "default<O1>";
-    else                   pipeline = "default<O0>";
+    if (opt_size_z)
+      pipeline = "default<Oz>";
+    else if (opt_size)
+      pipeline = "default<Os>";
+    else if (opt_int == 3)
+      pipeline = "default<O3>";
+    else if (opt_int == 2)
+      pipeline = "default<O2>";
+    else if (opt_int == 1)
+      pipeline = "default<O1>";
+    else
+      pipeline = "default<O0>";
 
     // Build a temporary TM just for the pass manager
     // (needed for target-specific passes like loop-vectorizer cost models)
@@ -640,8 +688,8 @@ int main(int argc, char **argv)
   // pre-compiling std into a linkable .bc file that the linker can consume.
   {
     std::string std_path = loader.std_cll_override.empty()
-                            ? loader.resolve_module_name("std")
-                            : loader.std_cll_override;
+                               ? loader.resolve_module_name("std")
+                               : loader.std_cll_override;
     if (!std_path.empty() && loader.is_loaded(std_path))
     {
       std::string bcp = ModuleLoader::bc_path_for(std_path);
@@ -694,7 +742,8 @@ int main(int argc, char **argv)
 
     if (rc == 0)
     {
-      std::string frt_o = find_frt_o(exe_path, target_triple, opt_flag, verbose, no_frt);
+      std::string frt_o =
+          find_frt_o(exe_path, target_triple, opt_flag, verbose, no_frt);
 
       std::vector<const char *> objs;
       objs.push_back(tmp_obj.c_str());

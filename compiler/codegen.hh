@@ -594,20 +594,23 @@ private:
     EzType i64 = ez_i64();
 
     // Allocate len, cap, data slots
-    EzVal len_slot = alloca_in_entry(current_func, i64, (name + "__len").c_str());
-    EzVal cap_slot = alloca_in_entry(current_func, i64, (name + "__cap").c_str());
-    EzVal data_slot = alloca_in_entry(current_func, ez_ptr(), (name + "__data").c_str());
+    EzVal len_slot =
+        alloca_in_entry(current_func, i64, (name + "__len").c_str());
+    EzVal cap_slot =
+        alloca_in_entry(current_func, i64, (name + "__cap").c_str());
+    EzVal data_slot =
+        alloca_in_entry(current_func, ez_ptr(), (name + "__data").c_str());
 
     ez_store(mod, ez_const_int(i64, 0), len_slot);
     ez_store(mod, ez_const_int(i64, 0), cap_slot);
     ez_store(mod, LLVMConstNull(ez_ptr()), data_slot);
 
-    declare_var(name + "__len",  len_slot,  "int64");
-    declare_var(name + "__cap",  cap_slot,  "int64");
+    declare_var(name + "__len", len_slot, "int64");
+    declare_var(name + "__cap", cap_slot, "int64");
     declare_var(name + "__data", data_slot, "voided*");
     // Register the variable name itself for .len access
     declare_var(name, len_slot, "int64"); // main slot = len for .len reads
-    var_type_map[name] = "int64"; // arr.len loads from len_slot
+    var_type_map[name] = "int64";         // arr.len loads from len_slot
   }
 
   void emit_array_append(Parser::ASTNode *n)
@@ -627,14 +630,16 @@ private:
     EzType elem_ty = cshift_type(elem_s);
     EzType i64 = ez_i64();
 
-    EzVal val = emit_expression_val(n->children.empty() ? nullptr : n->children[0], elem_s);
+    EzVal val = emit_expression_val(
+        n->children.empty() ? nullptr : n->children[0], elem_s);
     if (!val)
       return;
 
     EzVal len = ez_load(mod, i64, len_ptr, "len");
     EzVal cap = ez_load(mod, i64, cap_ptr, "cap");
 
-    // if (len >= cap) { cap = cap ? cap*2 : 8; data = realloc(data, cap * sizeof(T)) }
+    // if (len >= cap) { cap = cap ? cap*2 : 8; data = realloc(data, cap *
+    // sizeof(T)) }
     EzBlock *grow_b = ez_block(current_func, "arr.grow");
     EzBlock *store_b = ez_block(current_func, "arr.store");
 
@@ -645,13 +650,13 @@ private:
     current_block = grow_b;
     ez_use(grow_b);
     EzVal cap_zero = ez_eq(mod, cap, ez_const_int(i64, 0), "cap_zero");
-    EzVal new_cap = LLVMBuildSelect(mod->builder, cap_zero,
-                                    ez_const_int(i64, 8),
-                                    ez_mul(mod, cap, ez_const_int(i64, 2), "cap2"),
-                                    "new_cap");
+    EzVal new_cap = LLVMBuildSelect(
+        mod->builder, cap_zero, ez_const_int(i64, 8),
+        ez_mul(mod, cap, ez_const_int(i64, 2), "cap2"), "new_cap");
     ez_store(mod, new_cap, cap_ptr);
     // elem size via LLVM
-    unsigned elem_bits = LLVMSizeOfTypeInBits(LLVMGetModuleDataLayout(mod->mod), elem_ty);
+    unsigned elem_bits =
+        LLVMSizeOfTypeInBits(LLVMGetModuleDataLayout(mod->mod), elem_ty);
     EzVal elem_size = ez_const_int(i64, elem_bits / 8);
     EzVal new_bytes = ez_mul(mod, new_cap, elem_size, "new_bytes");
     EzVal old_data = ez_load(mod, ez_ptr(), data_ptr, "old_data");
@@ -665,7 +670,7 @@ private:
     current_block = store_b;
     ez_use(store_b);
     // Reload len/data (may have changed)
-    EzVal len2  = ez_load(mod, i64, len_ptr, "len2");
+    EzVal len2 = ez_load(mod, i64, len_ptr, "len2");
     EzVal data2 = ez_load(mod, ez_ptr(), data_ptr, "data2");
     EzVal gep_idx[] = {len2};
     EzVal elem_ptr = ez_gep(mod, elem_ty, data2, gep_idx, 1, "elem_ptr");
@@ -685,8 +690,7 @@ private:
     std::string vname = n->value.substr(sp + 1);
 
     // Arena array: T[]
-    if (type_s.size() > 2 &&
-        type_s.substr(type_s.size() - 2) == "[]")
+    if (type_s.size() > 2 && type_s.substr(type_s.size() - 2) == "[]")
     {
       std::string elem = type_s.substr(0, type_s.size() - 2);
       emit_arena_array_declaration(vname, elem);
@@ -722,12 +726,15 @@ private:
     if (type_s == "__infer__")
     {
       size_t start = 0;
-      if (!n->children.empty() && n->children[0]->type == "Shared") start = 1;
+      if (!n->children.empty() && n->children[0]->type == "Shared")
+        start = 1;
       if (n->children.size() > start)
       {
         auto *init_expr = n->children[start];
-        if (init_expr->type == "Expression" && init_expr->children.size() >= 2 &&
-            init_expr->children[0]->token_type == Lexer::TokenType::IDENTIFIER &&
+        if (init_expr->type == "Expression" &&
+            init_expr->children.size() >= 2 &&
+            init_expr->children[0]->token_type ==
+                Lexer::TokenType::IDENTIFIER &&
             init_expr->children[1]->value == "(")
         {
           std::string call_fname = init_expr->children[0]->value;
@@ -746,17 +753,19 @@ private:
           }
           else
           {
-            fprintf(stderr,
-                    "[ERROR] reserve without type: '%s' has no tunnel outputs.\n",
-                    call_fname.c_str());
+            fprintf(
+                stderr,
+                "[ERROR] reserve without type: '%s' has no tunnel outputs.\n",
+                call_fname.c_str());
             return;
           }
         }
         else
         {
-          fprintf(stderr,
-                  "[ERROR] reserve without type requires an initializer that is "
-                  "a single function call.\n");
+          fprintf(
+              stderr,
+              "[ERROR] reserve without type requires an initializer that is "
+              "a single function call.\n");
           return;
         }
       }
@@ -1531,10 +1540,12 @@ private:
       for (size_t i = 2; i < tokens.size() - 1; ++i)
         idx_toks.push_back(tokens[i]);
       EzVal idx = eval_expr_children(idx_toks, "int64");
-      if (!idx) return nullptr;
+      if (!idx)
+        return nullptr;
       // Widen index to i64 if needed
       EzType idx_ty = LLVMTypeOf(idx);
-      if (LLVMGetTypeKind(idx_ty) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(idx_ty) < 64)
+      if (LLVMGetTypeKind(idx_ty) == LLVMIntegerTypeKind &&
+          LLVMGetIntTypeWidth(idx_ty) < 64)
         idx = LLVMBuildSExt(mod->builder, idx, ez_i64(), "idx64");
 
       // Check if it's an arena array
@@ -1542,7 +1553,8 @@ private:
       if (eit != arena_array_elem_type.end())
       {
         EzVal data_ptr = get_arena_data_ptr(arr);
-        if (!data_ptr) return nullptr;
+        if (!data_ptr)
+          return nullptr;
         EzType elem_ty = cshift_type(eit->second);
         EzVal data = ez_load(mod, ez_ptr(), data_ptr, "data");
         EzVal gep_idx[] = {idx};
@@ -1749,7 +1761,7 @@ private:
     EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
     bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
     EzVal call_result = ez_call(mod, f, args.data(), (unsigned)args.size(),
-                   is_void ? "" : "call");
+                                is_void ? "" : "call");
 
     // If this is a single-tunnel function used as an expression value
     // (e.g. print(add(4, 8))), load the tunnel slot and return it.

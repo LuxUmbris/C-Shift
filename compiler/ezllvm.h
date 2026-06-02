@@ -59,10 +59,10 @@
 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitWriter.h>
-#include <llvm-c/Transforms/PassBuilder.h>
 #include <llvm-c/Core.h>
 #include <llvm-c/Target.h>
 #include <llvm-c/TargetMachine.h>
+#include <llvm-c/Transforms/PassBuilder.h>
 
 /* ─── Public type aliases ────────────────────────────────────────────────────
  */
@@ -377,8 +377,8 @@ static inline int ez_verify(EzModule *m)
 
 /* ─── Internal: build a TargetMachine from an EzTarget ───────────────────────
  */
-static inline LLVMTargetMachineRef
-ez__make_tm(EzTarget *tgt, LLVMCodeGenOptLevel opt_level)
+static inline LLVMTargetMachineRef ez__make_tm(EzTarget *tgt,
+                                               LLVMCodeGenOptLevel opt_level)
 {
   LLVMInitializeAllTargetInfos();
   LLVMInitializeAllTargets();
@@ -395,8 +395,8 @@ ez__make_tm(EzTarget *tgt, LLVMCodeGenOptLevel opt_level)
     return NULL;
   }
   return LLVMCreateTargetMachine(target_ref, tgt->triple, tgt->cpu,
-                                 tgt->features, opt_level,
-                                 LLVMRelocPIC, LLVMCodeModelDefault);
+                                 tgt->features, opt_level, LLVMRelocPIC,
+                                 LLVMCodeModelDefault);
 }
 
 /**
@@ -415,7 +415,7 @@ ez__make_tm(EzTarget *tgt, LLVMCodeGenOptLevel opt_level)
  * @return  0 on success, non-zero on error (message printed to stderr).
  */
 static inline int ez_optimize(EzModule *m, LLVMTargetMachineRef tm,
-                               const char *pipeline)
+                              const char *pipeline)
 {
   LLVMPassBuilderOptionsRef opts = LLVMCreatePassBuilderOptions();
   LLVMPassBuilderOptionsSetVerifyEach(opts, 0);
@@ -443,7 +443,7 @@ static inline int ez_optimize(EzModule *m, LLVMTargetMachineRef tm,
  * @return      0 on success, non-zero on error.
  */
 static inline int ez_compile(EzModule *m, const char *path,
-                              LLVMCodeGenOptLevel opt_level)
+                             LLVMCodeGenOptLevel opt_level)
 {
   EzTarget *native = ez_target_native();
   LLVMTargetMachineRef tm = ez__make_tm(native, opt_level);
@@ -478,7 +478,7 @@ static inline int ez_compile(EzModule *m, const char *path,
  *   ez_compile_for(mod, arm, "app-arm64.o");
  */
 static inline int ez_compile_for(EzModule *m, EzTarget *tgt, const char *path,
-                                   LLVMCodeGenOptLevel opt_level)
+                                 LLVMCodeGenOptLevel opt_level)
 {
   LLVMTargetMachineRef tm = ez__make_tm(tgt, opt_level);
   if (!tm)
@@ -502,7 +502,7 @@ static inline int ez_compile_for(EzModule *m, EzTarget *tgt, const char *path,
  * @return 0 on success.
  */
 static inline int ez_compile_asm(EzModule *m, const char *path,
-                                  LLVMCodeGenOptLevel opt_level)
+                                 LLVMCodeGenOptLevel opt_level)
 {
   EzTarget *native = ez_target_native();
   LLVMTargetMachineRef tm = ez__make_tm(native, opt_level);
