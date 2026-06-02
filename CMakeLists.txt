@@ -14,9 +14,10 @@ option(CSHIFT_BUNDLE_FRT
     "Copy precompiled frt.o blobs into the install tree under share/cshift/frt/"
     ON)
 
+# WICHTIG: Standardmäßig dynamisch linken
 option(CSHIFT_LINK_STATIC
     "Link LLVM and C++ runtime statically (produces a more portable binary)"
-    ON)
+    OFF)
 
 option(CSHIFT_BUNDLE_LIBCLANG
     "Copy libclang.so into the install/package tree (needed when CSHIFT_LINK_STATIC=ON)"
@@ -27,14 +28,9 @@ option(CSHIFT_BUNDLE_LIBCLANG
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 
-# Statt einzelner Komponenten: nimm einfach alle, die das installierte LLVM hat.
-if(CSHIFT_LINK_STATIC)
-    llvm_map_components_to_libnames(CSHIFT_LLVM_LIBS all)
-    message(STATUS "LLVM link mode: STATIC (all components)")
-else()
-    set(CSHIFT_LLVM_LIBS LLVM)
-    message(STATUS "LLVM link mode: SHARED (libLLVM.so)")
-endif()
+# Bei dynamischem Linking einfach das monolithische libLLVM.so verwenden
+set(CSHIFT_LLVM_LIBS LLVM)
+message(STATUS "LLVM link mode: SHARED (libLLVM.so)")
 
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
@@ -87,7 +83,7 @@ add_executable(cshift main.cpp)
 
 target_compile_options(cshift PRIVATE
     -Wall -Wextra -O2
-    -Wno-comment
+    -Wno-comment  # suppress warning from backslash in // build comment
 )
 
 if(CSHIFT_LLVMC_INCLUDE)
@@ -104,44 +100,16 @@ endif()
 
 target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_LLVM_BITCODE=1)
 
-# ── Linking ───────────────────────────────────────────────────────────────────
+# ── Linking (nur dynamisch) ───────────────────────────────────────────────────
 
-if(CSHIFT_LINK_STATIC)
-    target_link_libraries(cshift PRIVATE ${CSHIFT_LLVM_LIBS})
+# Keine statischen Flags, keine -Bstatic, einfach normal gegen LLVM + libclang
+target_link_libraries(cshift PRIVATE ${CSHIFT_LLVM_LIBS})
 
-    target_link_options(cshift PRIVATE
-        -static-libstdc++
-        -static-libgcc
-    )
-
-    find_library(TINFO_STATIC libtinfo.a
-        HINTS /usr/lib/x86_64-linux-gnu /usr/lib)
-    find_library(TINFO_SHARED tinfo
-        HINTS /usr/lib/x86_64-linux-gnu /usr/lib)
-    if(TINFO_STATIC)
-        target_link_options(cshift PRIVATE
-            "LINKER:-Bstatic" "-ltinfo" "LINKER:-Bdynamic")
-        message(STATUS "tinfo: static (${TINFO_STATIC})")
-    elseif(TINFO_SHARED)
-        target_link_libraries(cshift PRIVATE ${TINFO_SHARED})
-        message(STATUS "tinfo: shared (${TINFO_SHARED})")
-    endif()
-
-    if(CSHIFT_HAVE_CHEADER)
-        target_link_libraries(cshift PRIVATE ${LIBCLANG_LIB})
-        set_target_properties(cshift PROPERTIES
-            INSTALL_RPATH "\$ORIGIN/../lib/cshift:\$ORIGIN/../lib:/usr/lib/x86_64-linux-gnu")
-        set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
-    endif()
-
-    target_link_libraries(cshift PRIVATE dl pthread)
-
-else()
-    target_link_libraries(cshift PRIVATE ${CSHIFT_LLVM_LIBS})
-    if(CSHIFT_HAVE_CHEADER)
-        target_link_libraries(cshift PRIVATE ${LIBCLANG_LIB})
-    endif()
+if(CSHIFT_HAVE_CHEADER)
+    target_link_libraries(cshift PRIVATE ${LIBCLANG_LIB})
 endif()
+
+target_link_libraries(cshift PRIVATE dl pthread)
 
 # ── Precompile frt.c ──────────────────────────────────────────────────────────
 
@@ -218,6 +186,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/examples"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/cshift"
 )
 
+# Bundle libclang.so optional (nur wenn du willst)
 if(CSHIFT_HAVE_CHEADER AND CSHIFT_BUNDLE_LIBCLANG)
     get_filename_component(LIBCLANG_REAL "${LIBCLANG_LIB}" REALPATH)
     install(FILES "${LIBCLANG_REAL}"
@@ -232,14 +201,21 @@ if(CSHIFT_HAVE_CHEADER AND CSHIFT_BUNDLE_LIBCLANG)
     message(STATUS "libclang bundle: ${LIBCLANG_REAL}")
 endif()
 
-# ── CPack etc. (falls du den Teil noch brauchst, kannst du ihn einfach wieder anhängen) ──
+# ── Summary ───────────────────────────────────────────────────────────────────
+
+if(CSHIFT_LINK_STATIC)
+    set(CSHIFT_LINK_MODE_STR "STATIC")
+else()
+    set(CSHIFT_LINK_MODE_STR "SHARED")
+endif()
 
 message(STATUS "")
 message(STATUS "C<< (cshift) build summary")
+message(STATUS "  Version        : ${PROJECT_VERSION}")
 message(STATUS "  Install prefix : ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  LLVM version   : ${LLVM_PACKAGE_VERSION}")
-message(STATUS "  Link static    : ${CSHIFT_LINK_STATIC}")
-message(STATUS "  C-header import: ${CSHIFT_HAVE_CHEADER}")
+message(STATUS "  Link mode      : ${CSHIFT_LINK_MODE_STR}")
+message(STATUS "  C-header import: ${CSHIFT_HAVE_CHEADER} (libclang)")
 message(STATUS "  Bundle libclang: ${CSHIFT_BUNDLE_LIBCLANG}")
 message(STATUS "  Precompile frt : ${CSHIFT_PRECOMPILE_FRT}")
 message(STATUS "  Bundle frt     : ${CSHIFT_BUNDLE_FRT}")
