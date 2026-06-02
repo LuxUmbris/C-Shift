@@ -62,25 +62,36 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=dist
 
       # ───────────────────────────────────────────────────────────────
-      # Windows (MSVC + vorhandenes LLVM 20)
+      # Windows (MSVC + offizielles LLVM MSI)
       # ───────────────────────────────────────────────────────────────
       - name: Activate MSVC
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/LLVM-18.1.8-win64.exe" `
+            -OutFile llvm-installer.exe
+
+          Start-Process .\llvm-installer.exe -ArgumentList "/S" -Wait
+
+          $llvmDir = "C:\Program Files\LLVM\lib\cmake\llvm"
+          if (-not (Test-Path $llvmDir)) {
+              Write-Error "LLVM installation failed"
+              exit 1
+          }
+
+          echo "LLVM_DIR=$llvmDir" >> $env:GITHUB_ENV
+
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $llvmDir = "C:\Program Files\LLVM\lib\cmake\llvm"
-          if (-not (Test-Path $llvmDir)) {
-              Write-Error "LLVM not found at $llvmDir"
-              exit 1
-          }
-          echo "LLVM_DIR=$llvmDir" >> $env:GITHUB_ENV
-
           cmake -S . -B build `
-            -DLLVM_DIR="$llvmDir" `
+            -DLLVM_DIR="$env:LLVM_DIR" `
             -DCMAKE_INSTALL_PREFIX=dist `
             -G "Ninja"
 
