@@ -1,51 +1,73 @@
 name: Auto Format Code
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
-  workflow_dispatch: 
+  # Run on pushes to main only — not on every branch, not on a timer.
+  # A cron job that rewrites main every 30 min causes merge conflicts
+  # on feature branches and burns unnecessary CI minutes.
+  push:
+    branches:
+      - main
+    paths:
+      # Only trigger when C/C++ source changes
+      - "**.c"
+      - "**.cpp"
+      - "**.h"
+      - "**.hh"
+  workflow_dispatch:
 
 jobs:
   format:
+    name: Clang-format
     runs-on: ubuntu-latest
+
+    # Only run on the main branch (workflow_dispatch can be triggered from any
+    # branch, so guard explicitly).
+    if: github.ref == 'refs/heads/main'
+
     permissions:
       contents: write
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        ref: main
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # Fetch full history so the commit has proper ancestry
+          fetch-depth: 0
 
-    - name: Install clang-format
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y clang-format
+      - name: Install clang-format
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y clang-format
 
-    # Step 1: Generate a flawless, native config file on the runner
-    - name: Create Temporary Clang-Format Profile
-      run: |
-        cat << 'EOF' > .clang-format
-        BasedOnStyle: LLVM
-        BreakBeforeBraces: Allman
-        AllowShortBlocksOnASingleLine: false
-        AllowShortIfStatementsOnASingleLine: false
-        EOF
+      - name: Create .clang-format config
+        run: |
+          cat > .clang-format << 'EOF'
+          BasedOnStyle: LLVM
+          BreakBeforeBraces: Allman
+          AllowShortBlocksOnASingleLine: false
+          AllowShortIfStatementsOnASingleLine: false
+          ColumnLimit: 100
+          IndentWidth: 2
+          EOF
 
-    # Step 2: Run the formatter targeting the file configuration directly
-    - name: Format C/C++ files (Strict Allman)
-      run: |
-        find . -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hh" \) \
-        -not -path '*/.*' \
-        -exec clang-format -i -style=file {} +
+      - name: Format C/C++ files
+        run: |
+          # Exclude vendored/generated files
+          find . -type f \( -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hh" \) \
+            -not -path '*/.*' \
+            -not -path '*/node_modules/*' \
+            -not -path '*/build/*' \
+            -not -path '*/dist/*' \
+            -not -name 'ezllvm.h' \
+            -exec clang-format -i -style=file {} +
 
-    # Step 3: Remove the temporary file so it doesn't pollute your repository
-    - name: Clean up temporary profile
-      run: rm .clang-format
+      - name: Remove temporary config
+        run: rm -f .clang-format
 
-    # Step 4: Commit all formatting changes back to the branch
-    - name: Commit and Push changes
-      uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        commit_message: "chore: auto-format C/C++ code (Allman style)"
-        branch: main
+      - name: Commit formatting changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: auto-format C/C++ code (Allman style)"
+          branch: main
+          # Don't commit if nothing changed (avoids empty commits)
+          skip_dirty_check: false
