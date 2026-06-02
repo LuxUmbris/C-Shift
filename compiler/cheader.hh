@@ -92,8 +92,7 @@ static std::string clang_type_to_cshift(CXType t)
     CXType pointee = clang_getPointeeType(canon);
     // char* / const char* → string
     CXType pcanon = clang_getCanonicalType(pointee);
-    if (pcanon.kind == CXType_Char_S || pcanon.kind == CXType_Char_U ||
-        pcanon.kind == CXType_SChar)
+    if (pcanon.kind == CXType_Char_S || pcanon.kind == CXType_Char_U || pcanon.kind == CXType_SChar)
       return "string"; // i8* in C<<
     if (pcanon.kind == CXType_Void)
       return "voided*";
@@ -185,8 +184,7 @@ static CXChildVisitResult header_visitor(CXCursor cursor, CXCursor /*parent*/,
   std::string ret_s = clang_type_to_cshift(ret_type);
 
   // Build ASTNode value:  "rettype funcname"
-  auto *node =
-      new Parser::ASTNode("CImport", ret_s + " " + fname, ctx->line_offset, 0);
+  auto *node = new Parser::ASTNode("CImport", ret_s + " " + fname, ctx->line_offset, 0);
 
   // Build CParams child
   auto *cparams = new Parser::ASTNode("CParams", "", ctx->line_offset, 0);
@@ -203,16 +201,13 @@ static CXChildVisitResult header_visitor(CXCursor cursor, CXCursor /*parent*/,
     clang_disposeString(arg_name_cx);
 
     std::string arg_type_s = clang_type_to_cshift(arg_type);
-    std::string param_val =
-        arg_name.empty() ? arg_type_s : (arg_type_s + " " + arg_name);
+    std::string param_val = arg_name.empty() ? arg_type_s : (arg_type_s + " " + arg_name);
 
-    cparams->children.push_back(
-        new Parser::ASTNode("CParam", param_val, ctx->line_offset, 0));
+    cparams->children.push_back(new Parser::ASTNode("CParam", param_val, ctx->line_offset, 0));
   }
 
   if (is_vararg)
-    cparams->children.push_back(
-        new Parser::ASTNode("Variadic", "...", ctx->line_offset, 0));
+    cparams->children.push_back(new Parser::ASTNode("Variadic", "...", ctx->line_offset, 0));
 
   node->children.push_back(cparams);
   ctx->nodes->push_back(node);
@@ -240,8 +235,7 @@ static CXChildVisitResult header_visitor(CXCursor cursor, CXCursor /*parent*/,
 
 static inline std::vector<Parser::ASTNode *>
 parse_c_header(const std::string &header, bool is_system,
-               const std::vector<std::string> &extra_include_dirs = {},
-               bool verbose = false)
+               const std::vector<std::string> &extra_include_dirs = {}, bool verbose = false)
 {
   std::vector<Parser::ASTNode *> nodes;
 
@@ -257,8 +251,8 @@ parse_c_header(const std::string &header, bool is_system,
 #else
 
   // Build a minimal in-memory translation unit that just includes the header
-  std::string tu_source = is_system ? ("#include <" + header + ">\n")
-                                    : ("#include \"" + header + "\"\n");
+  std::string tu_source =
+      is_system ? ("#include <" + header + ">\n") : ("#include \"" + header + "\"\n");
 
   // Build clang args
   std::vector<const char *> clang_args;
@@ -282,16 +276,13 @@ parse_c_header(const std::string &header, bool is_system,
   unsaved.Length = (unsigned long)tu_source.size();
 
   CXTranslationUnit tu = clang_parseTranslationUnit(
-      index, unsaved.Filename, clang_args.data(), (int)clang_args.size(),
-      &unsaved, 1,
-      CXTranslationUnit_SkipFunctionBodies |
-          CXTranslationUnit_DetailedPreprocessingRecord);
+      index, unsaved.Filename, clang_args.data(), (int)clang_args.size(), &unsaved, 1,
+      CXTranslationUnit_SkipFunctionBodies | CXTranslationUnit_DetailedPreprocessingRecord);
 
   if (!tu)
   {
     clang_disposeIndex(index);
-    std::cerr << "[cheader] ERROR: clang failed to parse header '" << header
-              << "'\n";
+    std::cerr << "[cheader] ERROR: clang failed to parse header '" << header << "'\n";
     return nodes;
   }
 
@@ -319,8 +310,7 @@ parse_c_header(const std::string &header, bool is_system,
   clang_disposeIndex(index);
 
   if (verbose)
-    std::cerr << "[cheader] " << nodes.size() << " functions imported from <"
-              << header << ">\n";
+    std::cerr << "[cheader] " << nodes.size() << " functions imported from <" << header << ">\n";
 
   return nodes;
 #endif
@@ -337,23 +327,20 @@ parse_c_header(const std::string &header, bool is_system,
 // This function resolves such nodes to real CImport nodes.
 // It is called from resolve_all_imports() in module.hh.
 
-static inline bool is_header_import(const std::string &module_name,
-                                    bool &out_is_system,
+static inline bool is_header_import(const std::string &module_name, bool &out_is_system,
                                     std::string &out_header)
 {
   // The parser stores the raw import value as-is.
   // Angle-bracket form is stored as "<stdio.h>" (with brackets).
   // Quoted form is just the bare path stored in Import node value.
-  if (module_name.size() >= 2 && module_name.front() == '<' &&
-      module_name.back() == '>')
+  if (module_name.size() >= 2 && module_name.front() == '<' && module_name.back() == '>')
   {
     out_is_system = true;
     out_header = module_name.substr(1, module_name.size() - 2);
     return true;
   }
   // .h extension → treat as header file (quoted include)
-  if (module_name.size() > 2 &&
-      module_name.substr(module_name.size() - 2) == ".h")
+  if (module_name.size() > 2 && module_name.substr(module_name.size() - 2) == ".h")
   {
     out_is_system = false;
     out_header = module_name;

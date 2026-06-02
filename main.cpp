@@ -30,8 +30,8 @@
 //   --mcpu <cpu>       Target CPU (e.g. "skylake", "cortex-a72").
 //   --mattr <feat>     Target CPU features (e.g. "+avx2,+bmi2").
 
-#include "compiler/module.hh"   // must come before codegen.hh
 #include "compiler/codegen.hh"
+#include "compiler/module.hh" // must come before codegen.hh
 
 #include <cstring>
 #include <fstream>
@@ -103,17 +103,14 @@ static void mkdirp(const std::string &path)
 //   6. /opt/homebrew/share/cshift/    (macOS Homebrew)
 //   7. C:\cshift\                     (Windows)
 
-static std::string find_std_cll(const std::string &src_path,
-                                const std::string &exe_path)
+static std::string find_std_cll(const std::string &src_path, const std::string &exe_path)
 {
   const char *env = std::getenv("CSHIFT_STD_PATH");
   if (env)
   {
     std::string ep(env);
     // If it points directly to the file, use it as-is
-    if (file_exists(ep) &&
-        ep.size() >= 7 &&
-        ep.compare(ep.size() - 7, 7, "std.cll") == 0)
+    if (file_exists(ep) && ep.size() >= 7 && ep.compare(ep.size() - 7, 7, "std.cll") == 0)
       return ep;
     // If it points to a directory containing std.cll
     if (file_exists(ep + "/std.cll"))
@@ -164,10 +161,8 @@ static std::string get_frt_cache_base()
 #endif
 }
 
-static std::string compile_frt_to_cache(const std::string &frt_c,
-                                        const std::string &triple,
-                                        const std::string &opt_flag,
-                                        bool verbose)
+static std::string compile_frt_to_cache(const std::string &frt_c, const std::string &triple,
+                                        const std::string &opt_flag, bool verbose)
 {
   std::string cache_dir = get_frt_cache_base() + "/" + triple;
   std::string cache_path = cache_dir + "/frt.o";
@@ -193,11 +188,20 @@ static std::string compile_frt_to_cache(const std::string &frt_c,
 
   // Shell-safe: wrap path in single quotes for POSIX shell.
   // Embedded single-quotes are replaced with '''
-  auto sh_quote = [](const std::string &p) -> std::string {
+  auto sh_quote = [](const std::string &p) -> std::string
+  {
     std::string r(1, char(39));
-    for (char c : p) {
-      if (c == char(39)) { r += char(39); r += char(92); r += char(39); r += char(39); }
-      else r += c;
+    for (char c : p)
+    {
+      if (c == char(39))
+      {
+        r += char(39);
+        r += char(92);
+        r += char(39);
+        r += char(39);
+      }
+      else
+        r += c;
     }
     r += char(39);
     return r;
@@ -205,8 +209,8 @@ static std::string compile_frt_to_cache(const std::string &frt_c,
   for (auto &cc : compilers)
   {
     // Use the caller's opt level for frt so debug/release builds stay consistent
-    std::string cmd = cc + " " + opt_flag + " -c " + sh_quote(frt_c) +
-                      " -o " + sh_quote(cache_path) + " 2>/dev/null";
+    std::string cmd = cc + " " + opt_flag + " -c " + sh_quote(frt_c) + " -o " +
+                      sh_quote(cache_path) + " 2>/dev/null";
     if (verbose)
       std::cerr << "[frt] trying: " << cmd << "\n";
     if (std::system(cmd.c_str()) == 0 && file_exists(cache_path))
@@ -219,10 +223,8 @@ static std::string compile_frt_to_cache(const std::string &frt_c,
   return "";
 }
 
-static std::string find_frt_o(const std::string &exe_path,
-                              const std::string &target_triple,
-                              const std::string &opt_flag,
-                              bool verbose, bool no_frt)
+static std::string find_frt_o(const std::string &exe_path, const std::string &target_triple,
+                              const std::string &opt_flag, bool verbose, bool no_frt)
 {
   if (no_frt)
     return "";
@@ -262,10 +264,9 @@ static std::string find_frt_o(const std::string &exe_path,
     }
   }
 
-  std::cerr
-      << "[WARNING] frt.o not found and could not be compiled.\n"
-      << "          Install a C compiler (cc/gcc/clang) to auto-build it,\n"
-      << "          or pass --no-frt to suppress this warning.\n";
+  std::cerr << "[WARNING] frt.o not found and could not be compiled.\n"
+            << "          Install a C compiler (cc/gcc/clang) to auto-build it,\n"
+            << "          or pass --no-frt to suppress this warning.\n";
   return "";
 }
 
@@ -301,25 +302,24 @@ static EzTarget *make_target(const std::string &triple)
 
 static void usage(const char *argv0)
 {
-  std::cerr
-      << "Usage: " << argv0 << " <source.cll> [options]\n\n"
-      << "Options:\n"
-      << "  -o <output>        Output file (default: source stem + ext)\n"
-      << "  --emit-llvm        Emit LLVM IR (.ll); skip link\n"
-      << "  --emit-asm         Emit assembly (.s); skip link\n"
-      << "  -c                 Compile to object (.o); skip link\n"
-      << "  --target <triple>  Cross-compile target triple or alias\n"
-      << "  --no-frt           Skip frt.o linking\n"
-      << "  --check-only       Lex + parse + type-check only; no codegen\n"
-      << "  --verbose / -v     Verbose output\n"
-      << "  -O0/-O1/-O2/-O3    Optimization level (default: -O0)\n"
-      << "  -Os                Optimize for size\n"
-      << "  -Oz                Optimize aggressively for size\n"
-      << "  --mcpu <cpu>       Target CPU name (e.g. skylake, cortex-a72)\n"
-      << "  --mattr <feat>     CPU feature flags (e.g. +avx2,+bmi2)\n"
-      << "  -l<lib>            Pass -l<lib> to the linker (e.g. -lm)\n"
-      << "  -Wl,<flag>         Pass <flag> through to the linker\n"
-      << "  --link-flag <f>    Pass raw linker flag <f>\n";
+  std::cerr << "Usage: " << argv0 << " <source.cll> [options]\n\n"
+            << "Options:\n"
+            << "  -o <output>        Output file (default: source stem + ext)\n"
+            << "  --emit-llvm        Emit LLVM IR (.ll); skip link\n"
+            << "  --emit-asm         Emit assembly (.s); skip link\n"
+            << "  -c                 Compile to object (.o); skip link\n"
+            << "  --target <triple>  Cross-compile target triple or alias\n"
+            << "  --no-frt           Skip frt.o linking\n"
+            << "  --check-only       Lex + parse + type-check only; no codegen\n"
+            << "  --verbose / -v     Verbose output\n"
+            << "  -O0/-O1/-O2/-O3    Optimization level (default: -O0)\n"
+            << "  -Os                Optimize for size\n"
+            << "  -Oz                Optimize aggressively for size\n"
+            << "  --mcpu <cpu>       Target CPU name (e.g. skylake, cortex-a72)\n"
+            << "  --mattr <feat>     CPU feature flags (e.g. +avx2,+bmi2)\n"
+            << "  -l<lib>            Pass -l<lib> to the linker (e.g. -lm)\n"
+            << "  -Wl,<flag>         Pass <flag> through to the linker\n"
+            << "  --link-flag <f>    Pass raw linker flag <f>\n";
   std::exit(1);
 }
 
@@ -345,9 +345,9 @@ int main(int argc, char **argv)
   // Optimization level: 0=none(debug), 1=less, 2=default, 3=aggressive
   // Stored as the LLVM pipeline string for LLVMRunPasses.
   // Also controls the TargetMachine CodeGenOptLevel.
-  int            opt_int    = 0;         // numeric level (0-3)
-  bool           opt_size   = false;     // -Os
-  bool           opt_size_z = false;     // -Oz
+  int opt_int = 0;                                   // numeric level (0-3)
+  bool opt_size = false;                             // -Os
+  bool opt_size_z = false;                           // -Oz
   LLVMCodeGenOptLevel tm_opt = LLVMCodeGenLevelNone; // for TargetMachine
 
   for (int i = 1; i < argc; ++i)
@@ -370,17 +370,43 @@ int main(int argc, char **argv)
     else if (a == "--verbose" || a == "-v")
       verbose = true;
     else if (a == "-O0")
-    { opt_int = 0; tm_opt = LLVMCodeGenLevelNone;      opt_size = opt_size_z = false; }
+    {
+      opt_int = 0;
+      tm_opt = LLVMCodeGenLevelNone;
+      opt_size = opt_size_z = false;
+    }
     else if (a == "-O1")
-    { opt_int = 1; tm_opt = LLVMCodeGenLevelLess;      opt_size = opt_size_z = false; }
+    {
+      opt_int = 1;
+      tm_opt = LLVMCodeGenLevelLess;
+      opt_size = opt_size_z = false;
+    }
     else if (a == "-O2")
-    { opt_int = 2; tm_opt = LLVMCodeGenLevelDefault;   opt_size = opt_size_z = false; }
+    {
+      opt_int = 2;
+      tm_opt = LLVMCodeGenLevelDefault;
+      opt_size = opt_size_z = false;
+    }
     else if (a == "-O3")
-    { opt_int = 3; tm_opt = LLVMCodeGenLevelAggressive;opt_size = opt_size_z = false; }
+    {
+      opt_int = 3;
+      tm_opt = LLVMCodeGenLevelAggressive;
+      opt_size = opt_size_z = false;
+    }
     else if (a == "-Os")
-    { opt_int = 2; tm_opt = LLVMCodeGenLevelDefault;   opt_size = true; opt_size_z = false; }
+    {
+      opt_int = 2;
+      tm_opt = LLVMCodeGenLevelDefault;
+      opt_size = true;
+      opt_size_z = false;
+    }
     else if (a == "-Oz")
-    { opt_int = 2; tm_opt = LLVMCodeGenLevelDefault;   opt_size_z = true; opt_size = false; }
+    {
+      opt_int = 2;
+      tm_opt = LLVMCodeGenLevelDefault;
+      opt_size_z = true;
+      opt_size = false;
+    }
     else if (a == "--mcpu" && i + 1 < argc)
       mcpu = argv[++i];
     else if (a.size() > 7 && a.substr(0, 7) == "--mcpu=")
@@ -421,19 +447,23 @@ int main(int argc, char **argv)
 
   // Build the compiler opt flag string for frt.c compilation
   std::string opt_flag;
-  if (opt_size_z)      opt_flag = "-Oz";
-  else if (opt_size)   opt_flag = "-Os";
-  else if (opt_int == 3) opt_flag = "-O3";
-  else if (opt_int == 2) opt_flag = "-O2";
-  else if (opt_int == 1) opt_flag = "-O1";
-  else                   opt_flag = "-O0";
+  if (opt_size_z)
+    opt_flag = "-Oz";
+  else if (opt_size)
+    opt_flag = "-Os";
+  else if (opt_int == 3)
+    opt_flag = "-O3";
+  else if (opt_int == 2)
+    opt_flag = "-O2";
+  else if (opt_int == 1)
+    opt_flag = "-O1";
+  else
+    opt_flag = "-O0";
 
   // Warn if not a .cll file
-  if (src_path.size() < 4 ||
-      src_path.compare(src_path.size() - 4, 4, ".cll") != 0)
+  if (src_path.size() < 4 || src_path.compare(src_path.size() - 4, 4, ".cll") != 0)
   {
-    std::cerr << "[WARNING] Source file does not have a .cll extension: "
-              << src_path << "\n";
+    std::cerr << "[WARNING] Source file does not have a .cll extension: " << src_path << "\n";
   }
 
   // Derive default output path from source stem
@@ -538,8 +568,7 @@ int main(int argc, char **argv)
     tgt = make_target(target_triple);
     if (!tgt)
     {
-      std::cerr << "[ERROR] Could not create target for: " << target_triple
-                << "\n";
+      std::cerr << "[ERROR] Could not create target for: " << target_triple << "\n";
       for (auto *n : resolved.owned)
         delete n;
       return 1;
@@ -593,12 +622,18 @@ int main(int argc, char **argv)
   // We always run at least -O0 (which still canonicalizes the IR).
   {
     std::string pipeline;
-    if (opt_size_z)      pipeline = "default<Oz>";
-    else if (opt_size)   pipeline = "default<Os>";
-    else if (opt_int == 3) pipeline = "default<O3>";
-    else if (opt_int == 2) pipeline = "default<O2>";
-    else if (opt_int == 1) pipeline = "default<O1>";
-    else                   pipeline = "default<O0>";
+    if (opt_size_z)
+      pipeline = "default<Oz>";
+    else if (opt_size)
+      pipeline = "default<Os>";
+    else if (opt_int == 3)
+      pipeline = "default<O3>";
+    else if (opt_int == 2)
+      pipeline = "default<O2>";
+    else if (opt_int == 1)
+      pipeline = "default<O1>";
+    else
+      pipeline = "default<O0>";
 
     // Build a temporary TM just for the pass manager
     // (needed for target-specific passes like loop-vectorizer cost models)
@@ -620,8 +655,7 @@ int main(int argc, char **argv)
   char *err_msg = nullptr;
   if (LLVMVerifyModule(mod->mod, LLVMReturnStatusAction, &err_msg) != 0)
   {
-    std::cerr << "[IR VERIFY ERROR] " << (err_msg ? err_msg : "unknown")
-              << "\n";
+    std::cerr << "[IR VERIFY ERROR] " << (err_msg ? err_msg : "unknown") << "\n";
     LLVMDisposeMessage(err_msg);
     ez_free(mod);
     ez_target_free(tgt);
@@ -641,9 +675,8 @@ int main(int argc, char **argv)
   // invocation; the bitcode cache speeds up *cross-invocation* std loading by
   // pre-compiling std into a linkable .bc file that the linker can consume.
   {
-    std::string std_path = loader.std_cll_override.empty()
-                            ? loader.resolve_module_name("std")
-                            : loader.std_cll_override;
+    std::string std_path = loader.std_cll_override.empty() ? loader.resolve_module_name("std")
+                                                           : loader.std_cll_override;
     if (!std_path.empty() && loader.is_loaded(std_path))
     {
       std::string bcp = ModuleLoader::bc_path_for(std_path);
@@ -708,11 +741,10 @@ int main(int argc, char **argv)
         lflags.push_back(f.c_str());
 
       rc = tgt ? ez_link_exe_for(tgt, objs.data(), (int)objs.size(),
-                                 lflags.empty() ? nullptr : lflags.data(),
-                                 (int)lflags.size(), out_path.c_str())
+                                 lflags.empty() ? nullptr : lflags.data(), (int)lflags.size(),
+                                 out_path.c_str())
                : ez_link_exe(objs.data(), (int)objs.size(), out_path.c_str(),
-                             lflags.empty() ? nullptr : lflags.data(),
-                             (int)lflags.size());
+                             lflags.empty() ? nullptr : lflags.data(), (int)lflags.size());
     }
     std::remove(tmp_obj.c_str());
   }

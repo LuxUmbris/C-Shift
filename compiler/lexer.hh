@@ -53,27 +53,20 @@ private:
 
   // Operators sorted by length (Maximal Munch)
   std::vector<std::pair<std::string, TokenType>> operator_lookup = {
-      {"<<=", TokenType::OPERATOR}, {">>=", TokenType::OPERATOR},
-      {"**=", TokenType::OPERATOR}, {"[:]", TokenType::OPERATOR},
-      {"...", TokenType::OPERATOR}, {"->", TokenType::OPERATOR},
-      {"::", TokenType::OPERATOR},  {"==", TokenType::OPERATOR},
-      {"!=", TokenType::OPERATOR},  {"<=", TokenType::OPERATOR},
-      {">=", TokenType::OPERATOR},  {"&&", TokenType::OPERATOR},
-      {"||", TokenType::OPERATOR},  {"+=", TokenType::OPERATOR},
-      {"-=", TokenType::OPERATOR},  {"*=", TokenType::OPERATOR},
-      {"/=", TokenType::OPERATOR},  {"%=", TokenType::OPERATOR},
-      {"<<", TokenType::OPERATOR},  {">>", TokenType::OPERATOR},
-      {"{", TokenType::OPERATOR},   {"}", TokenType::OPERATOR},
-      {"(", TokenType::OPERATOR},   {")", TokenType::OPERATOR},
-      {"[", TokenType::OPERATOR},   {"]", TokenType::OPERATOR},
-      {"+", TokenType::OPERATOR},   {"-", TokenType::OPERATOR},
-      {"*", TokenType::OPERATOR},   {"/", TokenType::OPERATOR},
-      {"%", TokenType::OPERATOR},   {"=", TokenType::OPERATOR},
-      {"<", TokenType::OPERATOR},   {">", TokenType::OPERATOR},
-      {";", TokenType::OPERATOR},   {":", TokenType::OPERATOR},
-      {"&", TokenType::OPERATOR},   {"!", TokenType::OPERATOR},
-      {",", TokenType::OPERATOR},   {"?", TokenType::OPERATOR},
-      {".", TokenType::OPERATOR}};
+      {"<<=", TokenType::OPERATOR}, {">>=", TokenType::OPERATOR}, {"**=", TokenType::OPERATOR},
+      {"[:]", TokenType::OPERATOR}, {"...", TokenType::OPERATOR}, {"->", TokenType::OPERATOR},
+      {"::", TokenType::OPERATOR},  {"==", TokenType::OPERATOR},  {"!=", TokenType::OPERATOR},
+      {"<=", TokenType::OPERATOR},  {">=", TokenType::OPERATOR},  {"&&", TokenType::OPERATOR},
+      {"||", TokenType::OPERATOR},  {"+=", TokenType::OPERATOR},  {"-=", TokenType::OPERATOR},
+      {"*=", TokenType::OPERATOR},  {"/=", TokenType::OPERATOR},  {"%=", TokenType::OPERATOR},
+      {"<<", TokenType::OPERATOR},  {">>", TokenType::OPERATOR},  {"{", TokenType::OPERATOR},
+      {"}", TokenType::OPERATOR},   {"(", TokenType::OPERATOR},   {")", TokenType::OPERATOR},
+      {"[", TokenType::OPERATOR},   {"]", TokenType::OPERATOR},   {"+", TokenType::OPERATOR},
+      {"-", TokenType::OPERATOR},   {"*", TokenType::OPERATOR},   {"/", TokenType::OPERATOR},
+      {"%", TokenType::OPERATOR},   {"=", TokenType::OPERATOR},   {"<", TokenType::OPERATOR},
+      {">", TokenType::OPERATOR},   {";", TokenType::OPERATOR},   {":", TokenType::OPERATOR},
+      {"&", TokenType::OPERATOR},   {"!", TokenType::OPERATOR},   {",", TokenType::OPERATOR},
+      {"?", TokenType::OPERATOR},   {".", TokenType::OPERATOR}};
 
   std::string src;
   size_t pos = 0;
@@ -184,8 +177,7 @@ public:
         continue;
       }
 
-      std::cerr << "[ERROR] Line " << line << ": Unknown symbol '" << current
-                << "'\n";
+      std::cerr << "[ERROR] Line " << line << ": Unknown symbol '" << current << "'\n";
       advance();
     }
     tokens.push_back({TokenType::END_OF_FILE, "", line});

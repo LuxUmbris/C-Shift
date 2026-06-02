@@ -54,10 +54,9 @@ class Codegen
   // Loop/Switch context for break/continue
   struct LoopContext
   {
-    EzBlock *loop_end; // where break jumps to
-    EzBlock
-        *loop_cond; // where continue jumps to (nullptr for do-while semantics)
-    bool is_switch; // true if this is a switch, false if loop
+    EzBlock *loop_end;  // where break jumps to
+    EzBlock *loop_cond; // where continue jumps to (nullptr for do-while semantics)
+    bool is_switch;     // true if this is a switch, false if loop
   };
   std::vector<LoopContext> loop_stack;
 
@@ -110,8 +109,7 @@ class Codegen
   // name → declared C<< type string (for struct GEP resolution)
   std::unordered_map<std::string, std::string> var_type_map;
 
-  void declare_var(const std::string &name, EzVal alloca_ptr,
-                   const std::string &type_s = "")
+  void declare_var(const std::string &name, EzVal alloca_ptr, const std::string &type_s = "")
   {
     if (!var_scopes.empty())
     {
@@ -199,14 +197,8 @@ class Codegen
     return elem;
   }
 
-  bool is_float_type(const std::string &t)
-  {
-    return t == "float32" || t == "float64";
-  }
-  bool is_unsigned_type(const std::string &t)
-  {
-    return t.substr(0, 4) == "uint";
-  }
+  bool is_float_type(const std::string &t) { return t == "float32" || t == "float64"; }
+  bool is_unsigned_type(const std::string &t) { return t.substr(0, 4) == "uint"; }
 
   // ── Entry-point alloca builder for the first block ────────────────────────
   // We position the builder at the very start of the entry block for allocas.
@@ -312,8 +304,7 @@ private:
     std::string ret_s = n->value.substr(0, sp);
     std::string fname = n->value.substr(sp + 1);
 
-    EzType ret =
-        (ret_s == "voided" || ret_s == "void") ? ez_void() : cshift_type(ret_s);
+    EzType ret = (ret_s == "voided" || ret_s == "void") ? ez_void() : cshift_type(ret_s);
 
     std::vector<EzType> params;
     bool vararg = false;
@@ -332,8 +323,8 @@ private:
       }
     }
 
-    EzFunc *f = ez_extern(mod, fname.c_str(), ret, params.data(),
-                          (unsigned)params.size(), vararg ? 1 : 0);
+    EzFunc *f =
+        ez_extern(mod, fname.c_str(), ret, params.data(), (unsigned)params.size(), vararg ? 1 : 0);
     func_map[fname] = f;
   }
 
@@ -368,8 +359,7 @@ private:
       pnames.push_back("__tunnel_" + tp.name);
     }
 
-    EzFunc *f = ez_func(mod, name.c_str(), ret, params.data(),
-                        (unsigned)params.size(), 0);
+    EzFunc *f = ez_func(mod, name.c_str(), ret, params.data(), (unsigned)params.size(), 0);
     for (unsigned i = 0; i < pnames.size(); ++i)
       ez_set_param_name(f, i, pnames[i].c_str());
     func_map[name] = f;
@@ -466,8 +456,7 @@ private:
         // The param is already a pointer to the caller's slot
         EzVal caller_ptr = ez_param(f, param_idx++);
         // Store the param ptr itself into a local alloca so lookup_var works
-        EzVal ptr_slot =
-            alloca_in_entry(f, ez_ptr(), ("__tptr_" + tp.name).c_str());
+        EzVal ptr_slot = alloca_in_entry(f, ez_ptr(), ("__tptr_" + tp.name).c_str());
         ez_store(mod, caller_ptr, ptr_slot);
         tunnel_slots[tp.name] = ptr_slot; // slot holding the ptr
         declare_var(tp.name, ptr_slot, tp.type);
@@ -480,8 +469,7 @@ private:
 
     // implicit void return — guarded against double terminator
     EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
-    if (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind &&
-        !current_block_has_terminator())
+    if (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind && !current_block_has_terminator())
       ez_ret_void(mod);
 
     current_func = nullptr;
@@ -573,33 +561,20 @@ private:
   //   arr_data  : ptr  (T*)
   //   arr_len   : i64
   //   arr_cap   : i64
-  EzVal get_arena_len_ptr(const std::string &name)
-  {
-    return lookup_var(name + "__len");
-  }
-  EzVal get_arena_cap_ptr(const std::string &name)
-  {
-    return lookup_var(name + "__cap");
-  }
-  EzVal get_arena_data_ptr(const std::string &name)
-  {
-    return lookup_var(name + "__data");
-  }
+  EzVal get_arena_len_ptr(const std::string &name) { return lookup_var(name + "__len"); }
+  EzVal get_arena_cap_ptr(const std::string &name) { return lookup_var(name + "__cap"); }
+  EzVal get_arena_data_ptr(const std::string &name) { return lookup_var(name + "__data"); }
 
-  void emit_arena_array_declaration(const std::string &name,
-                                    const std::string &elem_type_s)
+  void emit_arena_array_declaration(const std::string &name, const std::string &elem_type_s)
   {
     ensure_alloc_fns();
     arena_array_elem_type[name] = elem_type_s;
     EzType i64 = ez_i64();
 
     // Allocate len, cap, data slots
-    EzVal len_slot =
-        alloca_in_entry(current_func, i64, (name + "__len").c_str());
-    EzVal cap_slot =
-        alloca_in_entry(current_func, i64, (name + "__cap").c_str());
-    EzVal data_slot =
-        alloca_in_entry(current_func, ez_ptr(), (name + "__data").c_str());
+    EzVal len_slot = alloca_in_entry(current_func, i64, (name + "__len").c_str());
+    EzVal cap_slot = alloca_in_entry(current_func, i64, (name + "__cap").c_str());
+    EzVal data_slot = alloca_in_entry(current_func, ez_ptr(), (name + "__data").c_str());
 
     ez_store(mod, ez_const_int(i64, 0), len_slot);
     ez_store(mod, ez_const_int(i64, 0), cap_slot);
@@ -630,8 +605,7 @@ private:
     EzType elem_ty = cshift_type(elem_s);
     EzType i64 = ez_i64();
 
-    EzVal val = emit_expression_val(
-        n->children.empty() ? nullptr : n->children[0], elem_s);
+    EzVal val = emit_expression_val(n->children.empty() ? nullptr : n->children[0], elem_s);
     if (!val)
       return;
 
@@ -650,13 +624,11 @@ private:
     current_block = grow_b;
     ez_use(grow_b);
     EzVal cap_zero = ez_eq(mod, cap, ez_const_int(i64, 0), "cap_zero");
-    EzVal new_cap = LLVMBuildSelect(
-        mod->builder, cap_zero, ez_const_int(i64, 8),
-        ez_mul(mod, cap, ez_const_int(i64, 2), "cap2"), "new_cap");
+    EzVal new_cap = LLVMBuildSelect(mod->builder, cap_zero, ez_const_int(i64, 8),
+                                    ez_mul(mod, cap, ez_const_int(i64, 2), "cap2"), "new_cap");
     ez_store(mod, new_cap, cap_ptr);
     // elem size via LLVM
-    unsigned elem_bits =
-        LLVMSizeOfTypeInBits(LLVMGetModuleDataLayout(mod->mod), elem_ty);
+    unsigned elem_bits = LLVMSizeOfTypeInBits(LLVMGetModuleDataLayout(mod->mod), elem_ty);
     EzVal elem_size = ez_const_int(i64, elem_bits / 8);
     EzVal new_bytes = ez_mul(mod, new_cap, elem_size, "new_bytes");
     EzVal old_data = ez_load(mod, ez_ptr(), data_ptr, "old_data");
@@ -731,10 +703,8 @@ private:
       if (n->children.size() > start)
       {
         auto *init_expr = n->children[start];
-        if (init_expr->type == "Expression" &&
-            init_expr->children.size() >= 2 &&
-            init_expr->children[0]->token_type ==
-                Lexer::TokenType::IDENTIFIER &&
+        if (init_expr->type == "Expression" && init_expr->children.size() >= 2 &&
+            init_expr->children[0]->token_type == Lexer::TokenType::IDENTIFIER &&
             init_expr->children[1]->value == "(")
         {
           std::string call_fname = init_expr->children[0]->value;
@@ -753,26 +723,21 @@ private:
           }
           else
           {
-            fprintf(
-                stderr,
-                "[ERROR] reserve without type: '%s' has no tunnel outputs.\n",
-                call_fname.c_str());
+            fprintf(stderr, "[ERROR] reserve without type: '%s' has no tunnel outputs.\n",
+                    call_fname.c_str());
             return;
           }
         }
         else
         {
-          fprintf(
-              stderr,
-              "[ERROR] reserve without type requires an initializer that is "
-              "a single function call.\n");
+          fprintf(stderr, "[ERROR] reserve without type requires an initializer that is "
+                          "a single function call.\n");
           return;
         }
       }
       else
       {
-        fprintf(stderr,
-                "[ERROR] reserve without type requires an initializer.\n");
+        fprintf(stderr, "[ERROR] reserve without type requires an initializer.\n");
         return;
       }
     }
@@ -796,10 +761,9 @@ private:
       // it. If the call is to a void (tunnel-based) C<< function, the call
       // itself writes the tunnel slot we just declared above — nothing to
       // store.
-      bool is_call =
-          (init_expr->type == "Expression" && init_expr->children.size() >= 2 &&
-           init_expr->children[0]->token_type == Lexer::TokenType::IDENTIFIER &&
-           init_expr->children[1]->value == "(");
+      bool is_call = (init_expr->type == "Expression" && init_expr->children.size() >= 2 &&
+                      init_expr->children[0]->token_type == Lexer::TokenType::IDENTIFIER &&
+                      init_expr->children[1]->value == "(");
       if (is_call)
       {
         // For C<< tunnel functions, pre-register this slot under every
@@ -879,8 +843,7 @@ private:
     if (!ptr)
       return;
 
-    EzVal rhs = emit_expression_val(
-        n->children.empty() ? nullptr : n->children[0], load_type);
+    EzVal rhs = emit_expression_val(n->children.empty() ? nullptr : n->children[0], load_type);
     if (!rhs)
       return;
 
@@ -895,14 +858,14 @@ private:
       EzVal lhs = ez_load(mod, ty, ptr, "lhs");
       EzVal result = nullptr;
       if (op == "+=")
-        result = is_float_type(load_type) ? ez_fadd(mod, lhs, rhs, "add")
-                                          : ez_add(mod, lhs, rhs, "add");
+        result =
+            is_float_type(load_type) ? ez_fadd(mod, lhs, rhs, "add") : ez_add(mod, lhs, rhs, "add");
       else if (op == "-=")
-        result = is_float_type(load_type) ? ez_fsub(mod, lhs, rhs, "sub")
-                                          : ez_sub(mod, lhs, rhs, "sub");
+        result =
+            is_float_type(load_type) ? ez_fsub(mod, lhs, rhs, "sub") : ez_sub(mod, lhs, rhs, "sub");
       else if (op == "*=")
-        result = is_float_type(load_type) ? ez_fmul(mod, lhs, rhs, "mul")
-                                          : ez_mul(mod, lhs, rhs, "mul");
+        result =
+            is_float_type(load_type) ? ez_fmul(mod, lhs, rhs, "mul") : ez_mul(mod, lhs, rhs, "mul");
       else if (op == "/=")
         result = is_float_type(load_type) ? ez_fdiv(mod, lhs, rhs, "div")
                                           : ez_sdiv(mod, lhs, rhs, "div");
@@ -915,10 +878,7 @@ private:
 
   // ── Call statement ────────────────────────────────────────────────────────
 
-  void emit_call_stmt(Parser::ASTNode *n)
-  {
-    emit_call_val(n, /*result_name=*/"");
-  }
+  void emit_call_stmt(Parser::ASTNode *n) { emit_call_val(n, /*result_name=*/""); }
 
   // FIX (Bug 3 – root cause): parse_expression() does not stop at commas, so
   // parse_call_statement puts ALL argument tokens into a single Expression node
@@ -927,8 +887,7 @@ private:
   //   Token(b) ] ]
   // We must split that flat token list on top-level commas ourselves.
   // Returns groups of token-node vectors, one per argument.
-  static std::vector<std::vector<Parser::ASTNode *>>
-  split_args_by_comma(Parser::ASTNode *args_node)
+  static std::vector<std::vector<Parser::ASTNode *>> split_args_by_comma(Parser::ASTNode *args_node)
   {
     std::vector<std::vector<Parser::ASTNode *>> groups;
     if (!args_node)
@@ -940,8 +899,7 @@ private:
     const std::vector<Parser::ASTNode *> *flat = nullptr;
     std::vector<Parser::ASTNode *> tmp;
 
-    if (args_node->children.size() == 1 &&
-        args_node->children[0]->type == "Expression")
+    if (args_node->children.size() == 1 && args_node->children[0]->type == "Expression")
     {
       // Standard path: one Expression containing all tokens+commas
       flat = &args_node->children[0]->children;
@@ -1030,8 +988,7 @@ private:
       // is emitted rather than silently dropped.  The checker already
       // warned about this; here we make it link-time rather than
       // compile-time-silent.
-      EzFunc *f_auto =
-          ez_extern(mod, fname.c_str(), ez_void(), nullptr, 0, /*vararg=*/1);
+      EzFunc *f_auto = ez_extern(mod, fname.c_str(), ez_void(), nullptr, 0, /*vararg=*/1);
       func_map[fname] = f_auto;
       it = func_map.find(fname);
     }
@@ -1049,8 +1006,7 @@ private:
 
       // Only use the declared non-tunnel param types for hints
       auto tit = func_tunnels.find(fname);
-      unsigned n_tunnels =
-          tit != func_tunnels.end() ? (unsigned)tit->second.size() : 0;
+      unsigned n_tunnels = tit != func_tunnels.end() ? (unsigned)tit->second.size() : 0;
       EzType fn_type = LLVMGlobalGetValueType(f->fn);
       unsigned total_params = LLVMCountParamTypes(fn_type);
       unsigned regular_params = total_params - n_tunnels;
@@ -1090,8 +1046,7 @@ private:
 
     EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
     bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
-    return ez_call(mod, f, args.data(), (unsigned)args.size(),
-                   is_void ? "" : result_name.c_str());
+    return ez_call(mod, f, args.data(), (unsigned)args.size(), is_void ? "" : result_name.c_str());
   }
 
   // ── Tunnel ────────────────────────────────────────────────────────────────
@@ -1224,8 +1179,7 @@ private:
 
     current_block = cond_b;
     ez_use(cond_b);
-    EzVal cond = (n->children.size() > 0) ? emit_condition(n->children[0])
-                                          : ez_const_bool(1);
+    EzVal cond = (n->children.size() > 0) ? emit_condition(n->children[0]) : ez_const_bool(1);
     ez_cond_br(mod, cond, body_b, end_b);
 
     loop_stack.push_back({end_b, cond_b, false});
@@ -1258,8 +1212,7 @@ private:
 
     current_block = cond_b;
     ez_use(cond_b);
-    EzVal cond = (n->children.size() > 1) ? emit_condition(n->children[1])
-                                          : ez_const_bool(1);
+    EzVal cond = (n->children.size() > 1) ? emit_condition(n->children[1]) : ez_const_bool(1);
     ez_cond_br(mod, cond, body_b, end_b);
 
     loop_stack.push_back({end_b, incr_b, false});
@@ -1289,10 +1242,8 @@ private:
       return;
 
     auto sp = n->value.find(' ');
-    std::string item_type =
-        (sp != std::string::npos) ? n->value.substr(0, sp) : "int32";
-    std::string item_name =
-        (sp != std::string::npos) ? n->value.substr(sp + 1) : n->value;
+    std::string item_type = (sp != std::string::npos) ? n->value.substr(0, sp) : "int32";
+    std::string item_name = (sp != std::string::npos) ? n->value.substr(sp + 1) : n->value;
 
     EzVal collection = emit_expression_val(n->children[0], item_type + "*");
     if (!collection)
@@ -1335,8 +1286,7 @@ private:
     // Guard against double terminator (break already added one)
     if (!current_block_has_terminator())
     {
-      EzVal idx_next =
-          ez_add(mod, idx_val, ez_const_int(i32_ty, 1), "idx.next");
+      EzVal idx_next = ez_add(mod, idx_val, ez_const_int(i32_ty, 1), "idx.next");
       ez_store(mod, idx_next, idx_slot);
       ez_br(mod, cond_b);
     }
@@ -1370,14 +1320,12 @@ private:
     // Build case blocks
     std::vector<EzBlock *> case_blocks;
     for (auto *c : cases)
-      case_blocks.push_back(
-          ez_block(current_func, ("sw.case." + c->value).c_str()));
-    EzBlock *default_b =
-        default_node ? ez_block(current_func, "sw.default") : end_b;
+      case_blocks.push_back(ez_block(current_func, ("sw.case." + c->value).c_str()));
+    EzBlock *default_b = default_node ? ez_block(current_func, "sw.default") : end_b;
 
     // LLVM switch instruction
-    LLVMValueRef sw = LLVMBuildSwitch(mod->builder, switched, default_b->bb,
-                                      (unsigned)cases.size());
+    LLVMValueRef sw =
+        LLVMBuildSwitch(mod->builder, switched, default_b->bb, (unsigned)cases.size());
     for (size_t i = 0; i < cases.size(); ++i)
     {
       const std::string &val_s = cases[i]->value;
@@ -1397,8 +1345,7 @@ private:
         {
         }
       }
-      LLVMAddCase(sw, LLVMConstInt(ez_i32(), (unsigned long long)ival, 1),
-                  case_blocks[i]->bb);
+      LLVMAddCase(sw, LLVMConstInt(ez_i32(), (unsigned long long)ival, 1), case_blocks[i]->bb);
     }
 
     // Push switch context for break handling
@@ -1457,8 +1404,7 @@ private:
     if (!v)
       return ez_const_bool(0);
     EzType ty = LLVMTypeOf(v);
-    if (LLVMGetTypeKind(ty) == LLVMIntegerTypeKind &&
-        LLVMGetIntTypeWidth(ty) == 1)
+    if (LLVMGetTypeKind(ty) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(ty) == 1)
       return v;
     // Compare != 0
     return ez_ne(mod, v, LLVMConstInt(ty, 0, 0), "tobool");
@@ -1471,23 +1417,20 @@ private:
   // We handle:  literals, identifiers (load), unary -, binary ops, function
   // calls. This is a simple left-to-right evaluator for the flat expression
   // AST.
-  EzVal eval_expr_children(const std::vector<Parser::ASTNode *> &tokens,
-                           const std::string &hint)
+  EzVal eval_expr_children(const std::vector<Parser::ASTNode *> &tokens, const std::string &hint)
   {
     if (tokens.empty())
       return nullptr;
 
     // Handle 'move VAR' — just load the variable value; voiding is static
-    if (tokens.size() == 2 && tokens[0]->value == "move" &&
-        tokens[1]->type == "Token")
+    if (tokens.size() == 2 && tokens[0]->value == "move" && tokens[1]->type == "Token")
     {
       return eval_token(tokens[1], hint);
     }
 
     // Detect function call: IDENT ( args... )
     if (tokens.size() >= 3 && tokens[0]->type == "Token" &&
-        tokens[0]->token_type == Lexer::TokenType::IDENTIFIER &&
-        tokens[1]->value == "(")
+        tokens[0]->token_type == Lexer::TokenType::IDENTIFIER && tokens[1]->value == "(")
     {
       return eval_call_expr(tokens, hint);
     }
@@ -1502,8 +1445,7 @@ private:
       EzVal v = eval_token(tokens[1], hint);
       if (!v)
         return nullptr;
-      return is_float_type(hint) ? ez_fneg(mod, v, "neg")
-                                 : ez_neg(mod, v, "neg");
+      return is_float_type(hint) ? ez_fneg(mod, v, "neg") : ez_neg(mod, v, "neg");
     }
 
     // Binary expression: lhs op rhs
@@ -1511,10 +1453,8 @@ private:
     int op_idx = find_binary_op(tokens);
     if (op_idx > 0)
     {
-      std::vector<Parser::ASTNode *> lhs_tokens(tokens.begin(),
-                                                tokens.begin() + op_idx);
-      std::vector<Parser::ASTNode *> rhs_tokens(tokens.begin() + op_idx + 1,
-                                                tokens.end());
+      std::vector<Parser::ASTNode *> lhs_tokens(tokens.begin(), tokens.begin() + op_idx);
+      std::vector<Parser::ASTNode *> rhs_tokens(tokens.begin() + op_idx + 1, tokens.end());
       EzVal lhs = eval_expr_children(lhs_tokens, hint);
       EzVal rhs = eval_expr_children(rhs_tokens, hint);
       if (!lhs || !rhs)
@@ -1525,14 +1465,12 @@ private:
     // Strip outer parens
     if (tokens.front()->value == "(" && tokens.back()->value == ")")
     {
-      std::vector<Parser::ASTNode *> inner(tokens.begin() + 1,
-                                           tokens.end() - 1);
+      std::vector<Parser::ASTNode *> inner(tokens.begin() + 1, tokens.end() - 1);
       return eval_expr_children(inner, hint);
     }
 
     // Array index access: IDENT [ expr ]
-    if (tokens.size() >= 4 && tokens[0]->type == "Token" &&
-        tokens[1]->value == "[")
+    if (tokens.size() >= 4 && tokens[0]->type == "Token" && tokens[1]->value == "[")
     {
       std::string arr = tokens[0]->value;
       // Find matching ]
@@ -1544,8 +1482,7 @@ private:
         return nullptr;
       // Widen index to i64 if needed
       EzType idx_ty = LLVMTypeOf(idx);
-      if (LLVMGetTypeKind(idx_ty) == LLVMIntegerTypeKind &&
-          LLVMGetIntTypeWidth(idx_ty) < 64)
+      if (LLVMGetTypeKind(idx_ty) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(idx_ty) < 64)
         idx = LLVMBuildSExt(mod->builder, idx, ez_i64(), "idx64");
 
       // Check if it's an arena array
@@ -1596,8 +1533,7 @@ private:
   {
     // Precedence levels (lower number = lower precedence, split last)
     static const std::vector<std::vector<std::string>> prec = {
-        {"||"},     {"&&"},         {"==", "!="}, {"<", ">", "<=", ">="},
-        {"+", "-"}, {"*", "/", "%"}};
+        {"||"}, {"&&"}, {"==", "!="}, {"<", ">", "<=", ">="}, {"+", "-"}, {"*", "/", "%"}};
     int depth = 0;
     for (auto &level : prec)
     {
@@ -1620,8 +1556,7 @@ private:
     return -1;
   }
 
-  EzVal apply_binop(const std::string &op, EzVal lhs, EzVal rhs,
-                    const std::string &hint)
+  EzVal apply_binop(const std::string &op, EzVal lhs, EzVal rhs, const std::string &hint)
   {
     // derive signedness/floatness from the actual LLVM type of
     // lhs rather than the hint string, which may be empty or "bool" when
@@ -1639,8 +1574,7 @@ private:
       return fp ? ez_fmul(mod, lhs, rhs, "mul") : ez_mul(mod, lhs, rhs, "mul");
     if (op == "/")
       return fp ? ez_fdiv(mod, lhs, rhs, "div")
-                : (un ? ez_udiv(mod, lhs, rhs, "div")
-                      : ez_sdiv(mod, lhs, rhs, "div"));
+                : (un ? ez_udiv(mod, lhs, rhs, "div") : ez_sdiv(mod, lhs, rhs, "div"));
     if (op == "%")
       return un ? ez_urem(mod, lhs, rhs, "rem") : ez_srem(mod, lhs, rhs, "rem");
     if (op == "==")
@@ -1650,12 +1584,10 @@ private:
                 : ez_ne(mod, lhs, rhs, "ne");
     if (op == "<")
       return fp ? ez_flt(mod, lhs, rhs, "lt")
-                : (un ? ez_ult(mod, lhs, rhs, "lt")
-                      : ez_slt(mod, lhs, rhs, "lt"));
+                : (un ? ez_ult(mod, lhs, rhs, "lt") : ez_slt(mod, lhs, rhs, "lt"));
     if (op == ">")
       return fp ? ez_fgt(mod, lhs, rhs, "gt")
-                : (un ? ez_ugt(mod, lhs, rhs, "gt")
-                      : ez_sgt(mod, lhs, rhs, "gt"));
+                : (un ? ez_ugt(mod, lhs, rhs, "gt") : ez_sgt(mod, lhs, rhs, "gt"));
     if (op == "<=")
       return fp ? LLVMBuildFCmp(mod->builder, LLVMRealOLE, lhs, rhs, "le")
                 : ez_sle(mod, lhs, rhs, "le");
@@ -1670,16 +1602,14 @@ private:
   }
 
   // Evaluate a call expression: tokens = [name, "(", arg_exprs..., ")"]
-  EzVal eval_call_expr(const std::vector<Parser::ASTNode *> &tokens,
-                       const std::string &hint)
+  EzVal eval_call_expr(const std::vector<Parser::ASTNode *> &tokens, const std::string &hint)
   {
     (void)hint;
     std::string fname = tokens[0]->value;
     auto it = func_map.find(fname);
     if (it == func_map.end())
     {
-      EzFunc *f_auto =
-          ez_extern(mod, fname.c_str(), ez_void(), nullptr, 0, /*vararg=*/1);
+      EzFunc *f_auto = ez_extern(mod, fname.c_str(), ez_void(), nullptr, 0, /*vararg=*/1);
       func_map[fname] = f_auto;
       it = func_map.find(fname);
     }
@@ -1721,8 +1651,7 @@ private:
 
     // Only use the declared non-tunnel param types for hints
     auto tit2 = func_tunnels.find(fname);
-    unsigned n_tunnels2 =
-        tit2 != func_tunnels.end() ? (unsigned)tit2->second.size() : 0;
+    unsigned n_tunnels2 = tit2 != func_tunnels.end() ? (unsigned)tit2->second.size() : 0;
     EzType fn_type = LLVMGlobalGetValueType(f->fn);
     unsigned total_params = LLVMCountParamTypes(fn_type);
     unsigned regular_params = total_params - n_tunnels2;
@@ -1734,9 +1663,8 @@ private:
     for (auto &grp : arg_groups)
     {
       unsigned arg_idx = (unsigned)args.size();
-      std::string arg_hint = (arg_idx < regular_params)
-                                 ? hint_from_llvm_type(param_types[arg_idx])
-                                 : "";
+      std::string arg_hint =
+          (arg_idx < regular_params) ? hint_from_llvm_type(param_types[arg_idx]) : "";
       EzVal v = eval_expr_children(grp, arg_hint);
       if (v)
         args.push_back(v);
@@ -1760,8 +1688,7 @@ private:
 
     EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(f->fn));
     bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
-    EzVal call_result = ez_call(mod, f, args.data(), (unsigned)args.size(),
-                                is_void ? "" : "call");
+    EzVal call_result = ez_call(mod, f, args.data(), (unsigned)args.size(), is_void ? "" : "call");
 
     // If this is a single-tunnel function used as an expression value
     // (e.g. print(add(4, 8))), load the tunnel slot and return it.
@@ -1872,8 +1799,7 @@ private:
       if (!ptr)
         return nullptr;
       auto vit = var_type_map.find(v);
-      std::string real_type =
-          (vit != var_type_map.end()) ? vit->second : "int32";
+      std::string real_type = (vit != var_type_map.end()) ? vit->second : "int32";
       EzType ty = cshift_type(real_type);
       return ez_load(mod, ty, ptr, v.c_str());
     }
@@ -1882,8 +1808,7 @@ private:
 
   // ── Struct helpers ────────────────────────────────────────────────────────
 
-  EzVal gep_field(EzVal struct_ptr, const std::string &struct_var,
-                  const std::string &field)
+  EzVal gep_field(EzVal struct_ptr, const std::string &struct_var, const std::string &field)
   {
     // Resolve the struct type name from the variable's declared type.
     // This avoids false matches when multiple structs share a field name.
@@ -1894,8 +1819,7 @@ private:
       // Strip pointer/array decorators to get the base struct name
       struct_type_name = it->second;
       while (!struct_type_name.empty() &&
-             (struct_type_name.back() == '*' ||
-              struct_type_name.back() == ']' ||
+             (struct_type_name.back() == '*' || struct_type_name.back() == ']' ||
               struct_type_name.back() == ':' || struct_type_name.back() == '['))
         struct_type_name.pop_back();
     }
@@ -1912,10 +1836,8 @@ private:
         {
           if (layout.field_names[i] == field)
           {
-            EzVal idxs[2] = {ez_const_int(ez_i32(), 0),
-                             ez_const_int(ez_i32(), (long long)i)};
-            return ez_gep(mod, layout.llvm_type, struct_ptr, idxs, 2,
-                          field.c_str());
+            EzVal idxs[2] = {ez_const_int(ez_i32(), 0), ez_const_int(ez_i32(), (long long)i)};
+            return ez_gep(mod, layout.llvm_type, struct_ptr, idxs, 2, field.c_str());
           }
         }
       }
@@ -1927,10 +1849,8 @@ private:
       {
         if (layout.field_names[i] == field)
         {
-          EzVal idxs[2] = {ez_const_int(ez_i32(), 0),
-                           ez_const_int(ez_i32(), (long long)i)};
-          return ez_gep(mod, layout.llvm_type, struct_ptr, idxs, 2,
-                        field.c_str());
+          EzVal idxs[2] = {ez_const_int(ez_i32(), 0), ez_const_int(ez_i32(), (long long)i)};
+          return ez_gep(mod, layout.llvm_type, struct_ptr, idxs, 2, field.c_str());
         }
       }
     }
@@ -1946,8 +1866,7 @@ private:
     {
       struct_type_name = it->second;
       while (!struct_type_name.empty() &&
-             (struct_type_name.back() == '*' ||
-              struct_type_name.back() == ']' ||
+             (struct_type_name.back() == '*' || struct_type_name.back() == ']' ||
               struct_type_name.back() == ':' || struct_type_name.back() == '['))
         struct_type_name.pop_back();
     }

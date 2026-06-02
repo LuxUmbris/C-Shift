@@ -40,7 +40,7 @@ public:
   {
     std::string name;
     std::vector<std::pair<std::string, std::string>> params; // {type, name}
-    std::vector<TunnelInfo> tunnels; // all declared tunnels
+    std::vector<TunnelInfo> tunnels;                         // all declared tunnels
   };
 
   struct CheckError
@@ -87,13 +87,11 @@ private:
 
   void add_error(size_t line, const std::string &msg)
   {
-    errors.push_back(
-        {line, "[CHECKER ERROR] Line " + std::to_string(line) + ": " + msg});
+    errors.push_back({line, "[CHECKER ERROR] Line " + std::to_string(line) + ": " + msg});
   }
   void add_warning(size_t line, const std::string &msg)
   {
-    warnings.push_back(
-        {line, "[CHECKER WARNING] Line " + std::to_string(line) + ": " + msg});
+    warnings.push_back({line, "[CHECKER WARNING] Line " + std::to_string(line) + ": " + msg});
   }
 
   Symbol *lookup(const std::string &name)
@@ -117,10 +115,7 @@ private:
     scope[sym.name] = sym;
   }
 
-  bool is_pointer_type(const std::string &type)
-  {
-    return type.find('*') != std::string::npos;
-  }
+  bool is_pointer_type(const std::string &type) { return type.find('*') != std::string::npos; }
 
   std::string extract_base_type(const std::string &decl_value)
   {
@@ -156,8 +151,7 @@ private:
           {
             if (p->type == "Param")
             {
-              sig.params.push_back(
-                  {extract_base_type(p->value), extract_name(p->value)});
+              sig.params.push_back({extract_base_type(p->value), extract_name(p->value)});
             }
           }
         }
@@ -197,8 +191,7 @@ private:
           for (auto *p : n->children[0]->children)
           {
             if (p->type == "CParam")
-              sig.params.push_back(
-                  {extract_base_type(p->value), extract_name(p->value)});
+              sig.params.push_back({extract_base_type(p->value), extract_name(p->value)});
             // Variadic: no param entry needed
           }
         }
@@ -214,8 +207,7 @@ private:
     }
   }
 
-  void collect_tunnels_from_block(Parser::ASTNode *block,
-                                  std::vector<TunnelInfo> &out)
+  void collect_tunnels_from_block(Parser::ASTNode *block, std::vector<TunnelInfo> &out)
   {
     if (!block)
       return;
@@ -362,8 +354,7 @@ private:
         continue;
       std::string ftype = extract_base_type(field->value);
       if (!is_known_type(ftype))
-        add_warning(field->line, "Unknown field type '" + ftype +
-                                     "' in struct '" + n->value + "'");
+        add_warning(field->line, "Unknown field type '" + ftype + "' in struct '" + n->value + "'");
     }
   }
 
@@ -383,8 +374,7 @@ private:
       {
         std::string ptype = extract_base_type(p->value);
         std::string pname = extract_name(p->value);
-        declare({pname, ptype, arena_depth, false, is_pointer_type(ptype),
-                 false, false});
+        declare({pname, ptype, arena_depth, false, is_pointer_type(ptype), false, false});
       }
     }
     // Check body
@@ -413,10 +403,8 @@ private:
     std::string type = extract_base_type(n->value);
     std::string name = extract_name(n->value);
     if (!is_known_type(type))
-      add_warning(n->line,
-                  "Unknown type '" + type + "' for variable '" + name + "'");
-    declare(
-        {name, type, arena_depth, false, is_pointer_type(type), false, false});
+      add_warning(n->line, "Unknown type '" + type + "' for variable '" + name + "'");
+    declare({name, type, arena_depth, false, is_pointer_type(type), false, false});
     if (!n->children.empty())
     {
       auto *init = n->children[0];
@@ -424,13 +412,13 @@ private:
       if (init->type == "Expression" && init->children.size() == 1)
       {
         auto *tok = init->children[0];
-        if (tok->token_type == Lexer::TokenType::STRING && type != "string" &&
-            type != "char*" && !is_pointer_type(type))
-          add_error(n->line, "Type mismatch: string literal assigned to '" +
-                                 type + " " + name + "'");
+        if (tok->token_type == Lexer::TokenType::STRING && type != "string" && type != "char*" &&
+            !is_pointer_type(type))
+          add_error(n->line,
+                    "Type mismatch: string literal assigned to '" + type + " " + name + "'");
         if ((tok->token_type == Lexer::TokenType::NUMBER) && (type == "string"))
-          add_error(n->line, "Type mismatch: numeric literal assigned to '" +
-                                 type + " " + name + "'");
+          add_error(n->line,
+                    "Type mismatch: numeric literal assigned to '" + type + " " + name + "'");
       }
       check_expression(init);
     }
@@ -440,8 +428,7 @@ private:
   {
     std::string type = extract_base_type(n->value);
     std::string name = extract_name(n->value);
-    declare(
-        {name, type, arena_depth, false, is_pointer_type(type), true, false});
+    declare({name, type, arena_depth, false, is_pointer_type(type), true, false});
     if (!n->children.empty())
       check_expression(n->children[0]);
   }
@@ -459,8 +446,7 @@ private:
       child_start = 1;
     }
 
-    declare({name, type, arena_depth, false, is_pointer_type(type), false,
-             is_shared});
+    declare({name, type, arena_depth, false, is_pointer_type(type), false, is_shared});
 
     if (n->children.size() > child_start)
     {
@@ -471,8 +457,7 @@ private:
     }
   }
 
-  void check_reserve_init(Parser::ASTNode *reserve_node,
-                          const std::string &want_type,
+  void check_reserve_init(Parser::ASTNode *reserve_node, const std::string &want_type,
                           const std::string &want_name, Parser::ASTNode *expr)
   {
     if (!expr || expr->children.empty())
@@ -500,13 +485,12 @@ private:
       if (want_type == "__infer__")
       {
         if (sig.tunnels.empty())
-          add_error(reserve_node->line, "reserve without type: '" + func_name +
-                                            "' has no tunnel outputs.");
+          add_error(reserve_node->line,
+                    "reserve without type: '" + func_name + "' has no tunnel outputs.");
         else if (sig.tunnels.size() > 1)
-          add_error(
-              reserve_node->line,
-              "reserve without type: '" + func_name +
-                  "' has multiple tunnels — specify the type explicitly.");
+          add_error(reserve_node->line,
+                    "reserve without type: '" + func_name +
+                        "' has multiple tunnels — specify the type explicitly.");
         // single tunnel: OK
         check_expression(expr);
         return;
@@ -525,9 +509,8 @@ private:
           type_matches++;
       }
       if (!exact_match && type_matches == 0 && !sig.tunnels.empty())
-        add_error(reserve_node->line, "reserve: no tunnel of type '" +
-                                          want_type + "' found in function '" +
-                                          func_name + "'");
+        add_error(reserve_node->line, "reserve: no tunnel of type '" + want_type +
+                                          "' found in function '" + func_name + "'");
     }
 
     check_expression(expr);
@@ -551,16 +534,12 @@ private:
       // The target variable is declared by the caller or is an output param —
       // we just validate the type annotation is a known type and move on.
       if (!is_known_type(t_type))
-        add_error(n->line, "Tunnel: unknown type '" + t_type +
-                               "' for target '" + t_name + "'");
+        add_error(n->line, "Tunnel: unknown type '" + t_type + "' for target '" + t_name + "'");
       // VOP: warn if tunneling a pointer type out of a function
       if (is_pointer_type(t_type))
-        add_warning(
-            n->line,
-            "VOP Tunnel Law: tunneling pointer type '" + t_type +
-                "' out of function '" +
-                (current_func ? current_func->name : "?") +
-                "' — ensure the pointed-to arena outlives the call site");
+        add_warning(n->line, "VOP Tunnel Law: tunneling pointer type '" + t_type +
+                                 "' out of function '" + (current_func ? current_func->name : "?") +
+                                 "' — ensure the pointed-to arena outlives the call site");
       return;
     }
 
@@ -568,25 +547,22 @@ private:
     Symbol *sym = lookup(t_name);
     if (!sym)
     {
-      add_error(n->line, "Tunnel target '" + t_name +
-                             "' not declared in any reachable scope");
+      add_error(n->line, "Tunnel target '" + t_name + "' not declared in any reachable scope");
       return;
     }
     // Type must match exactly
     if (sym->type != t_type)
     {
-      add_error(n->line, "Tunnel type mismatch: '" + t_name +
-                             "' declared as '" + sym->type +
+      add_error(n->line, "Tunnel type mismatch: '" + t_name + "' declared as '" + sym->type +
                              "' but tunnel specifies '" + t_type + "'");
     }
     // VOP Tunnel Law: cannot tunnel pointers to arenas that will be destroyed
     if (is_pointer_type(t_type) && sym->depth < arena_depth)
     {
-      add_warning(n->line, "VOP Tunnel Law: tunneling pointer type '" + t_type +
-                               "' from depth " + std::to_string(arena_depth) +
-                               " to depth " + std::to_string(sym->depth) +
-                               " — ensure the referenced arena outlives '" +
-                               t_name + "'");
+      add_warning(n->line, "VOP Tunnel Law: tunneling pointer type '" + t_type + "' from depth " +
+                               std::to_string(arena_depth) + " to depth " +
+                               std::to_string(sym->depth) +
+                               " — ensure the referenced arena outlives '" + t_name + "'");
     }
   }
 
@@ -612,14 +588,12 @@ private:
     std::string var_name = n->value.substr(0, sp);
     // Handle field access: strip to base name
     auto dot = var_name.find('.');
-    std::string base_name =
-        (dot != std::string::npos) ? var_name.substr(0, dot) : var_name;
+    std::string base_name = (dot != std::string::npos) ? var_name.substr(0, dot) : var_name;
 
     Symbol *sym = lookup(base_name);
     if (!sym)
     {
-      add_error(n->line,
-                "Assignment to undeclared variable '" + base_name + "'");
+      add_error(n->line, "Assignment to undeclared variable '" + base_name + "'");
     }
     else
     {
@@ -630,8 +604,7 @@ private:
         add_error(n->line, "Assignment to const variable '" + base_name + "'");
       if (sym->is_shared)
         add_error(n->line,
-                  "Assignment to shared (read-only after init) variable '" +
-                      base_name + "'");
+                  "Assignment to shared (read-only after init) variable '" + base_name + "'");
     }
     for (auto *c : n->children)
       check_expression(c);
@@ -640,25 +613,22 @@ private:
   void check_call_statement(Parser::ASTNode *n)
   {
     if (!func_table.count(n->value))
-      add_warning(n->line, "Call to undeclared function '" + n->value +
-                               "' (may be external)");
+      add_warning(n->line, "Call to undeclared function '" + n->value + "' (may be external)");
     if (!n->children.empty())
       for (auto *a : n->children[0]->children)
       {
         // Handle 'move VAR' inside call arguments
-        if (a->type == "Expression" && a->children.size() == 2 &&
-            a->children[0]->value == "move" && a->children[1]->type == "Token")
+        if (a->type == "Expression" && a->children.size() == 2 && a->children[0]->value == "move" &&
+            a->children[1]->type == "Token")
         {
           const std::string &mname = a->children[1]->value;
           Symbol *sym = lookup(mname);
           if (!sym)
             add_error(n->line, "move: variable '" + mname + "' not declared");
           else if (sym->is_voided)
-            add_error(n->line,
-                      "move: variable '" + mname + "' is already voided");
+            add_error(n->line, "move: variable '" + mname + "' is already voided");
           else if (sym->is_const)
-            add_error(n->line,
-                      "move: cannot move const variable '" + mname + "'");
+            add_error(n->line, "move: cannot move const variable '" + mname + "'");
           if (sym)
             sym->is_voided = true;
         }
@@ -676,8 +646,7 @@ private:
     // Validate return type (void / C<< primitives are all fine; warn on
     // unknowns)
     if (!is_known_type(ret_type) && ret_type != "voided")
-      add_warning(n->line, "CImport '" + func_name +
-                               "': unknown return type '" + ret_type + "'");
+      add_warning(n->line, "CImport '" + func_name + "': unknown return type '" + ret_type + "'");
 
     // Validate each parameter type
     if (!n->children.empty() && n->children[0]->type == "CParams")
@@ -688,8 +657,7 @@ private:
           continue; // ... is always valid
         std::string ptype = extract_base_type(p->value);
         if (!is_known_type(ptype) && ptype != "voided")
-          add_warning(p->line, "CImport '" + func_name +
-                                   "': unknown param type '" + ptype + "'");
+          add_warning(p->line, "CImport '" + func_name + "': unknown param type '" + ptype + "'");
       }
     }
 
@@ -752,8 +720,7 @@ private:
     loop_depth++;
     std::string type = extract_base_type(n->value);
     std::string item = extract_name(n->value);
-    declare(
-        {item, type, arena_depth, false, is_pointer_type(type), false, false});
+    declare({item, type, arena_depth, false, is_pointer_type(type), false, false});
     if (!n->children.empty())
       check_expression(n->children[0]);
     if (n->children.size() > 1)
@@ -815,11 +782,11 @@ private:
     if (was_voided)
     {
       if (!has_valid_case)
-        add_warning(n->line, "switch on voided variable '" + switched_var +
-                                 "' without 'case valid'");
+        add_warning(n->line,
+                    "switch on voided variable '" + switched_var + "' without 'case valid'");
       if (!has_voided_case)
-        add_warning(n->line, "switch on voided variable '" + switched_var +
-                                 "' without 'case voided'");
+        add_warning(n->line,
+                    "switch on voided variable '" + switched_var + "' without 'case voided'");
     }
 
     // Check each case body
@@ -882,9 +849,8 @@ private:
       auto *sym = lookup(n->value);
       if (sym && sym->is_voided)
       {
-        add_error(n->line, "Use of voided variable '" + n->value +
-                               "' — guard with switch(" + n->value +
-                               ") { case valid / case voided }");
+        add_error(n->line, "Use of voided variable '" + n->value + "' — guard with switch(" +
+                               n->value + ") { case valid / case voided }");
       }
       // VOP Lifetime Law: pointer access
       if (sym && sym->is_pointer)
@@ -896,20 +862,17 @@ private:
       return;
     }
     // Handle 'move VAR' as an Expression node with two Token children
-    if (n->type == "Expression" && n->children.size() == 2 &&
-        n->children[0]->value == "move" && n->children[1]->type == "Token")
+    if (n->type == "Expression" && n->children.size() == 2 && n->children[0]->value == "move" &&
+        n->children[1]->type == "Token")
     {
       const std::string &mname = n->children[1]->value;
       Symbol *sym = lookup(mname);
       if (!sym)
-        add_error(n->children[1]->line,
-                  "move: variable '" + mname + "' not declared");
+        add_error(n->children[1]->line, "move: variable '" + mname + "' not declared");
       else if (sym->is_voided)
-        add_error(n->children[1]->line,
-                  "move: variable '" + mname + "' is already voided");
+        add_error(n->children[1]->line, "move: variable '" + mname + "' is already voided");
       else if (sym->is_const)
-        add_error(n->children[1]->line,
-                  "move: cannot move const variable '" + mname + "'");
+        add_error(n->children[1]->line, "move: cannot move const variable '" + mname + "'");
       if (sym)
         sym->is_voided = true;
       return;
@@ -919,21 +882,17 @@ private:
     {
       for (size_t i = 0; i + 1 < n->children.size(); ++i)
       {
-        if (n->children[i]->value == "move" &&
-            n->children[i + 1]->type == "Token" &&
+        if (n->children[i]->value == "move" && n->children[i + 1]->type == "Token" &&
             n->children[i + 1]->token_type == Lexer::TokenType::IDENTIFIER)
         {
           const std::string &mname = n->children[i + 1]->value;
           Symbol *sym = lookup(mname);
           if (!sym)
-            add_error(n->children[i]->line,
-                      "move: variable '" + mname + "' not declared");
+            add_error(n->children[i]->line, "move: variable '" + mname + "' not declared");
           else if (sym->is_voided)
-            add_error(n->children[i]->line,
-                      "move: variable '" + mname + "' is already voided");
+            add_error(n->children[i]->line, "move: variable '" + mname + "' is already voided");
           else if (sym->is_const)
-            add_error(n->children[i]->line,
-                      "move: cannot move const variable '" + mname + "'");
+            add_error(n->children[i]->line, "move: cannot move const variable '" + mname + "'");
           if (sym)
             sym->is_voided = true;
           ++i; // skip the variable token
@@ -1015,8 +974,7 @@ private:
       // Could track template functions separately if needed
       check_function(def);
     }
-    else if (def->type == "CImport" || def->type == "ModuleImport" ||
-             def->type == "Import")
+    else if (def->type == "CImport" || def->type == "ModuleImport" || def->type == "Import")
     {
       // template<typename T> import rettype fn(params); — treat as plain
       // CImport
@@ -1029,9 +987,7 @@ private:
     }
     else
     {
-      add_error(
-          n->line,
-          "Template can only precede struct, function, or import definitions");
+      add_error(n->line, "Template can only precede struct, function, or import definitions");
     }
   }
 
@@ -1042,8 +998,8 @@ private:
         "uint64", "float32", "float64", "char",  "bool",  "string", "void"};
     std::string base = t;
     // Strip pointer/array decorators
-    while (!base.empty() && (base.back() == '*' || base.back() == ']' ||
-                             base.back() == ':' || base.back() == '['))
+    while (!base.empty() &&
+           (base.back() == '*' || base.back() == ']' || base.back() == ':' || base.back() == '['))
       base.pop_back();
     // Strip generic type params: Vector<T> → Vector, Foo<A,B> → Foo
     auto lt = base.find('<');
@@ -1056,8 +1012,7 @@ private:
       return true;
     // Single-letter or short uppercase names are template type parameters (T,
     // K, V, etc.)
-    if (!base.empty() && base.size() <= 2 &&
-        std::isupper((unsigned char)base[0]) &&
+    if (!base.empty() && base.size() <= 2 && std::isupper((unsigned char)base[0]) &&
         (base.size() == 1 || std::isupper((unsigned char)base[1])))
       return true;
     if (struct_types.count(base))

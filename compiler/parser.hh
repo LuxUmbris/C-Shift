@@ -20,8 +20,7 @@ public:
     std::vector<ASTNode *> children;
     size_t line;
     size_t depth;
-    Lexer::TokenType token_type =
-        Lexer::TokenType::IDENTIFIER; // for Token nodes
+    Lexer::TokenType token_type = Lexer::TokenType::IDENTIFIER; // for Token nodes
 
     ASTNode(std::string t, std::string v, size_t l, size_t d)
         : type(std::move(t)), value(std::move(v)), line(l), depth(d)
@@ -64,19 +63,16 @@ private:
     return {Lexer::TokenType::END_OF_FILE, "", 0};
   }
 
-  Lexer::Token match_token(Lexer::TokenType expected,
-                           const std::string &expected_value = "")
+  Lexer::Token match_token(Lexer::TokenType expected, const std::string &expected_value = "")
   {
     Lexer::Token current = peek_token();
-    if (current.type == expected &&
-        (expected_value.empty() || current.value == expected_value))
+    if (current.type == expected && (expected_value.empty() || current.value == expected_value))
     {
       return advance_token();
     }
-    throw std::runtime_error(
-        "[SYNTAX ERROR] Line " + std::to_string(current.line) +
-        ": Unexpected token: '" + current.value + "', expected: '" +
-        (expected_value.empty() ? "<token>" : expected_value) + "'");
+    throw std::runtime_error("[SYNTAX ERROR] Line " + std::to_string(current.line) +
+                             ": Unexpected token: '" + current.value + "', expected: '" +
+                             (expected_value.empty() ? "<token>" : expected_value) + "'");
   }
 
   size_t current_line() { return peek_token().line; }
@@ -125,15 +121,13 @@ private:
       if (kw == "entry")
       {
         if (has_entry)
-          throw std::runtime_error(
-              "[SYNTAX ERROR] Multiple 'entry' definitions found");
+          throw std::runtime_error("[SYNTAX ERROR] Multiple 'entry' definitions found");
         has_entry = true;
         return parse_entry();
       }
       if (is_type_keyword(kw))
         return parse_declaration();
-      throw std::runtime_error("[SYNTAX ERROR] Line " +
-                               std::to_string(current_line()) +
+      throw std::runtime_error("[SYNTAX ERROR] Line " + std::to_string(current_line()) +
                                ": Unexpected keyword: " + kw);
     }
     if (peek_token().type == Lexer::TokenType::IDENTIFIER)
@@ -147,8 +141,7 @@ private:
              peek_token(la).value == "[:]")
         la++;
       // skip dot-field chains: p.x  or  p.x.y  etc.
-      while (peek_token(la).value == "." &&
-             peek_token(la + 1).type == Lexer::TokenType::IDENTIFIER)
+      while (peek_token(la).value == "." && peek_token(la + 1).type == Lexer::TokenType::IDENTIFIER)
         la += 2;
       if (peek_token(la).value == "(")
         return parse_call_statement();
@@ -188,8 +181,7 @@ private:
     ASTNode *block_node = new ASTNode("Block", "", ln, current_depth + 1);
     current_depth++;
 
-    while (peek_token().value != "}" &&
-           peek_token().type != Lexer::TokenType::END_OF_FILE)
+    while (peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
     {
       block_node->children.push_back(parse_top_level());
     }
@@ -227,13 +219,11 @@ private:
     match_token(Lexer::TokenType::OPERATOR, "(");
     ASTNode *params = new ASTNode("Parameters", "", ln, current_depth);
 
-    while (peek_token().value != ")" &&
-           peek_token().type != Lexer::TokenType::END_OF_FILE)
+    while (peek_token().value != ")" && peek_token().type != Lexer::TokenType::END_OF_FILE)
     {
       std::string type = parse_type_string();
       std::string name = match_token(Lexer::TokenType::IDENTIFIER).value;
-      params->children.push_back(
-          new ASTNode("Param", type + " " + name, ln, current_depth));
+      params->children.push_back(new ASTNode("Param", type + " " + name, ln, current_depth));
       if (peek_token().value == ",")
         advance_token();
     }
@@ -253,8 +243,7 @@ private:
     }
     else
     {
-      throw std::runtime_error("[SYNTAX ERROR] Line " +
-                               std::to_string(current_line()) +
+      throw std::runtime_error("[SYNTAX ERROR] Line " + std::to_string(current_line()) +
                                ": Expected type, got: " + peek_token().value);
     }
     // Generic type parameters: Foo<T>  Foo<T, U>  Foo<Bar<T>>
@@ -313,8 +302,7 @@ private:
       {
         // sized array
         std::string sz;
-        while (peek_token().value != "]" &&
-               peek_token().type != Lexer::TokenType::END_OF_FILE)
+        while (peek_token().value != "]" && peek_token().type != Lexer::TokenType::END_OF_FILE)
           sz += advance_token().value;
         match_token(Lexer::TokenType::OPERATOR, "]");
         type += "[" + sz + "]";
@@ -374,8 +362,7 @@ private:
         expr->children.push_back(make_token_node(advance_token()));
         continue;
       }
-      if (paren_depth == 0 && bracket_depth == 0 &&
-          (val == ";" || val == "}" || val == "->"))
+      if (paren_depth == 0 && bracket_depth == 0 && (val == ";" || val == "}" || val == "->"))
         break;
 
       expr->children.push_back(make_token_node(advance_token()));
@@ -399,8 +386,7 @@ private:
     ASTNode *node = new ASTNode("CallStatement", name, ln, current_depth);
     match_token(Lexer::TokenType::OPERATOR, "(");
     ASTNode *args = new ASTNode("Args", "", ln, current_depth);
-    while (peek_token().value != ")" &&
-           peek_token().type != Lexer::TokenType::END_OF_FILE)
+    while (peek_token().value != ")" && peek_token().type != Lexer::TokenType::END_OF_FILE)
     {
       args->children.push_back(parse_expression());
       if (peek_token().value == ",")
@@ -434,8 +420,7 @@ private:
       target += "." + advance_token().value;
     }
     std::string op = advance_token().value; // = or += etc.
-    ASTNode *node =
-        new ASTNode("Assignment", target + " " + op, ln, current_depth);
+    ASTNode *node = new ASTNode("Assignment", target + " " + op, ln, current_depth);
     node->children.push_back(parse_expression());
     match_token(Lexer::TokenType::OPERATOR, ";");
     return node;
@@ -448,8 +433,7 @@ private:
     ASTNode *node = new ASTNode("Tunnel", "", ln, current_depth);
 
     ASTNode *expr = new ASTNode("Expression", "", ln, current_depth);
-    while (peek_token().value != "->" &&
-           peek_token().type != Lexer::TokenType::END_OF_FILE)
+    while (peek_token().value != "->" && peek_token().type != Lexer::TokenType::END_OF_FILE)
     {
       expr->children.push_back(make_token_node(advance_token()));
     }
@@ -459,8 +443,8 @@ private:
 
     std::string target_type = parse_type_string();
     std::string target_name = match_token(Lexer::TokenType::IDENTIFIER).value;
-    node->children.push_back(new ASTNode(
-        "Target", target_type + " " + target_name, ln, current_depth));
+    node->children.push_back(
+        new ASTNode("Target", target_type + " " + target_name, ln, current_depth));
 
     match_token(Lexer::TokenType::OPERATOR, ";");
     return node;
@@ -476,8 +460,7 @@ private:
     {
       advance_token(); // consume <
       std::string header;
-      while (peek_token().value != ">" &&
-             peek_token().type != Lexer::TokenType::END_OF_FILE)
+      while (peek_token().value != ">" && peek_token().type != Lexer::TokenType::END_OF_FILE)
         header += advance_token().value;
       match_token(Lexer::TokenType::OPERATOR, ">");
       match_token(Lexer::TokenType::OPERATOR, ";");
@@ -491,8 +474,7 @@ private:
     {
       std::string module_path = advance_token().value;
       match_token(Lexer::TokenType::OPERATOR, ";");
-      if (module_path.size() > 2 &&
-          module_path.substr(module_path.size() - 2) == ".h")
+      if (module_path.size() > 2 && module_path.substr(module_path.size() - 2) == ".h")
         return new ASTNode("HeaderImport", module_path, ln, current_depth);
       return new ASTNode("Import", module_path, ln, current_depth);
     }
@@ -513,8 +495,7 @@ private:
       size_t la = 0;
       // first token must be a type (keyword or ident)
       auto t0 = peek_token(la);
-      if (t0.type == Lexer::TokenType::KEYWORD ||
-          t0.type == Lexer::TokenType::IDENTIFIER)
+      if (t0.type == Lexer::TokenType::KEYWORD || t0.type == Lexer::TokenType::IDENTIFIER)
       {
         la++;
         // skip generic type params: Foo<T>  Foo<T, U>  Foo<Bar<T>>
@@ -522,8 +503,7 @@ private:
         {
           la++;
           int depth = 1;
-          while (depth > 0 &&
-                 peek_token(la).type != Lexer::TokenType::END_OF_FILE)
+          while (depth > 0 && peek_token(la).type != Lexer::TokenType::END_OF_FILE)
           {
             if (peek_token(la).value == "<")
               depth++;
@@ -565,8 +545,7 @@ private:
       std::string ret_type = parse_type_string();
       std::string func_name = match_token(Lexer::TokenType::IDENTIFIER).value;
 
-      ASTNode *node =
-          new ASTNode("CImport", ret_type + " " + func_name, ln, current_depth);
+      ASTNode *node = new ASTNode("CImport", ret_type + " " + func_name, ln, current_depth);
       node->children.push_back(parse_c_import_params());
       match_token(Lexer::TokenType::OPERATOR, ";");
       return node;
@@ -610,8 +589,7 @@ private:
       if (peek_token().value == "...")
       {
         advance_token();
-        params->children.push_back(
-            new ASTNode("Variadic", "...", ln, current_depth));
+        params->children.push_back(new ASTNode("Variadic", "...", ln, current_depth));
         break;
       }
       std::string ptype = parse_type_string();
@@ -622,8 +600,7 @@ private:
           peek_token().type == Lexer::TokenType::KEYWORD)
         pname = advance_token().value;
       params->children.push_back(
-          new ASTNode("CParam", ptype + (pname.empty() ? "" : " " + pname), ln,
-                      current_depth));
+          new ASTNode("CParam", ptype + (pname.empty() ? "" : " " + pname), ln, current_depth));
       if (peek_token().value == ",")
       {
         advance_token();
@@ -659,8 +636,7 @@ private:
     match_token(Lexer::TokenType::OPERATOR, "{");
 
     ASTNode *struct_node = new ASTNode("Struct", name, ln, current_depth);
-    while (peek_token().value != "}" &&
-           peek_token().type != Lexer::TokenType::END_OF_FILE)
+    while (peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
     {
       std::string type = parse_type_string();
       std::string field_name = match_token(Lexer::TokenType::IDENTIFIER).value;
@@ -685,10 +661,8 @@ private:
     }
     match_token(Lexer::TokenType::OPERATOR, "{");
 
-    ASTNode *enum_node =
-        new ASTNode("Enum", name + ":" + backing, ln, current_depth);
-    while (peek_token().value != "}" &&
-           peek_token().type != Lexer::TokenType::END_OF_FILE)
+    ASTNode *enum_node = new ASTNode("Enum", name + ":" + backing, ln, current_depth);
+    while (peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
     {
       std::string val = match_token(Lexer::TokenType::IDENTIFIER).value;
       std::string explicit_val = "";
@@ -732,8 +706,7 @@ private:
     std::string type;
     std::string name;
     bool type_inferred = false;
-    if ((peek_token().type == Lexer::TokenType::IDENTIFIER) &&
-        (peek_token(1).value == "="))
+    if ((peek_token().type == Lexer::TokenType::IDENTIFIER) && (peek_token(1).value == "="))
     {
       // No explicit type — will be inferred from the tunnel in codegen
       type = "__infer__";
@@ -746,11 +719,9 @@ private:
       name = match_token(Lexer::TokenType::IDENTIFIER).value;
     }
 
-    ASTNode *node =
-        new ASTNode("Reserve", type + " " + name, ln, current_depth);
+    ASTNode *node = new ASTNode("Reserve", type + " " + name, ln, current_depth);
     if (is_shared)
-      node->children.push_back(
-          new ASTNode("Shared", "shared", ln, current_depth));
+      node->children.push_back(new ASTNode("Shared", "shared", ln, current_depth));
 
     if (peek_token().value == "=")
     {
@@ -797,8 +768,7 @@ private:
     size_t ln = current_line();
     std::string type = parse_type_string();
     std::string name = match_token(Lexer::TokenType::IDENTIFIER).value;
-    ASTNode *node =
-        new ASTNode("Declaration", type + " " + name, ln, current_depth);
+    ASTNode *node = new ASTNode("Declaration", type + " " + name, ln, current_depth);
 
     if (peek_token().value == "=")
     {
@@ -877,8 +847,7 @@ private:
     ASTNode *collection = parse_expression();
     match_token(Lexer::TokenType::OPERATOR, ")");
 
-    ASTNode *node =
-        new ASTNode("Foreach", type + " " + item, ln, current_depth);
+    ASTNode *node = new ASTNode("Foreach", type + " " + item, ln, current_depth);
     node->children.push_back(collection);
     node->children.push_back(parse_block());
     return node;
@@ -897,11 +866,9 @@ private:
     node->children.push_back(target);
 
     current_depth++;
-    while (peek_token().value != "}" &&
-           peek_token().type != Lexer::TokenType::END_OF_FILE)
+    while (peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
     {
-      if (peek_token().type == Lexer::TokenType::KEYWORD &&
-          peek_token().value == "case")
+      if (peek_token().type == Lexer::TokenType::KEYWORD && peek_token().value == "case")
       {
         size_t cln = current_line();
         advance_token();
@@ -909,24 +876,21 @@ private:
         match_token(Lexer::TokenType::OPERATOR, ":");
         ASTNode *case_node = new ASTNode("Case", case_val, cln, current_depth);
 
-        while (peek_token().value != "case" &&
-               peek_token().value != "default" && peek_token().value != "}" &&
-               peek_token().type != Lexer::TokenType::END_OF_FILE)
+        while (peek_token().value != "case" && peek_token().value != "default" &&
+               peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
         {
           case_node->children.push_back(parse_top_level());
         }
         node->children.push_back(case_node);
       }
-      else if (peek_token().type == Lexer::TokenType::KEYWORD &&
-               peek_token().value == "default")
+      else if (peek_token().type == Lexer::TokenType::KEYWORD && peek_token().value == "default")
       {
         size_t dln = current_line();
         advance_token();
         match_token(Lexer::TokenType::OPERATOR, ":");
         ASTNode *default_node = new ASTNode("Default", "", dln, current_depth);
 
-        while (peek_token().value != "}" &&
-               peek_token().type != Lexer::TokenType::END_OF_FILE)
+        while (peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
         {
           default_node->children.push_back(parse_top_level());
         }
@@ -936,8 +900,7 @@ private:
       {
         throw std::runtime_error(
             "[SYNTAX ERROR] Line " + std::to_string(current_line()) +
-            ": Expected 'case' or 'default' inside switch, got: " +
-            peek_token().value);
+            ": Expected 'case' or 'default' inside switch, got: " + peek_token().value);
       }
     }
     current_depth--;
@@ -973,14 +936,11 @@ private:
     ASTNode *params = new ASTNode("TemplateParams", "", ln, current_depth);
     while (peek_token().value != ">")
     {
-      if (peek_token().type == Lexer::TokenType::KEYWORD &&
-          peek_token().value == "typename")
+      if (peek_token().type == Lexer::TokenType::KEYWORD && peek_token().value == "typename")
       {
         advance_token();
-        std::string param_name =
-            match_token(Lexer::TokenType::IDENTIFIER).value;
-        params->children.push_back(
-            new ASTNode("TypeParam", param_name, ln, current_depth));
+        std::string param_name = match_token(Lexer::TokenType::IDENTIFIER).value;
+        params->children.push_back(new ASTNode("TypeParam", param_name, ln, current_depth));
 
         if (peek_token().value == ",")
         {
@@ -989,9 +949,8 @@ private:
       }
       else
       {
-        throw std::runtime_error(
-            "[SYNTAX ERROR] Line " + std::to_string(current_line()) +
-            ": Expected 'typename' in template parameters");
+        throw std::runtime_error("[SYNTAX ERROR] Line " + std::to_string(current_line()) +
+                                 ": Expected 'typename' in template parameters");
       }
     }
     match_token(Lexer::TokenType::OPERATOR, ">");
@@ -1024,16 +983,14 @@ private:
       }
       else
       {
-        throw std::runtime_error(
-            "[SYNTAX ERROR] Line " + std::to_string(current_line()) +
-            ": Template can only precede 'struct', 'def', or 'import'");
+        throw std::runtime_error("[SYNTAX ERROR] Line " + std::to_string(current_line()) +
+                                 ": Template can only precede 'struct', 'def', or 'import'");
       }
     }
     else
     {
-      throw std::runtime_error(
-          "[SYNTAX ERROR] Line " + std::to_string(current_line()) +
-          ": Expected 'struct', 'def', or 'import' after template");
+      throw std::runtime_error("[SYNTAX ERROR] Line " + std::to_string(current_line()) +
+                               ": Expected 'struct', 'def', or 'import' after template");
     }
 
     return template_node;

@@ -94,8 +94,7 @@ static inline std::string mod_dirname(const std::string &path)
 static inline std::string mod_stem(const std::string &path)
 {
   auto slash = path.find_last_of("/\\");
-  std::string base =
-      (slash == std::string::npos) ? path : path.substr(slash + 1);
+  std::string base = (slash == std::string::npos) ? path : path.substr(slash + 1);
   auto dot = base.rfind('.');
   return (dot == std::string::npos) ? base : base.substr(0, dot);
 }
@@ -191,13 +190,11 @@ public:
   // The path is resolved relative to `relative_to_dir`.
   // Returns a reference to the cached exports (valid for loader lifetime).
   // Throws std::runtime_error on parse failure.
-  const ModuleExports &load_file(const std::string &path,
-                                 const std::string &relative_to_dir)
+  const ModuleExports &load_file(const std::string &path, const std::string &relative_to_dir)
   {
     std::string resolved = resolve_file_path(path, relative_to_dir);
     if (resolved.empty())
-      throw std::runtime_error("[MODULE ERROR] Cannot find module file: '" +
-                               path + "'");
+      throw std::runtime_error("[MODULE ERROR] Cannot find module file: '" + path + "'");
     return load_canonical(resolved);
   }
 
@@ -206,8 +203,7 @@ public:
   {
     std::string path = resolve_module_name(module_name);
     if (path.empty())
-      throw std::runtime_error("[MODULE ERROR] Cannot find module '" +
-                               module_name +
+      throw std::runtime_error("[MODULE ERROR] Cannot find module '" + module_name +
                                "'.  Add its directory to the search path or "
                                "set CSHIFT_STD_PATH.");
     return load_canonical(path);
@@ -312,8 +308,7 @@ public:
 
   // ── Internal ──────────────────────────────────────────────────────────────
 
-  std::string resolve_file_path(const std::string &path,
-                                const std::string &rel_dir) const
+  std::string resolve_file_path(const std::string &path, const std::string &rel_dir) const
   {
     // Absolute path
     if (path.size() > 0 && (path[0] == '/' || path[0] == '\\'))
@@ -352,8 +347,7 @@ public:
 
     // Cycle detection
     if (loading_.count(path))
-      throw std::runtime_error("[MODULE ERROR] Circular import detected: '" +
-                               path + "'");
+      throw std::runtime_error("[MODULE ERROR] Circular import detected: '" + path + "'");
     loading_.insert(path);
 
     if (verbose)
@@ -361,8 +355,7 @@ public:
 
     std::string source = mod_read_file(path);
     if (source.empty())
-      throw std::runtime_error("[MODULE ERROR] Cannot read file: '" + path +
-                               "'");
+      throw std::runtime_error("[MODULE ERROR] Cannot read file: '" + path + "'");
 
     // Lex + parse
     Lexer lexer(source);
@@ -374,8 +367,7 @@ public:
     catch (const std::exception &e)
     {
       loading_.erase(path);
-      throw std::runtime_error(std::string("[MODULE LEX ERROR] in '") + path +
-                               "': " + e.what());
+      throw std::runtime_error(std::string("[MODULE LEX ERROR] in '") + path + "': " + e.what());
     }
 
     Parser parser(tokens);
@@ -387,8 +379,7 @@ public:
     catch (const std::exception &e)
     {
       loading_.erase(path);
-      throw std::runtime_error(std::string("[MODULE PARSE ERROR] in '") + path +
-                               "': " + e.what());
+      throw std::runtime_error(std::string("[MODULE PARSE ERROR] in '") + path + "': " + e.what());
     }
 
     // Recursively resolve any imports *within* the module
@@ -410,8 +401,7 @@ public:
         catch (const std::exception &e)
         {
           // Non-fatal — warn and continue
-          std::cerr << "[MODULE WARNING] " << e.what() << " (skipping, in "
-                    << path << ")\n";
+          std::cerr << "[MODULE WARNING] " << e.what() << " (skipping, in " << path << ")\n";
         }
         delete n; // discard the ModuleImport node itself
       }
@@ -426,8 +416,7 @@ public:
         }
         catch (const std::exception &e)
         {
-          std::cerr << "[MODULE WARNING] " << e.what() << " (skipping, in "
-                    << path << ")\n";
+          std::cerr << "[MODULE WARNING] " << e.what() << " (skipping, in " << path << ")\n";
         }
         delete n;
       }
@@ -499,9 +488,9 @@ struct ResolvedAST
   std::vector<Parser::ASTNode *> borrowed;
 };
 
-static inline ResolvedAST
-resolve_all_imports(std::vector<Parser::ASTNode *> &ast, ModuleLoader &loader,
-                    const std::string &src_path, bool verbose)
+static inline ResolvedAST resolve_all_imports(std::vector<Parser::ASTNode *> &ast,
+                                              ModuleLoader &loader, const std::string &src_path,
+                                              bool verbose)
 {
   std::string src_dir = mod_dirname(src_path);
   ResolvedAST result;
@@ -568,11 +557,10 @@ resolve_all_imports(std::vector<Parser::ASTNode *> &ast, ModuleLoader &loader,
       std::string header_name;
       is_header_import(n->value, is_system, header_name);
       if (verbose)
-        std::cerr << "[import] C header " << (is_system ? "<" : "\"")
-                  << header_name << (is_system ? ">" : "\"") << "\n";
+        std::cerr << "[import] C header " << (is_system ? "<" : "\"") << header_name
+                  << (is_system ? ">" : "\"") << "\n";
       // parse_c_header returns freshly-allocated nodes — treat as owned
-      std::vector<Parser::ASTNode *> hnodes =
-          parse_c_header(header_name, is_system, {}, verbose);
+      std::vector<Parser::ASTNode *> hnodes = parse_c_header(header_name, is_system, {}, verbose);
       for (auto *hn : hnodes)
       {
         result.all.push_back(hn);
