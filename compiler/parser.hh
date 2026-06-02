@@ -413,6 +413,15 @@ private:
   {
     size_t ln = current_line();
     std::string target = advance_token().value; // IDENT
+    // Check for subscript: arr[expr] = ...
+    // Store the index expression as the first child when present.
+    ASTNode *index_expr = nullptr;
+    if (peek_token().value == "[")
+    {
+      advance_token(); // consume '['
+      index_expr = parse_expression();
+      match_token(Lexer::TokenType::OPERATOR, "]");
+    }
     // Check for field access
     while (peek_token().value == ".")
     {
@@ -420,8 +429,11 @@ private:
       target += "." + advance_token().value;
     }
     std::string op = advance_token().value; // = or += etc.
-    ASTNode *node = new ASTNode("Assignment", target + " " + op, ln, current_depth);
-    node->children.push_back(parse_expression());
+    ASTNode *node = new ASTNode(index_expr ? "IndexAssignment" : "Assignment",
+                                target + " " + op, ln, current_depth);
+    if (index_expr)
+      node->children.push_back(index_expr); // child[0] = index expr
+    node->children.push_back(parse_expression()); // last child = rhs
     match_token(Lexer::TokenType::OPERATOR, ";");
     return node;
   }
