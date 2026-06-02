@@ -429,10 +429,10 @@ private:
       target += "." + advance_token().value;
     }
     std::string op = advance_token().value; // = or += etc.
-    ASTNode *node = new ASTNode(index_expr ? "IndexAssignment" : "Assignment",
-                                target + " " + op, ln, current_depth);
+    ASTNode *node = new ASTNode(index_expr ? "IndexAssignment" : "Assignment", target + " " + op,
+                                ln, current_depth);
     if (index_expr)
-      node->children.push_back(index_expr); // child[0] = index expr
+      node->children.push_back(index_expr);       // child[0] = index expr
     node->children.push_back(parse_expression()); // last child = rhs
     match_token(Lexer::TokenType::OPERATOR, ";");
     return node;
