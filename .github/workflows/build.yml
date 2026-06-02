@@ -2,174 +2,257 @@ name: Build
 
 on:
   push:
-    branches: [ "**" ]
+    branches: ["**"]
   pull_request:
-    branches: [ "**" ]
+    branches: ["**"]
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: Linux
-            artifact: cshift-linux
-
-          - os: macos-latest
-            name: macOS
-            artifact: cshift-macos
-
-          - os: windows-latest
-            name: Windows
-            artifact: cshift-windows
-
-    runs-on: ${{ matrix.os }}
-    name: ${{ matrix.name }}
+  # ── Linux ──────────────────────────────────────────────────────────────────
+  build-linux:
+    name: Linux (Ubuntu)
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      # ── Linux ──────────────────────────────────────────────────────────────
-      - name: Install LLVM (Linux)
-        if: runner.os == 'Linux'
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-dev lld
+          sudo apt-get install -y \
+            llvm-18-dev libclang-18-dev \
+            libncurses-dev libtinfo-dev \
+            lld cmake ninja-build
 
-      # ── macOS ──────────────────────────────────────────────────────────────
-      - name: Install LLVM (macOS)
-        if: runner.os == 'macOS'
+      - name: Configure
         run: |
-          brew install llvm
-          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=dist \
+            -DCSHIFT_LINK_STATIC=ON \
+            -DCSHIFT_BUNDLE_LIBCLANG=ON \
+            -DLLVM_DIR="$(llvm-config-18 --cmakedir)"
 
-      # ── Windows: GHCup ships LLVM, just find it ───────────────────────────
-      - name: Find LLVM (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $found = Get-ChildItem "C:\" -Recurse -Filter "LLVMConfig.cmake" -ErrorAction SilentlyContinue |
-                   Select-Object -First 1
-          if (-not $found) { Write-Error "LLVMConfig.cmake not found"; exit 1 }
-          $llvmDir = $found.DirectoryName
-          Write-Host "Found LLVM at: $llvmDir"
-          echo "LLVM_DIR=$llvmDir" >> $env:GITHUB_ENV
-
-      # ── Configure ──────────────────────────────────────────────────────────
-      - name: Configure (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          cmake -S . -B build \
-            -DCMAKE_INSTALL_PREFIX=dist
-
-      - name: Configure (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          cmake -S . -B build \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix llvm)" \
-            -DCMAKE_INSTALL_PREFIX=dist
-
-      - name: Configure (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cmake -S . -B build `
-            -DLLVM_DIR="$env:LLVM_DIR" `
-            -DCMAKE_INSTALL_PREFIX=dist `
-            -G "MinGW Makefiles"
-
-      # ── Build + Install into dist/ ─────────────────────────────────────────
       - name: Build
-        run: cmake --build build --config Release
+        run: cmake --build build
 
       - name: Install into dist/
-        run: cmake --install build --config Release
+        run: cmake --install build
 
-      # ── Write install script (Linux/macOS) ────────────────────────────────
-      - name: Write install script (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Verify binary is mostly static
         run: |
-          cat > dist/install.sh << 'SCRIPT'
-          #!/usr/bin/env bash
-          # C<< installer — copies files and sets environment variables
-          set -e
-          INSTALL_DIR="${1:-/usr/local}"
-          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-          echo "Installing C<< to $INSTALL_DIR ..."
-          cp -r "$SCRIPT_DIR/bin"           "$INSTALL_DIR/"
-          cp -r "$SCRIPT_DIR/share"         "$INSTALL_DIR/"
-
-          CSHIFT_STD="$INSTALL_DIR/share/cshift"
-
-          # Detect shell config file
-          if   [ -f "$HOME/.zshrc"  ]; then RC="$HOME/.zshrc"
-          elif [ -f "$HOME/.bashrc" ]; then RC="$HOME/.bashrc"
-          else RC="$HOME/.profile"
+          echo "=== ldd dist/bin/cshift ==="
+          ldd dist/bin/cshift || true
+          # Must not depend on libLLVM*.so or libstdc++.so
+          if ldd dist/bin/cshift 2>/dev/null | grep -qE 'libLLVM|libstdc\+\+'; then
+            echo "ERROR: binary has unexpected dynamic LLVM/stdc++ dependency"
+            exit 1
           fi
+          echo "OK"
 
-          # Remove old entries
-          sed -i.bak '/# cshift/d; /CSHIFT_STD/d; /cshift\/bin/d' "$RC" 2>/dev/null || true
-
-          # Append new entries
-          cat >> "$RC" << ENV
-          # cshift
-          export CSHIFT_STD="$CSHIFT_STD"
-          export PATH="\$PATH:$INSTALL_DIR/bin"
-          ENV
-
-          echo "Done. Restart your shell or run: source $RC"
-          SCRIPT
-          chmod +x dist/install.sh
-
-      # ── Write install script (Windows) ────────────────────────────────────
-      - name: Write install script (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: Smoke test
         run: |
-          $script = @'
-          # C<< installer for Windows
-          # Run as Administrator for system-wide install, or without for user install.
-          param(
-              [string]$InstallDir = "$env:LOCALAPPDATA\cshift"
-          )
+          dist/bin/cshift --version 2>/dev/null || dist/bin/cshift --help 2>/dev/null | head -5 || true
+          dist/bin/cshift examples/hello.cll -o /tmp/hello_test --check-only
+          echo "check-only passed"
 
-          $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-
-          Write-Host "Installing C<< to $InstallDir ..."
-          New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-          Copy-Item -Recurse -Force "$ScriptDir\bin\*"   "$InstallDir\bin\"   -ErrorAction SilentlyContinue
-          Copy-Item -Recurse -Force "$ScriptDir\share\*" "$InstallDir\share\" -ErrorAction SilentlyContinue
-
-          $stdPath = "$InstallDir\share\cshift"
-          $binPath = "$InstallDir\bin"
-
-          # Set user environment variables
-          $target = if ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()`
-                        .IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-              "Machine"
-          } else {
-              "User"
-          }
-
-          [Environment]::SetEnvironmentVariable("CSHIFT_STD", $stdPath, $target)
-
-          $currentPath = [Environment]::GetEnvironmentVariable("PATH", $target)
-          if ($currentPath -notlike "*$binPath*") {
-              [Environment]::SetEnvironmentVariable("PATH", "$currentPath;$binPath", $target)
-          }
-
-          Write-Host ""
-          Write-Host "Done! CSHIFT_STD = $stdPath"
-          Write-Host "Restart your terminal for PATH changes to take effect."
-          '@
-          $script | Out-File -Encoding UTF8 dist\install.ps1
-
-      # ── Upload ─────────────────────────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
+          name: cshift-linux-x86_64
           path: dist/
           if-no-files-found: error
+
+  # ── macOS ──────────────────────────────────────────────────────────────────
+  build-macos:
+    name: macOS (Apple Silicon + x86_64)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install llvm cmake ninja
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "LLVM_PREFIX=$(brew --prefix llvm)" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=dist \
+            -DCMAKE_PREFIX_PATH="$LLVM_PREFIX" \
+            -DLLVM_DIR="$LLVM_PREFIX/lib/cmake/llvm" \
+            -DLIBCLANG_LIB="$LLVM_PREFIX/lib/libclang.dylib" \
+            -DLIBCLANG_INCLUDE_DIR="$LLVM_PREFIX/include" \
+            -DCSHIFT_LINK_STATIC=OFF \
+            -DCSHIFT_BUNDLE_LIBCLANG=OFF
+
+        # macOS: static LLVM is fine but static libstdc++ is not standard;
+        # Homebrew LLVM ships as a dylib. Use dynamic linking and rely on
+        # the Homebrew-provided rpath.
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Install into dist/
+        run: cmake --install build
+
+      - name: Smoke test
+        run: |
+          dist/bin/cshift examples/hello.cll -o /tmp/hello_test --check-only
+          echo "check-only passed"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cshift-macos
+          path: dist/
+          if-no-files-found: error
+
+  # ── Windows (msys2 / ucrt64) ───────────────────────────────────────────────
+  #
+  # We use msys2 with the ucrt64 toolchain because it ships a MinGW-native
+  # build of LLVM that can be linked without MSVC.  This is the same setup
+  # used by tools like clangd on Windows outside of Visual Studio.
+  #
+  # The resulting binary links against ucrt (Universal CRT) which ships with
+  # every Windows 10/11 installation — no extra runtime redistributable needed.
+  build-windows:
+    name: Windows (msys2/ucrt64)
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Set up msys2 with the ucrt64 environment and install LLVM + toolchain
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-llvm
+            mingw-w64-ucrt-x86_64-llvm-libs
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-clang-libs
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-zstd
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=dist \
+            -DLLVM_DIR="$(llvm-config --cmakedir)" \
+            -DLIBCLANG_LIB="$(llvm-config --libdir)/libclang.dll.a" \
+            -DLIBCLANG_INCLUDE_DIR="$(llvm-config --includedir)" \
+            -DCSHIFT_LINK_STATIC=ON \
+            -DCSHIFT_BUNDLE_LIBCLANG=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Install into dist/
+        run: cmake --install build
+
+      - name: Bundle required ucrt/mingw DLLs
+        # Copy the small set of runtime DLLs that ucrt64 binaries need.
+        # ucrt itself (api-ms-win-crt-*.dll) is part of Windows 10+; we only
+        # need to bundle the gcc/c++ helpers and libclang.
+        run: |
+          BINDIR="dist/bin"
+          mkdir -p "$BINDIR"
+          for dll in \
+              libgcc_s_seh-1.dll \
+              libstdc++-6.dll \
+              libwinpthread-1.dll \
+              libclang.dll \
+              libLLVM-18.dll \
+              libzstd.dll \
+              libzlib1.dll \
+              zlib1.dll; do
+            path="$(which $dll 2>/dev/null || find /ucrt64/bin -name "$dll" 2>/dev/null | head -1)"
+            if [ -n "$path" ] && [ -f "$path" ]; then
+              cp "$path" "$BINDIR/" && echo "bundled: $dll"
+            else
+              echo "skip (not found): $dll"
+            fi
+          done
+
+      - name: Smoke test
+        run: |
+          dist/bin/cshift.exe examples/hello.cll --check-only
+          echo "check-only passed"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cshift-windows-x86_64
+          path: dist/
+          if-no-files-found: error
+
+  # ── Release packaging ──────────────────────────────────────────────────────
+  # Runs after all three builds succeed.  Collects the artifacts, generates
+  # version-tagged release assets (TGZ + ZIP), and attaches them to the
+  # GitHub release if the push was a version tag (v*).
+  package:
+    name: Package release assets
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cshift-linux-x86_64
+          path: staging/linux
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cshift-macos
+          path: staging/macos
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cshift-windows-x86_64
+          path: staging/windows
+
+      - name: Inject install/uninstall scripts
+        run: |
+          cp scripts/install.sh   staging/linux/install.sh
+          cp scripts/install.sh   staging/macos/install.sh
+          cp scripts/uninstall.sh staging/linux/uninstall.sh
+          cp scripts/uninstall.sh staging/macos/uninstall.sh
+          cp scripts/install.ps1  staging/windows/install.ps1
+          cp scripts/uninstall.ps1 staging/windows/uninstall.ps1
+          chmod +x staging/linux/install.sh staging/linux/uninstall.sh
+          chmod +x staging/macos/install.sh staging/macos/uninstall.sh
+
+      - name: Create release archives
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          cd staging
+          tar -czf "../cshift-${TAG}-linux-x86_64.tar.gz"  linux/
+          tar -czf "../cshift-${TAG}-macos.tar.gz"          macos/
+          zip -r   "../cshift-${TAG}-windows-x86_64.zip"   windows/
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            cshift-*.tar.gz
+            cshift-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
