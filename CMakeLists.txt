@@ -88,7 +88,14 @@ target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_LLVM_BITCODE=1)
 
 # ── Linking (always dynamic) ──────────────────────────────────────────────────
 
-target_link_libraries(cshift PRIVATE ${CSHIFT_LLVM_LIBS})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(cshift PRIVATE dl pthread)
+elseif(APPLE)
+    target_link_libraries(cshift PRIVATE pthread)
+elseif(WIN32)
+    target_link_libraries(cshift PRIVATE kernel32)
+endif()
+
 
 if(CSHIFT_HAVE_CHEADER)
     target_link_libraries(cshift PRIVATE ${LIBCLANG_LIB})
