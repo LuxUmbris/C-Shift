@@ -62,17 +62,17 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=dist
 
       # ───────────────────────────────────────────────────────────────
-      # Windows (MSVC + Ninja + richtiges LLVM)
+      # Windows (MSVC aktivieren + Ninja)
       # ───────────────────────────────────────────────────────────────
+      - name: Activate MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $llvmDir = "C:\Program Files\LLVM\lib\cmake\llvm"
-          if (-not (Test-Path $llvmDir)) {
-              Write-Error "MSVC LLVM not found at $llvmDir"
-              exit 1
-          }
           echo "LLVM_DIR=$llvmDir" >> $env:GITHUB_ENV
 
           cmake -S . -B build `
