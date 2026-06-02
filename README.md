@@ -1,54 +1,241 @@
-# C<< (C-Shift / C-Less-Less)
+# C<< (C-Shift)
 
-![C++ Logo](https://raw.githubusercontent.com/LuxUmbris/C-Shift/main/cll_logo.svg)
+![C<< Logo](https://raw.githubusercontent.com/LuxUmbris/C-Shift/main/cll_logo.svg)
 
-A small LLVM-based compiler for a safe, arena-oriented systems language.
-C<< focuses on deterministic, zero-runtime behavior and direct C ABI interoperability.
+[![Build](https://github.com/LuxUmbris/C-Shift/actions/workflows/build.yml/badge.svg)](https://github.com/LuxUmbris/C-Shift/actions/workflows/build.yml)
 
-## Build
+An LLVM-based compiler for a safe, arena-oriented systems language.
+C<< focuses on deterministic, zero-runtime behaviour and direct C-ABI interoperability.
 
-### Native build with Make
+---
 
-### Build with CMake
-
-```bash
-mkdir -p build
-cd build
-cmake ..
-cmake --build .
-```
-
-## Usage
-
-Compile a C<< source file:
+## Quick Start
 
 ```bash
-./cshift examples/hello.cll -o hello
+# Download a release and install
+tar -xzf cshift-*-linux-x86_64.tar.gz
+sudo ./install.sh              # system-wide (/usr/local)
+# or:
+./install.sh ~/.local          # user-local, no sudo needed
 ```
 
-Emit LLVM IR:
+```cll
+// hello.cll
+import std;
+
+entry
+{
+    puts("Hello, C<< world!");
+}
+```
 
 ```bash
-./cshift examples/hello.cll --emit-llvm
+cshift hello.cll -o hello
+./hello
 ```
 
-Emit assembly:
+---
+
+## Building from Source
+
+### Prerequisites
+
+| Platform | Required |
+|----------|----------|
+| Linux    | `llvm-18-dev`, `libclang-18-dev`, `cmake ≥ 3.16`, `ninja-build` |
+| macOS    | `brew install llvm cmake ninja` |
+| Windows  | msys2 ucrt64: `mingw-w64-ucrt-x86_64-llvm`, `cmake`, `ninja` |
+
+### Linux / macOS
 
 ```bash
-./cshift examples/hello.cll --emit-asm
+./rebuild.sh            # Release build → build/cshift
+./rebuild.sh debug      # Debug build
+./rebuild.sh clean      # Wipe build dir and rebuild
 ```
 
-Compile only to object file:
+Or manually:
 
 ```bash
-./cshift examples/hello.cll -c
+cmake -S . -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCSHIFT_LINK_STATIC=ON          # statically link LLVM (default)
+cmake --build build
 ```
 
-Semantic check only:
+### Windows (msys2 / ucrt64)
+
+Open the **UCRT64** msys2 shell:
 
 ```bash
-./cshift examples/hello.cll --check-only
+pacman -S mingw-w64-ucrt-x86_64-{gcc,cmake,ninja,llvm,llvm-libs,clang,clang-libs,zlib,zstd}
+
+cmake -S . -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_DIR="$(llvm-config --cmakedir)"
+cmake --build build
 ```
+
+### CMake options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `CSHIFT_LINK_STATIC` | `ON` | Link LLVM + libstdc++ statically — portable binary |
+| `CSHIFT_BUNDLE_LIBCLANG` | `ON` | Copy `libclang.so` into the install tree |
+| `CSHIFT_PRECOMPILE_FRT` | `ON` | Pre-compile `frt.c` for every available cross-target |
+| `CSHIFT_BUNDLE_FRT` | `ON` | Install precompiled `frt.o` blobs |
+
+---
+
+## Compiler Flags
+
+```
+Usage: cshift <source.cll> [options]
+
+Options:
+  -o <output>          Output file
+  -O0 / -O1 / -O2 / -O3   Optimization level (default: -O0)
+  -Os / -Oz            Optimize for size / aggressively for size
+  --mcpu <cpu>         Target CPU  (e.g. skylake, cortex-a72)
+  --mattr <features>   CPU feature flags  (e.g. +avx2,+bmi2)
+  --emit-llvm          Emit LLVM IR (.ll)
+  --emit-asm           Emit assembly (.s)
+  -c                   Compile to object file (.o), skip link
+  --target <triple>    Cross-compile target triple
+  --no-frt             Skip frt.o linking
+  --check-only         Lex + parse + type-check only, no codegen
+  -l<lib>              Pass -l<lib> to the linker  (e.g. -lm)
+  -Wl,<flag>           Pass raw flag to the linker
+  --link-flag <f>      Pass raw linker flag
+  --verbose / -v       Print resolution steps to stderr
+```
+
+---
+
+## Module System
+
+Modules are real separately-parsed translation units, not text copy-paste.
+Each file is parsed exactly once per compilation; duplicate imports are silently deduplicated.
+
+```cll
+import std;                   // standard library module
+import "path/to/mylib.cll";   // file import (relative to source)
+import io::file;              // namespace::module path
+```
+
+### C-Header Import
+
+Direct import of C headers via libclang — no hand-written wrapper needed:
+
+```cll
+import <stdio.h>;             // system header (angle brackets)
+import <math.h>;
+import "vendor/mylib.h";      // local header (quoted)
+```
+
+This parses the header with libclang and generates the appropriate `import` declarations automatically. Requires `libclang` at build time; falls back to a runtime warning if absent.
+
+### Manual C-ABI Import
+
+For one-off declarations without a header:
+
+```cll
+import int32  printf(string fmt, ...);
+import voided free(voided* ptr);
+import voided* malloc(uint64 size);
+```
+
+---
+
+## Standard Library
+
+`import std;` provides 16+ generic containers — all monomorphized at compile time.
+
+| Container | Description |
+|-----------|-------------|
+| `Vector<T>` | Dynamic array (chunk-based, zero-copy allocation) |
+| `HashMap<K,V>` | Hash table with chaining |
+| `LinkedList<T>` | Doubly-linked list |
+| `Set<T>` | Hash set |
+| `Deque<T>` | Double-ended queue (ring buffer) |
+| `RingBuffer<T>` | Fixed-size circular buffer |
+| `Pool<T>` | Object pool for allocation-free patterns |
+| `Pair<A,B>` | Simple tuple |
+| `Lazy<T>` | Compute-on-demand caching |
+| `BitSet` | Compact bitfield |
+| `Guard` | RAII scope guard |
+| `StringBuilder` | Chunked string building |
+| `Buffer<T>` | Typed buffer with capacity |
+| `SortedVec<T>` | Sorted container with custom comparator |
+
+The parsed standard library is cached as `~/.cache/cshift/bc/std.bc` — subsequent builds skip re-parsing.
+
+---
+
+## Install & Uninstall
+
+### Tarball (Linux / macOS)
+
+```bash
+# Install (default: /usr/local)
+sudo ./install.sh
+# or user-local:
+./install.sh ~/.local
+
+# Uninstall
+sudo ./uninstall.sh
+# or:
+./uninstall.sh ~/.local
+```
+
+The installer:
+- Detects and removes any previous cshift installation at the target prefix.
+- Records an install manifest (`share/cshift/.install_manifest`) for clean removal.
+- Adds `CSHIFT_STD_PATH` and `PATH` entries to your shell rc file.
+
+The uninstaller reads the manifest and removes every installed file, then prunes empty directories, and strips the shell rc entries.
+
+### Windows
+
+```powershell
+# User-local (no elevation needed):
+.\install.ps1
+
+# System-wide (run PowerShell as Administrator):
+.\install.ps1 -InstallDir "C:\Program Files\cshift"
+
+# Uninstall (auto-detects install dir):
+.\uninstall.ps1
+```
+
+### Debian / Ubuntu package
+
+```bash
+# Build the .deb (from the build directory after cmake):
+cpack -G DEB
+
+# Install (removes any old version first via preinst):
+sudo dpkg -i cshift-*.deb
+
+# Remove:
+sudo dpkg -r cshift
+
+# Purge (also removes config and cache):
+sudo dpkg --purge cshift
+```
+
+### cmake uninstall target
+
+```bash
+# After cmake --install:
+cmake --build build --target uninstall
+```
+
+---
+
+## Language Overview
+
+See [`Syntax_spec.md`](Syntax_spec.md) for the full specification.
 
 ### Hello World
 
@@ -61,243 +248,110 @@ entry
 }
 ```
 
-## Philosophy
-C<< is designed to be safe without fighting the compiler, and easy to use without runtime abstractions. 
-So it does not have a GC (Garbage Collector), Borrow Checker or similar things and is fully arena-based. 
-The runtime is only a minimal C-file for the standard library. It strictly separates:
-- Data Patterns
-- Logic Units
-  
-In summary, the design goals are:
-- Performance
-- Determinism
-- Developer Experience
-- Memory Safety
-- Zero Runtime Abstractions
-- Full C-ABI-interop with extern functions
-- Cross Compilation
+### Functions and Tunnels
 
-## VOP (Vertical Ownership Programming)
-VOP (Vertical Ownership Programming) can be explained like this:
-1. A pointer MUST only point to a variable with a depth <= its own, while depth defines the current arena.
-2. A scope is equal to a arena, except of the lexical scopes (namespaces, structs, etc.). When the scope ends, the arena gets deleted.
-3. Functions MUST not use return values. VOP only uses tunnels, similar to pointers, declared under 'Syntax'
-4. A tunnel may not transfer data containing pointers to arenas that will be destroyed.
-5. reset clears the current arena. Forbidden if child arenas contain pointers into it.
+Functions have no return type. Values are passed back via *tunnels*:
 
-## Syntax
-
-### Comments
-Single-line and multiline comments are supported:
-```CShift
-// Single-line comment
-
-/* Multiline comment
-   spanning multiple lines */
-```
-
-### Primitve Types
-C<< contains the following primitive Types:
-```CShift
-int8
-int16
-int32
-int64
-
-uint8
-uint16
-uint32
-uint64
-
-float32
-float64
-
-bool
-string
-
-T*
-```
-
-### Structs
-Structs MUST only contain data, no methods. example:
-```CShift
-struct Player
+```cll
+def add(int32 x, int32 y)
 {
-    int32 id;
-    float32 health;
+    tunnel x + y -> int32 result;
+}
+
+entry
+{
+    reserve int32 result = add(5, 7);
+    printf("%d\n", result);
 }
 ```
 
-### Enums
-Enums are integer-backed. example:
-```
-enum Status : uint8 { Active, Inactive }
+### Structs
+
+```cll
+struct Player
+{
+    int32   id;
+    float32 health;
+    string  name;
+}
 ```
 
-### The Voided State
-A pointer is never null. A variable is valid or voided. Any variable may be in the voided state. Accessing a variable wich could be voided without an switch-guard causes compile-time termination.
+### Templates
+
+```cll
+template<typename T>
+struct Pair
+{
+    T first;
+    T second;
+}
+
+template<typename T>
+def pair_sum(Pair<T>* p)
+{
+    tunnel p->first + p->second -> T result;
+}
 ```
+
+### VOP (Vertical Ownership Programming)
+
+C<< uses arena-based memory instead of GC or borrow checker:
+
+1. A pointer must only point to a variable whose arena depth ≤ the pointer's depth.
+2. Each `{ }` control-flow block is its own arena; when it exits, its variables are destroyed.
+3. Functions use tunnels instead of return values.
+4. `reset` clears the current arena (forbidden if child arenas hold pointers into it).
+5. `move` transfers ownership; the source becomes *voided*. Accessing a potentially-voided variable without a `switch` guard is a compile-time error.
+
+```cll
 entry
 {
-    int32 x;
+    int32  x = 42;
     int32* p = &x;
-    move x;
-    switch(p)
+    move x;           // x is now voided
+    switch (p)
     {
-        case valid {}
-        case voided {}
+        case valid   { printf("value: %d\n", *p); }
+        case voided  { puts("pointer is voided"); }
     }
 }
 ```
 
-## Raw Strings
-### Delimitter
-```
-string banner = raw<until "Your_delimitter">
-###########
-# Hello C<< #
-###########
-Your_delimitter
-```
-### Line count
-```
-puts(raw<3>
-I can type \n here or \0 or \t and nothing happens
-A Real newline is integrated into the string
-No matter what you write here the string does not break.
+### Control Flow
+
+`if` / `else`, `while`, `for`, `foreach`, `switch` / `case` / `default`, `break`, `continue`.
+
+### Raw Strings
+
+```cll
+// Delimiter form:
+string banner = raw<until "END">
+###################
+#  Hello, C<< !  #
+###################
+END
+
+// Line-count form:
+puts(raw<2>
+Line one — backslashes \n and nulls \0 are literal here.
+Line two.
 );
 ```
-## Functions
-Definition:
-```
-def name(parameters)
-{
-    // arena
-}
-```
-Properties:
-- Functions have no type, but it is recommended to comment out their tunneled type.
-- Functions may contain any number of tunnel operations.
-- A function call is a statement.
-- Tunnel values produced inside a function appear in the call scope if they were reserved.
-- Inline usage of function results is forbidden except in reserve-initializers.
-Example:
-```cll
-def compute(int32 x) // tunnels int32 doubled
-{
-    tunnel x * 2 -> int32 doubled;
-}
-```
-### Function calls
-classic:
-```
-reserve int32 result;
-add(5, 7);
-```
-inline:
-```
-reserve int32 result = add(5, 7);
-```
-A function can tunnel multiple values. All values wich were reserved in the past and are tunneled by the function get filled. The others are ignored.
-```
-def compute(int32 x, int32 y)
-{
-    tunnel x + y -> int32 sum;
-    tunnel x * y -> int32 product;
-}
 
-entry
-{
-    reserve int32 sum;
-    reserve int32 product;
+---
 
-    compute(8, 4);
-}
-```
-### Arrays & Slices
-Arrays:
-```
-T[]   // arena-bound array
-```
-Slices:
-```
-T[:]  // pointer + length, non-owning
-```
-Slices may only reference arenas that outlive them.
+## Philosophy
 
-### For loops
-```
-for (int32 i = 0; i < 5;)
-{
-    // arena
-    i += 1;
-}
-```
+C<< is designed to be safe without fighting the compiler, and fast without runtime abstractions:
 
-### Control Flow
-Supported constructs:
-- `if` / `else`
-- `switch` / `case` / `default`
-- `while`
-- `for`
-- `foreach`
-- `break` — exit innermost loop or switch
-- `continue` — restart next loop iteration
+- No garbage collector, no borrow checker — arena-based deterministic memory.
+- No exceptions, no virtual dispatch, no hidden allocations.
+- Full C-ABI interop: call any C library with zero overhead.
+- Cross-compilation to any LLVM-supported target.
+- Optimization levels from `-O0` (debug) to `-O3` / `-Os` / `-Oz`.
 
-Each iteration of while/for/foreach is its own sub-arena. Tunnels inside switch/case must target variables in the parent scope.
-
-### Templates
-
-Generic programming via compile-time template instantiation:
-
-```cll
-template<typename T>
-struct Vector
-{
-    T*    data;
-    uint64 len;
-    uint64 capacity;
-}
-
-template<typename T>
-def vec_push(Vector<T>* v, T elem)
-{
-    // implementation
-    tunnel result -> int32 success;
-}
-```
-
-Templates are fully instantiated at compile time, enabling zero-runtime polymorphism and safe generic containers.
-
-### Standard Library Comfort Containers
-
-The standard library (`std.cll`) provides 16+ high-performance generic containers:
-
-**Core Containers:**
-- `Vector<T>` — chunk-based dynamic array (zero-copy allocation)
-- `HashMap<K, V>` — hash table with chaining
-- `LinkedList<T>` — doubly-linked list
-- `Set<T>` — hash set for unique elements
-- `Deque<T>` — double-ended queue with ring buffer
-- `RingBuffer<T>` — fixed-size circular buffer (lock-free safe)
-- `Pool<T>` — object pool for allocation-free patterns
-
-**Utility Types:**
-- `Pair<A, B>` — simple tuple
-- `Lazy<T>` — compute-on-demand caching
-- `BitSet` — compact bitfield operations
-- `Guard` — RAII-style scope guards for cleanup
-- `StringBuilder` — efficient chunked string building
-- `Buffer<T>` — safe typed buffers with capacity management
-- `SortedVec<T>` — sorted containers with custom comparators
-
-All use template-based generic monomorphization for compile-time type safety and zero-runtime overhead.
-
-### C-ABI-interop
-Syntax:
-```
-import <type> <fn_name> (<params>);
-```
+---
 
 ## License
-This Project is licensed under the [Apache 2.0 License](LICENSE)
+
+[Apache 2.0](LICENSE)
