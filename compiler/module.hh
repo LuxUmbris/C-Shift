@@ -49,6 +49,12 @@
 #include <llvm-c/Core.h>
 #endif
 
+#ifdef __MINGW32__
+    #include <sys/stat.h>
+    #define _mkdir(path) mkdir(path, 0755)
+#endif
+
+
 // ── Utilities ─────────────────────────────────────────────────────────────
 
 static inline bool mod_file_exists(const std::string &p)
