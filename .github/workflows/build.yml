@@ -30,21 +30,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── Linux ──────────────────────────────────────────────────────────────
+      # ───────────────────────────────────────────────────────────────
+      # Linux
+      # ───────────────────────────────────────────────────────────────
       - name: Install LLVM (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y llvm-dev lld
 
-      # ── macOS ──────────────────────────────────────────────────────────────
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_INSTALL_PREFIX=dist
+
+      # ───────────────────────────────────────────────────────────────
+      # macOS
+      # ───────────────────────────────────────────────────────────────
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install llvm
           echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
 
-      # ── Windows: GHCup ships LLVM, just find it ───────────────────────────
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix llvm)" \
+            -DCMAKE_INSTALL_PREFIX=dist
+
+      # ───────────────────────────────────────────────────────────────
+      # Windows (MSVC + Ninja)
+      # ───────────────────────────────────────────────────────────────
       - name: Find LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -56,63 +75,49 @@ jobs:
           Write-Host "Found LLVM at: $llvmDir"
           echo "LLVM_DIR=$llvmDir" >> $env:GITHUB_ENV
 
-      # ── Configure ──────────────────────────────────────────────────────────
-      - name: Configure (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          cmake -S . -B build \
-            -DCMAKE_INSTALL_PREFIX=dist
-
-      - name: Configure (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          cmake -S . -B build \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix llvm)" \
-            -DCMAKE_INSTALL_PREFIX=dist
-
-      - name: Configure (Windows)
+      - name: Configure (Windows, MSVC)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cmake -S . -B build `
             -DLLVM_DIR="$env:LLVM_DIR" `
             -DCMAKE_INSTALL_PREFIX=dist `
-            -G "MinGW Makefiles"
+            -G "Ninja"
 
-      # ── Build + Install into dist/ ─────────────────────────────────────────
+      # ───────────────────────────────────────────────────────────────
+      # Build + Install
+      # ───────────────────────────────────────────────────────────────
       - name: Build
         run: cmake --build build --config Release
 
       - name: Install into dist/
         run: cmake --install build --config Release
 
-      # ── Write install script (Linux/macOS) ────────────────────────────────
+      # ───────────────────────────────────────────────────────────────
+      # Install script (Linux/macOS)
+      # ───────────────────────────────────────────────────────────────
       - name: Write install script (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
           cat > dist/install.sh << 'SCRIPT'
           #!/usr/bin/env bash
-          # C<< installer — copies files and sets environment variables
           set -e
           INSTALL_DIR="${1:-/usr/local}"
           SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
           echo "Installing C<< to $INSTALL_DIR ..."
-          cp -r "$SCRIPT_DIR/bin"           "$INSTALL_DIR/"
-          cp -r "$SCRIPT_DIR/share"         "$INSTALL_DIR/"
+          cp -r "$SCRIPT_DIR/bin" "$INSTALL_DIR/"
+          cp -r "$SCRIPT_DIR/share" "$INSTALL_DIR/"
 
           CSHIFT_STD="$INSTALL_DIR/share/cshift"
 
-          # Detect shell config file
           if   [ -f "$HOME/.zshrc"  ]; then RC="$HOME/.zshrc"
           elif [ -f "$HOME/.bashrc" ]; then RC="$HOME/.bashrc"
           else RC="$HOME/.profile"
           fi
 
-          # Remove old entries
           sed -i.bak '/# cshift/d; /CSHIFT_STD/d; /cshift\/bin/d' "$RC" 2>/dev/null || true
 
-          # Append new entries
           cat >> "$RC" << ENV
           # cshift
           export CSHIFT_STD="$CSHIFT_STD"
@@ -123,18 +128,15 @@ jobs:
           SCRIPT
           chmod +x dist/install.sh
 
-      # ── Write install script (Windows) ────────────────────────────────────
+      # ───────────────────────────────────────────────────────────────
+      # Install script (Windows)
+      # ───────────────────────────────────────────────────────────────
       - name: Write install script (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $script = @'
-          # C<< installer for Windows
-          # Run as Administrator for system-wide install, or without for user install.
-          param(
-              [string]$InstallDir = "$env:LOCALAPPDATA\cshift"
-          )
-
+          param([string]$InstallDir = "$env:LOCALAPPDATA\cshift")
           $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
           Write-Host "Installing C<< to $InstallDir ..."
@@ -145,7 +147,6 @@ jobs:
           $stdPath = "$InstallDir\share\cshift"
           $binPath = "$InstallDir\bin"
 
-          # Set user environment variables
           $target = if ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()`
                         .IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
               "Machine"
@@ -160,13 +161,13 @@ jobs:
               [Environment]::SetEnvironmentVariable("PATH", "$currentPath;$binPath", $target)
           }
 
-          Write-Host ""
-          Write-Host "Done! CSHIFT_STD = $stdPath"
-          Write-Host "Restart your terminal for PATH changes to take effect."
+          Write-Host "Done! Restart your terminal."
           '@
           $script | Out-File -Encoding UTF8 dist\install.ps1
 
-      # ── Upload ─────────────────────────────────────────────────────────────
+      # ───────────────────────────────────────────────────────────────
+      # Upload artifact
+      # ───────────────────────────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
