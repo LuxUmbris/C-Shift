@@ -106,16 +106,37 @@ static void mkdirp(const std::string &path)
 static std::string find_std_cll(const std::string &src_path, const std::string &exe_path)
 {
   const char *env = std::getenv("CSHIFT_STD_PATH");
-  if (env)
+  if (env && env[0] != '\0')
   {
     std::string ep(env);
-    // If it points directly to the file, use it as-is
-    if (file_exists(ep) && ep.size() >= 7 && ep.compare(ep.size() - 7, 7, "std.cll") == 0)
-      return ep;
-    // If it points to a directory containing std.cll
-    if (file_exists(ep + "/std.cll"))
-      return ep + "/std.cll";
+
+    // Strip trailing slashes so the checks below are uniform.
+    while (ep.size() > 1 && (ep.back() == '/' || ep.back() == '\\'))
+      ep.pop_back();
+
+    // Case 1: env var points directly to std.cll (any filename is accepted,
+    // not just one ending in "std.cll", so the user can rename it).
+    if (file_exists(ep))
+    {
+      // Is it a regular file?
+      struct stat st;
+      if (stat(ep.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+        return ep;
+
+      // Case 2: env var points to a directory — look for std.cll inside it.
+      std::string candidate = ep + "/std.cll";
+      if (file_exists(candidate))
+        return candidate;
+    }
+    else
+    {
+      // Path does not exist at all — warn so the user knows the override
+      // was seen but is broken, rather than silently falling through.
+      std::cerr << "[WARNING] CSHIFT_STD_PATH='" << ep
+                << "' does not exist; falling back to default search.\n";
+    }
   }
+
   for (auto &d : std::vector<std::string>{
            dirname_of(src_path),
            dirname_of(exe_path),
@@ -488,6 +509,10 @@ int main(int argc, char **argv)
   ModuleLoader loader;
   loader.verbose = verbose;
   loader.std_cll_override = find_std_cll(src_path, exe_path);
+  if (verbose && !loader.std_cll_override.empty())
+    std::cerr << "[std] resolved std.cll -> " << loader.std_cll_override << "\n";
+  else if (verbose)
+    std::cerr << "[std] std.cll not found in any search path\n";
   // Search directories: next to source, next to binary, system paths
   for (auto &d : std::vector<std::string>{
            dirname_of(src_path),
