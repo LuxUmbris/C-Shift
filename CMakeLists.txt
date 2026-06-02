@@ -103,8 +103,11 @@ add_executable(cshift main.cpp)
 
 target_compile_options(cshift PRIVATE
     -Wall -Wextra -O2
-    # Disable exceptions/RTTI to match LLVM's build flags (reduces binary size)
-    $<$<BOOL:${CSHIFT_LINK_STATIC}>:-fno-exceptions -fno-rtti>
+    -Wno-comment  # suppress warning from backslash in // build comment
+    # Note: do NOT add -fno-exceptions or -fno-rtti here.
+    # cshift's own code (parser, module loader, main) relies on C++ exceptions.
+    # LLVM component .a files are compiled without exceptions internally, but
+    # they export a C API (llvm-c/) that is safe to call from exception-enabled code.
 )
 
 # LLVM-C versioned header path
