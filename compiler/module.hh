@@ -51,8 +51,14 @@
 
 #ifdef __MINGW32__
     #include <sys/stat.h>
-    #define _mkdir(path) mkdir(path, 0755)
+    #include <sys/types.h>
+
+    // MinGW has no mkdir so we make our own
+    static inline int _mkdir(const char* path) {
+        return mkdir(path, 0755);
+    }
 #endif
+
 
 
 // ── Utilities ─────────────────────────────────────────────────────────────
