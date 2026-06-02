@@ -62,25 +62,27 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=dist
 
       # ───────────────────────────────────────────────────────────────
-      # Windows (MSVC + offizielles LLVM MSI)
+      # Windows (MSVC + LLVM ZIP)
       # ───────────────────────────────────────────────────────────────
       - name: Activate MSVC
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Install LLVM (Windows)
+      - name: Download & Extract LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Invoke-WebRequest `
-            -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/LLVM-18.1.8-win64.exe" `
-            -OutFile llvm-installer.exe
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/LLVM-18.1.8-win64.zip"
+          Invoke-WebRequest -Uri $url -OutFile llvm.zip
 
-          Start-Process .\llvm-installer.exe -ArgumentList "/S" -Wait
+          Expand-Archive llvm.zip -DestinationPath llvm
 
-          $llvmDir = "C:\Program Files\LLVM\lib\cmake\llvm"
+          # Find extracted folder
+          $folder = Get-ChildItem llvm | Select-Object -First 1
+          $llvmDir = "$($folder.FullName)\lib\cmake\llvm"
+
           if (-not (Test-Path $llvmDir)) {
-              Write-Error "LLVM installation failed"
+              Write-Error "LLVMConfig.cmake not found in extracted LLVM"
               exit 1
           }
 
