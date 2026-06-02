@@ -58,20 +58,17 @@ add_definitions(${LLVM_DEFINITIONS})
 # libclang (optional)
 # ──────────────────────────────────────────────────────────────────────────────
 
-if(WIN32)
-    find_library(LIBCLANG_LIB NAMES libclang clang HINTS ${LLVM_LIBRARY_DIRS})
-    find_path(LIBCLANG_INCLUDE_DIR NAMES clang-c/Index.h HINTS ${LLVM_INCLUDE_DIRS})
-else()
-    find_library(LIBCLANG_LIB NAMES clang libclang HINTS ${LLVM_LIBRARY_DIR})
-    find_path(LIBCLANG_INCLUDE_DIR NAMES clang-c/Index.h HINTS ${LLVM_INCLUDE_DIR})
+find_library(LIBCLANG_CPP NAMES clang-cpp HINTS ${LLVM_LIBRARY_DIRS})
+find_library(LIBLLVM_C NAMES LLVM-C HINTS ${LLVM_LIBRARY_DIRS})
+
+if(LIBCLANG_CPP)
+    message(STATUS "Found clang-cpp: ${LIBCLANG_CPP}")
 endif()
 
-if(LIBCLANG_LIB AND LIBCLANG_INCLUDE_DIR)
-    message(STATUS "Found libclang: ${LIBCLANG_LIB}")
-    set(CSHIFT_HAVE_CHEADER ON)
+if(LIBLLVM_C)
+    message(STATUS "Found LLVM-C: ${LIBLLVM_C}")
 else()
-    message(STATUS "libclang not found — C-header import disabled")
-    set(CSHIFT_HAVE_CHEADER OFF)
+    message(FATAL_ERROR "LLVM-C (C API) not found — required for your code")
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -87,39 +84,16 @@ else()
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# STATIC LLVM COMPONENTS — FIX FOR YOUR ERROR
+# STATIC LLVM COMPONENTS — ALL TARGETS
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Your code calls LLVMInitializeAllTargets() → you MUST link ALL targets.
 llvm_map_components_to_libnames(LLVM_LIBS all)
 
-target_link_libraries(cshift PRIVATE ${LLVM_LIBS})
-
-# LLVM-C headers
-foreach(_llvmc_hint
-    "/usr/include/llvm-c-18"
-    "/usr/include/llvm-c-17"
-    "/usr/include/llvm-c-16"
-    "${LLVM_INCLUDE_DIR}/.."
+target_link_libraries(cshift PRIVATE
+    ${LLVM_LIBS}
+    ${LIBLLVM_C}      # ← C API (fixes 90% of your undefined refs)
+    ${LIBCLANG_CPP}   # ← optional, if present
 )
-  if(EXISTS "${_llvmc_hint}/llvm-c/Core.h")
-    target_include_directories(cshift SYSTEM PRIVATE "${_llvmc_hint}")
-    message(STATUS "LLVM-C headers: ${_llvmc_hint}")
-    break()
-  endif()
-endforeach()
-
-# libclang static
-if(CSHIFT_HAVE_CHEADER)
-    target_include_directories(cshift SYSTEM PRIVATE
-        ${LIBCLANG_INCLUDE_DIR}
-        ${LIBCLANG_INCLUDE_DIR}/clang-c
-    )
-    target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_CHEADER=1)
-    target_link_libraries(cshift PRIVATE ${LIBCLANG_LIB})
-endif()
-
-target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_LLVM_BITCODE=1)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Windows static system libs
@@ -224,5 +198,4 @@ message(STATUS "  Install prefix : ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  LLVM version   : ${LLVM_PACKAGE_VERSION}")
 message(STATUS "  Precompile frt : ${CSHIFT_PRECOMPILE_FRT}")
 message(STATUS "  Bundle frt     : ${CSHIFT_BUNDLE_FRT}")
-message(STATUS "  C-header import: ${CSHIFT_HAVE_CHEADER} (libclang)")
 message(STATUS "")
