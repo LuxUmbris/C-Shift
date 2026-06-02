@@ -5,6 +5,19 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Toolchain sanity on Windows
+# ──────────────────────────────────────────────────────────────────────────────
+
+if(WIN32 AND NOT MSVC)
+    message(FATAL_ERROR
+        "On Windows, cshift must be built with MSVC (cl) to match the LLVM "
+        "binary distribution. MinGW + MSVC-LLVM ABI mismatch causes link errors "
+        "(__set_app_type, stat64, mkdir, ...). "
+        "Use: cmake -G \"Visual Studio 17 2022\" -A x64"
+    )
+endif()
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Options
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -24,7 +37,9 @@ find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
-link_directories(${LLVM_LIBRARY_DIRS})
+if(LLVM_LIBRARY_DIRS)
+    link_directories(${LLVM_LIBRARY_DIRS})
+endif()
 add_definitions(${LLVM_DEFINITIONS})
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -153,8 +168,10 @@ if(CSHIFT_PRECOMPILE_FRT)
         add_frt_target("aarch64-linux-gnu"  "aarch64-linux-gnu-gcc")
     endif()
 
-    # Windows cross-target
-    add_frt_target("x86_64-w64-mingw32" "x86_64-w64-mingw32-gcc")
+    # Windows cross-target (only when building on non-Windows hosts)
+    if(NOT WIN32)
+        add_frt_target("x86_64-w64-mingw32" "x86_64-w64-mingw32-gcc")
+    endif()
 
     # macOS cross-targets
     if(APPLE)
