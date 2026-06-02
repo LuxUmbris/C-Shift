@@ -50,12 +50,12 @@
 #endif
 
 #ifdef __MINGW32__
-    #include <direct.h>
-    #include <sys/stat.h>
+#include <direct.h>
+#include <sys/stat.h>
 
-    #if !defined(_mkdir)
-        #define _mkdir(path) mkdir(path)
-    #endif
+#if !defined(_mkdir)
+#define _mkdir(path) mkdir(path)
+#endif
 
 #endif
 
