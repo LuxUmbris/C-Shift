@@ -34,13 +34,8 @@ endif()
 # Options
 # ──────────────────────────────────────────────────────────────────────────────
 
-option(CSHIFT_PRECOMPILE_FRT
-    "Pre-compile frt.c for the host and every cross-target that has a toolchain"
-    ON)
-
-option(CSHIFT_BUNDLE_FRT
-    "Copy precompiled frt.o blobs into the install tree under share/cshift/frt/"
-    ON)
+option(CSHIFT_PRECOMPILE_FRT "Pre-compile frt.c" ON)
+option(CSHIFT_BUNDLE_FRT "Bundle frt.o blobs" ON)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # LLVM STATIC CONFIG
@@ -64,23 +59,11 @@ add_definitions(${LLVM_DEFINITIONS})
 # ──────────────────────────────────────────────────────────────────────────────
 
 if(WIN32)
-    find_library(LIBCLANG_LIB
-        NAMES libclang clang
-        HINTS ${LLVM_LIBRARY_DIRS}
-    )
-    find_path(LIBCLANG_INCLUDE_DIR
-        NAMES clang-c/Index.h
-        HINTS ${LLVM_INCLUDE_DIRS}
-    )
+    find_library(LIBCLANG_LIB NAMES libclang clang HINTS ${LLVM_LIBRARY_DIRS})
+    find_path(LIBCLANG_INCLUDE_DIR NAMES clang-c/Index.h HINTS ${LLVM_INCLUDE_DIRS})
 else()
-    find_library(LIBCLANG_LIB
-        NAMES clang libclang
-        HINTS ${LLVM_LIBRARY_DIR} /usr/lib/llvm-18/lib /usr/lib/x86_64-linux-gnu
-    )
-    find_path(LIBCLANG_INCLUDE_DIR
-        NAMES clang-c/Index.h
-        HINTS ${LLVM_INCLUDE_DIR} /usr/lib/llvm-18/include
-    )
+    find_library(LIBCLANG_LIB NAMES clang libclang HINTS ${LLVM_LIBRARY_DIR})
+    find_path(LIBCLANG_INCLUDE_DIR NAMES clang-c/Index.h HINTS ${LLVM_INCLUDE_DIR})
 endif()
 
 if(LIBCLANG_LIB AND LIBCLANG_INCLUDE_DIR)
@@ -104,23 +87,11 @@ else()
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# STATIC LLVM COMPONENTS
+# STATIC LLVM COMPONENTS — FIX FOR YOUR ERROR
 # ──────────────────────────────────────────────────────────────────────────────
 
-llvm_map_components_to_libnames(LLVM_LIBS
-    core
-    support
-    irreader
-    bitreader
-    bitwriter
-    mc
-    mcparser
-    option
-    x86codegen
-    x86asmparser
-    x86desc
-    x86info
-)
+# Your code calls LLVMInitializeAllTargets() → you MUST link ALL targets.
+llvm_map_components_to_libnames(LLVM_LIBS all)
 
 target_link_libraries(cshift PRIVATE ${LLVM_LIBS})
 
@@ -200,9 +171,7 @@ function(add_frt_target triple cc)
     add_dependencies(cshift "frt_${triple}")
 
     if(CSHIFT_BUNDLE_FRT)
-        install(FILES "${out_obj}"
-            DESTINATION "share/cshift/frt/${triple}"
-        )
+        install(FILES "${out_obj}" DESTINATION "share/cshift/frt/${triple}")
     endif()
 endfunction()
 
@@ -214,9 +183,6 @@ if(CSHIFT_PRECOMPILE_FRT)
     if(NOT WIN32)
         add_frt_target("x86_64-linux-gnu"   "x86_64-linux-gnu-gcc")
         add_frt_target("aarch64-linux-gnu"  "aarch64-linux-gnu-gcc")
-    endif()
-
-    if(NOT WIN32)
         add_frt_target("x86_64-w64-mingw32" "x86_64-w64-mingw32-gcc")
     endif()
 
