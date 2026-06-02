@@ -271,17 +271,40 @@ endif()
 # Generates an 'uninstall' target that removes exactly the files cmake installed.
 # Invoke with:  cmake --build . --target uninstall
 
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
-    IMMEDIATE @ONLY
-)
-
-add_custom_target(uninstall
-    COMMAND "${CMAKE_COMMAND}" -P
-            "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
-    COMMENT "Uninstalling cshift from ${CMAKE_INSTALL_PREFIX}"
-)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+        @ONLY
+    )
+    add_custom_target(uninstall
+        COMMAND "${CMAKE_COMMAND}" -P
+                "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+        COMMENT "Uninstalling cshift from ${CMAKE_INSTALL_PREFIX}"
+    )
+else()
+    # Fallback inline uninstall (no .in file needed)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake" [=[
+if(EXISTS "${CMAKE_CURRENT_BINARY_DIR}/install_manifest.txt")
+    file(READ "${CMAKE_CURRENT_BINARY_DIR}/install_manifest.txt" files)
+    string(REGEX REPLACE "\n" ";" files "${files}")
+    foreach(f ${files})
+        string(STRIP "${f}" f)
+        if(EXISTS "${f}" OR IS_SYMLINK "${f}")
+            message(STATUS "Removing: ${f}")
+            file(REMOVE "${f}")
+        endif()
+    endforeach()
+else()
+    message(WARNING "install_manifest.txt not found — nothing to uninstall")
+endif()
+]=])
+    add_custom_target(uninstall
+        COMMAND "${CMAKE_COMMAND}" -P
+                "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+        COMMENT "Uninstalling cshift from ${CMAKE_INSTALL_PREFIX}"
+    )
+endif()
 
 # ── CPack — .deb and portable tarball ─────────────────────────────────────────
 
@@ -325,12 +348,18 @@ include(CPack)
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
+if(CSHIFT_LINK_STATIC)
+    set(CSHIFT_LINK_MODE_STR "STATIC")
+else()
+    set(CSHIFT_LINK_MODE_STR "SHARED")
+endif()
+
 message(STATUS "")
 message(STATUS "C<< (cshift) build summary")
 message(STATUS "  Version        : ${PROJECT_VERSION}")
 message(STATUS "  Install prefix : ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "  LLVM version   : ${LLVM_PACKAGE_VERSION}")
-message(STATUS "  Link mode      : ${$<IF:$<BOOL:${CSHIFT_LINK_STATIC}>,STATIC,SHARED>}")
+message(STATUS "  Link mode      : ${CSHIFT_LINK_MODE_STR}")
 message(STATUS "  C-header import: ${CSHIFT_HAVE_CHEADER} (libclang)")
 message(STATUS "  Bundle libclang: ${CSHIFT_BUNDLE_LIBCLANG}")
 message(STATUS "  Precompile frt : ${CSHIFT_PRECOMPILE_FRT}")
