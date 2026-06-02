@@ -62,7 +62,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=dist
 
       # ───────────────────────────────────────────────────────────────
-      # Windows (MSVC + LLVM portable ZIP)
+      # Windows (MSVC + LLVM 17 ZIP)
       # ───────────────────────────────────────────────────────────────
       - name: Activate MSVC
         if: runner.os == 'Windows'
@@ -72,7 +72,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-win64.zip"
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.6/clang+llvm-17.0.6-win64.zip"
           Invoke-WebRequest -Uri $url -OutFile llvm.zip
 
           Expand-Archive llvm.zip -DestinationPath llvm
