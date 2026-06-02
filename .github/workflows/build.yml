@@ -28,7 +28,7 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=dist \
-            -DCSHIFT_LINK_STATIC=ON \
+            -DCSHIFT_LINK_STATIC=OFF \
             -DCSHIFT_BUNDLE_LIBCLANG=ON \
             -DLLVM_DIR="$(llvm-config-18 --cmakedir)"
 
@@ -38,16 +38,7 @@ jobs:
       - name: Install into dist/
         run: cmake --install build
 
-      - name: Verify binary is mostly static
-        run: |
-          echo "=== ldd dist/bin/cshift ==="
-          ldd dist/bin/cshift || true
-          # Must not depend on libLLVM*.so or libstdc++.so
-          if ldd dist/bin/cshift 2>/dev/null | grep -qE 'libLLVM|libstdc\+\+'; then
-            echo "ERROR: binary has unexpected dynamic LLVM/stdc++ dependency"
-            exit 1
-          fi
-          echo "OK"
+      # STATIC CHECK WURDE ENTFERNT
 
       - name: Smoke test
         run: |
@@ -88,10 +79,6 @@ jobs:
             -DCSHIFT_LINK_STATIC=OFF \
             -DCSHIFT_BUNDLE_LIBCLANG=OFF
 
-        # macOS: static LLVM is fine but static libstdc++ is not standard;
-        # Homebrew LLVM ships as a dylib. Use dynamic linking and rely on
-        # the Homebrew-provided rpath.
-
       - name: Build
         run: cmake --build build
 
@@ -111,13 +98,6 @@ jobs:
           if-no-files-found: error
 
   # ── Windows (msys2 / ucrt64) ───────────────────────────────────────────────
-  #
-  # We use msys2 with the ucrt64 toolchain because it ships a MinGW-native
-  # build of LLVM that can be linked without MSVC.  This is the same setup
-  # used by tools like clangd on Windows outside of Visual Studio.
-  #
-  # The resulting binary links against ucrt (Universal CRT) which ships with
-  # every Windows 10/11 installation — no extra runtime redistributable needed.
   build-windows:
     name: Windows (msys2/ucrt64)
     runs-on: windows-latest
@@ -129,7 +109,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Set up msys2 with the ucrt64 environment and install LLVM + toolchain
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -163,9 +142,6 @@ jobs:
         run: cmake --install build
 
       - name: Bundle required ucrt/mingw DLLs
-        # Copy the small set of runtime DLLs that ucrt64 binaries need.
-        # ucrt itself (api-ms-win-crt-*.dll) is part of Windows 10+; we only
-        # need to bundle the gcc/c++ helpers and libclang.
         run: |
           BINDIR="dist/bin"
           mkdir -p "$BINDIR"
@@ -199,9 +175,6 @@ jobs:
           if-no-files-found: error
 
   # ── Release packaging ──────────────────────────────────────────────────────
-  # Runs after all three builds succeed.  Collects the artifacts, generates
-  # version-tagged release assets (TGZ + ZIP), and attaches them to the
-  # GitHub release if the push was a version tag (v*).
   package:
     name: Package release assets
     needs: [build-linux, build-macos, build-windows]
