@@ -880,13 +880,6 @@ private:
 
   void emit_call_stmt(Parser::ASTNode *n) { emit_call_val(n, /*result_name=*/""); }
 
-  // FIX (Bug 3 – root cause): parse_expression() does not stop at commas, so
-  // parse_call_statement puts ALL argument tokens into a single Expression node
-  // inside the Args wrapper.  e.g. printf("fmt", a, b) produces:
-  //   Args → [ Expression[ Token("fmt"), Token(","), Token(a), Token(","),
-  //   Token(b) ] ]
-  // We must split that flat token list on top-level commas ourselves.
-  // Returns groups of token-node vectors, one per argument.
   static std::vector<std::vector<Parser::ASTNode *>> split_args_by_comma(Parser::ASTNode *args_node)
   {
     std::vector<std::vector<Parser::ASTNode *>> groups;
@@ -995,6 +988,12 @@ private:
     EzFunc *f = it->second;
 
     std::vector<EzVal> args;
+
+    // FIX (Bug 1): build regular args and tunnel args in separate steps.
+    // The tunnel append must happen unconditionally — outside the
+    // children-present guard — so that zero-explicit-arg tunnel calls still
+    // pass their hidden output pointers.
+
     if (!n->children.empty())
     {
       // n->children[0] is the Args wrapper node from parse_call_statement
@@ -1024,9 +1023,12 @@ private:
         if (v)
           args.push_back(v);
       }
+    }
 
-      // Append hidden tunnel pointer args: pass address of caller's reserved
-      // slot. If a slot doesn't exist yet, create one.
+    // Append hidden tunnel pointer args unconditionally: pass address of
+    // caller's reserved slot. If a slot doesn't exist yet, create one.
+    {
+      auto tit = func_tunnels.find(fname);
       if (tit != func_tunnels.end())
       {
         for (auto &tp : tit->second)
@@ -1398,8 +1400,6 @@ private:
   // Condition: evaluate and ensure i1
   EzVal emit_condition(Parser::ASTNode *n)
   {
-    // FIX (Bug 2): pass empty hint instead of "bool" so that eval_token
-    // loads variables using their declared type rather than as i1.
     EzVal v = emit_expression_val(n, "");
     if (!v)
       return ez_const_bool(0);
@@ -1414,9 +1414,9 @@ private:
   void emit_expression(Parser::ASTNode *n) { emit_expression_val(n, "int32"); }
 
   // Walk a flat token list and build a value.
-  // We handle:  literals, identifiers (load), unary -, binary ops, function
-  // calls. This is a simple left-to-right evaluator for the flat expression
-  // AST.
+  // We handle:  literals, identifiers (load), unary -, unary !, binary ops,
+  // function calls. This is a simple left-to-right evaluator for the flat
+  // expression AST.
   EzVal eval_expr_children(const std::vector<Parser::ASTNode *> &tokens, const std::string &hint)
   {
     if (tokens.empty())
@@ -1439,13 +1439,29 @@ private:
     if (tokens.size() == 1)
       return eval_token(tokens[0], hint);
 
-    // Unary minus: - TOKEN
-    if (tokens.size() == 2 && tokens[0]->value == "-")
+    // Unary minus: - expr
+    if (tokens.size() >= 2 && tokens[0]->value == "-")
     {
-      EzVal v = eval_token(tokens[1], hint);
+      std::vector<Parser::ASTNode *> inner(tokens.begin() + 1, tokens.end());
+      EzVal v = eval_expr_children(inner, hint);
       if (!v)
         return nullptr;
       return is_float_type(hint) ? ez_fneg(mod, v, "neg") : ez_neg(mod, v, "neg");
+    }
+
+    if (tokens.size() >= 2 && tokens[0]->value == "!")
+    {
+      std::vector<Parser::ASTNode *> inner(tokens.begin() + 1, tokens.end());
+      EzVal v = eval_expr_children(inner, hint);
+      if (!v)
+        return nullptr;
+      EzType ty = LLVMTypeOf(v);
+      EzVal as_bool;
+      if (LLVMGetTypeKind(ty) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(ty) == 1)
+        as_bool = v;
+      else
+        as_bool = ez_ne(mod, v, LLVMConstInt(ty, 0, 0), "tobool");
+      return LLVMBuildNot(mod->builder, as_bool, "lnot");
     }
 
     // Binary expression: lhs op rhs
