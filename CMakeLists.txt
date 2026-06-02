@@ -5,11 +5,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# MinGW detection
+# Windows: MSVC erzwingen (LLVM ist MSVC‑gebaut)
 # ──────────────────────────────────────────────────────────────────────────────
 
-if(MINGW)
-    message(STATUS "Building with MinGW on Windows (LLVM MSVC ABI compatibility mode enabled)")
+if(WIN32 AND NOT MSVC)
+    message(FATAL_ERROR
+        "On Windows, cshift must be built with MSVC (cl.exe). "
+        "LLVM for Windows is built with MSVC and cannot be linked with MinGW. "
+        "Use: cmake -G \"Visual Studio 17 2022\" -A x64"
+    )
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -82,15 +86,6 @@ else()
 endif()
 
 target_link_libraries(cshift PRIVATE LLVM)
-
-# MinGW needs extra CRT libs for MSVC-built LLVM
-if(MINGW)
-    target_link_libraries(cshift PRIVATE
-        msvcrt
-        version
-        shlwapi
-    )
-endif()
 
 # LLVM-C headers (Linux distros put them in weird places)
 foreach(_llvmc_hint
