@@ -7,29 +7,24 @@ on:
     branches: [ "**" ]
 
 jobs:
-  build:
+  linux:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      # ───────────────────────────────────────────────────────────────
-      # Install dependencies
-      # ───────────────────────────────────────────────────────────────
       - name: Install LLVM + MinGW
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            llvm-dev \
-            clang \
-            lld \
+            llvm-dev clang lld \
             mingw-w64 \
             gcc-mingw-w64-x86-64 \
             g++-mingw-w64-x86-64
 
-      # ───────────────────────────────────────────────────────────────
-      # Native Linux build
-      # ───────────────────────────────────────────────────────────────
+      # ───────────────────────────────────────────────
+      # Linux native build
+      # ───────────────────────────────────────────────
       - name: Configure (Linux)
         run: cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release
 
@@ -39,9 +34,9 @@ jobs:
       - name: Install (Linux)
         run: cmake --install build-linux --prefix dist-linux
 
-      # ───────────────────────────────────────────────────────────────
-      # Windows Cross‑Compile
-      # ───────────────────────────────────────────────────────────────
+      # ───────────────────────────────────────────────
+      # Windows cross‑compile
+      # ───────────────────────────────────────────────
       - name: Configure (Windows cross)
         run: |
           cmake -S . -B build-win \
@@ -57,9 +52,9 @@ jobs:
       - name: Install (Windows cross)
         run: cmake --install build-win --prefix dist-windows
 
-      # ───────────────────────────────────────────────────────────────
+      # ───────────────────────────────────────────────
       # Upload artifacts
-      # ───────────────────────────────────────────────────────────────
+      # ───────────────────────────────────────────────
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
@@ -71,3 +66,31 @@ jobs:
         with:
           name: cshift-windows
           path: dist-windows/
+
+  macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM
+        run: |
+          brew install llvm
+          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+
+      - name: Configure (macOS)
+        run: cmake -S . -B build-macos \
+          -DCMAKE_PREFIX_PATH="$(brew --prefix llvm)" \
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (macOS)
+        run: cmake --build build-macos --config Release
+
+      - name: Install (macOS)
+        run: cmake --install build-macos --prefix dist-macos
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cshift-macos
+          path: dist-macos/
