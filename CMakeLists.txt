@@ -14,7 +14,6 @@ option(CSHIFT_BUNDLE_FRT
     "Copy precompiled frt.o blobs into the install tree under share/cshift/frt/"
     ON)
 
-# WICHTIG: Standardmäßig dynamisch linken
 option(CSHIFT_LINK_STATIC
     "Link LLVM and C++ runtime statically (produces a more portable binary)"
     OFF)
@@ -28,7 +27,6 @@ option(CSHIFT_BUNDLE_LIBCLANG
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 
-# Bei dynamischem Linking einfach das monolithische libLLVM.so verwenden
 set(CSHIFT_LLVM_LIBS LLVM)
 message(STATUS "LLVM link mode: SHARED (libLLVM.so)")
 
@@ -100,9 +98,7 @@ endif()
 
 target_compile_definitions(cshift PRIVATE CSHIFT_HAVE_LLVM_BITCODE=1)
 
-# ── Linking (nur dynamisch) ───────────────────────────────────────────────────
 
-# Keine statischen Flags, keine -Bstatic, einfach normal gegen LLVM + libclang
 target_link_libraries(cshift PRIVATE ${CSHIFT_LLVM_LIBS})
 
 if(CSHIFT_HAVE_CHEADER)
