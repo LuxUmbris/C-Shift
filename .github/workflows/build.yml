@@ -30,9 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ───────────────────────────────────────────────────────────────
-      # Linux
-      # ───────────────────────────────────────────────────────────────
+      # ── Linux ──────────────────────────────────────────────────────────────
       - name: Install LLVM (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -45,9 +43,7 @@ jobs:
           cmake -S . -B build \
             -DCMAKE_INSTALL_PREFIX=dist
 
-      # ───────────────────────────────────────────────────────────────
-      # macOS
-      # ───────────────────────────────────────────────────────────────
+      # ── macOS ──────────────────────────────────────────────────────────────
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -61,9 +57,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$(brew --prefix llvm)" \
             -DCMAKE_INSTALL_PREFIX=dist
 
-      # ───────────────────────────────────────────────────────────────
-      # Windows (MSVC + Ninja)
-      # ───────────────────────────────────────────────────────────────
+      # ── Windows (MSVC + Ninja) ─────────────────────────────────────────────
       - name: Find LLVM (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -84,18 +78,14 @@ jobs:
             -DCMAKE_INSTALL_PREFIX=dist `
             -G "Ninja"
 
-      # ───────────────────────────────────────────────────────────────
-      # Build + Install
-      # ───────────────────────────────────────────────────────────────
+      # ── Build + Install ────────────────────────────────────────────────────
       - name: Build
         run: cmake --build build --config Release
 
       - name: Install into dist/
         run: cmake --install build --config Release
 
-      # ───────────────────────────────────────────────────────────────
-      # Install script (Linux/macOS)
-      # ───────────────────────────────────────────────────────────────
+      # ── Write install script (Linux/macOS) ────────────────────────────────
       - name: Write install script (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
@@ -128,9 +118,7 @@ jobs:
           SCRIPT
           chmod +x dist/install.sh
 
-      # ───────────────────────────────────────────────────────────────
-      # Install script (Windows)
-      # ───────────────────────────────────────────────────────────────
+      # ── Write install script (Windows) ────────────────────────────────────
       - name: Write install script (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -165,9 +153,7 @@ jobs:
           '@
           $script | Out-File -Encoding UTF8 dist\install.ps1
 
-      # ───────────────────────────────────────────────────────────────
-      # Upload artifact
-      # ───────────────────────────────────────────────────────────────
+      # ── Upload artifact ────────────────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
