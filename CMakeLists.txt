@@ -4,7 +4,7 @@ project(cshift CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if(WIN32 AND NOT MSVC)
+if(WIN32 AND NOT MSVC AND NOT CMAKE_CROSSCOMPILING)
     message(FATAL_ERROR
         "On Windows, cshift must be built with MSVC (cl.exe). "
         "LLVM for Windows is built with MSVC and cannot be linked with MinGW. "
