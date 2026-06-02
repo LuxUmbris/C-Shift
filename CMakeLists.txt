@@ -16,7 +16,7 @@ option(CSHIFT_BUNDLE_LIBCLANG "Bundle libclang.so" ON)
 find_package(LLVM REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 
-# KORREKTE LLVM-KOMPONENTEN
+# LLVM 18 — korrekte Komponenten
 set(CSHIFT_LLVM_COMPONENTS
     core
     analysis
@@ -25,22 +25,44 @@ set(CSHIFT_LLVM_COMPONENTS
     transformutils
     passes
 
-    # IR + Bitcode
     bitreader
     bitwriter
 
-    # MC layer
     mc
     mcparser
     mcdisassembler
 
-    # Backends
-    x86
-    aarch64
-    arm
-    riscv
+    # X86 backend
+    x86codegen
+    x86desc
+    x86info
+    x86asmparser
+    x86asmprinter
+    x86disassembler
 
-    # Base utilities
+    # AArch64 backend
+    aarch64codegen
+    aarch64desc
+    aarch64info
+    aarch64asmparser
+    aarch64asmprinter
+    aarch64disassembler
+
+    # ARM backend
+    armcodegen
+    armdesc
+    arminfo
+    armasmparser
+    armasmprinter
+    armdisassembler
+
+    # RISCV backend
+    riscvcodegen
+    riscvdesc
+    riscvinfo
+    riscvassembler
+    riscvdisassembler
+
     support
 )
 
