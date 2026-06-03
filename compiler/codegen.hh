@@ -827,9 +827,9 @@ private:
       EzVal base_ptr = lookup_var(base);
       if (!base_ptr)
         return;
-        auto vit2 = var_type_map.find(base);
-      bool is_ptr_var2 = (vit2 != var_type_map.end() && !vit2->second.empty() &&
-                          vit2->second.back() == '*');
+      auto vit2 = var_type_map.find(base);
+      bool is_ptr_var2 =
+          (vit2 != var_type_map.end() && !vit2->second.empty() && vit2->second.back() == '*');
       EzVal gep_base2 = base_ptr;
       if (is_ptr_var2)
       {
@@ -999,7 +999,6 @@ private:
     EzFunc *f = it->second;
 
     std::vector<EzVal> args;
-
 
     if (!n->children.empty())
     {
@@ -1473,17 +1472,17 @@ private:
 
     if (tokens.size() >= 2 && tokens[0]->value == "&")
     {
-        if (tokens.size() == 2 && tokens[1]->token_type == Lexer::TokenType::IDENTIFIER)
+      if (tokens.size() == 2 && tokens[1]->token_type == Lexer::TokenType::IDENTIFIER)
       {
         EzVal ptr = lookup_var(tokens[1]->value);
         if (ptr)
           return ptr; // alloca pointer IS the address
       }
-        if (tokens.size() == 4 && tokens[1]->token_type == Lexer::TokenType::IDENTIFIER &&
+      if (tokens.size() == 4 && tokens[1]->token_type == Lexer::TokenType::IDENTIFIER &&
           tokens[2]->value == "." && tokens[3]->token_type == Lexer::TokenType::IDENTIFIER)
       {
-        EzVal field_ptr = gep_field(lookup_var(tokens[1]->value),
-                                     tokens[1]->value, tokens[3]->value);
+        EzVal field_ptr =
+            gep_field(lookup_var(tokens[1]->value), tokens[1]->value, tokens[3]->value);
         if (field_ptr)
           return field_ptr;
       }
@@ -1570,9 +1569,9 @@ private:
       EzVal base_ptr = lookup_var(base);
       if (base_ptr)
       {
-            auto vit = var_type_map.find(base);
-        bool is_ptr_var = (vit != var_type_map.end() && !vit->second.empty() &&
-                           vit->second.back() == '*');
+        auto vit = var_type_map.find(base);
+        bool is_ptr_var =
+            (vit != var_type_map.end() && !vit->second.empty() && vit->second.back() == '*');
         EzVal gep_base = base_ptr;
         if (is_ptr_var)
         {

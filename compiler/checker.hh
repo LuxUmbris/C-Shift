@@ -500,9 +500,9 @@ private:
       int type_matches = 0;
       for (auto &ti : sig.tunnels)
       {
-        bool ti_is_template_param = (!ti.type.empty() && ti.type.size() <= 2 &&
-            std::isupper((unsigned char)ti.type[0]) &&
-            (ti.type.size() == 1 || std::isupper((unsigned char)ti.type[1])));
+        bool ti_is_template_param =
+            (!ti.type.empty() && ti.type.size() <= 2 && std::isupper((unsigned char)ti.type[0]) &&
+             (ti.type.size() == 1 || std::isupper((unsigned char)ti.type[1])));
         bool type_ok = (ti.type == want_type) || ti_is_template_param;
         if (type_ok && ti.name == want_name)
         {
