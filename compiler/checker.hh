@@ -500,12 +500,16 @@ private:
       int type_matches = 0;
       for (auto &ti : sig.tunnels)
       {
-        if (ti.type == want_type && ti.name == want_name)
+        bool ti_is_template_param = (!ti.type.empty() && ti.type.size() <= 2 &&
+            std::isupper((unsigned char)ti.type[0]) &&
+            (ti.type.size() == 1 || std::isupper((unsigned char)ti.type[1])));
+        bool type_ok = (ti.type == want_type) || ti_is_template_param;
+        if (type_ok && ti.name == want_name)
         {
           exact_match = true;
           break;
         }
-        if (ti.type == want_type)
+        if (type_ok)
           type_matches++;
       }
       if (!exact_match && type_matches == 0 && !sig.tunnels.empty())
@@ -1019,8 +1023,9 @@ private:
       return true;
     if (enum_types.count(base))
       return true;
-    // Check template types (e.g., "Vector<int32>")
     if (template_types.count(base))
+      return true;
+    if (template_types.count(base + "<...>"))
       return true;
     // If any struct type is registered with matching prefix (templated struct)
     for (auto &s : struct_types)
