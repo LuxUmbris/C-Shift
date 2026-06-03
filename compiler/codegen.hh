@@ -827,7 +827,18 @@ private:
       EzVal base_ptr = lookup_var(base);
       if (!base_ptr)
         return;
-      ptr = gep_field(base_ptr, base, field);
+        auto vit2 = var_type_map.find(base);
+      bool is_ptr_var2 = (vit2 != var_type_map.end() && !vit2->second.empty() &&
+                          vit2->second.back() == '*');
+      EzVal gep_base2 = base_ptr;
+      if (is_ptr_var2)
+      {
+        std::string pointed = vit2->second.substr(0, vit2->second.size() - 1);
+        auto sit = struct_map.find(pointed);
+        EzType struct_ty = (sit != struct_map.end()) ? sit->second.llvm_type : ez_i8();
+        gep_base2 = ez_load(mod, ez_ptr_to(struct_ty), base_ptr, (base + "_deref").c_str());
+      }
+      ptr = gep_field(gep_base2, base, field);
       load_type = field_type_of(base, field);
     }
     else
@@ -989,10 +1000,6 @@ private:
 
     std::vector<EzVal> args;
 
-    // FIX (Bug 1): build regular args and tunnel args in separate steps.
-    // The tunnel append must happen unconditionally — outside the
-    // children-present guard — so that zero-explicit-arg tunnel calls still
-    // pass their hidden output pointers.
 
     if (!n->children.empty())
     {
@@ -1464,6 +1471,36 @@ private:
       return LLVMBuildNot(mod->builder, as_bool, "lnot");
     }
 
+    if (tokens.size() >= 2 && tokens[0]->value == "&")
+    {
+        if (tokens.size() == 2 && tokens[1]->token_type == Lexer::TokenType::IDENTIFIER)
+      {
+        EzVal ptr = lookup_var(tokens[1]->value);
+        if (ptr)
+          return ptr; // alloca pointer IS the address
+      }
+        if (tokens.size() == 4 && tokens[1]->token_type == Lexer::TokenType::IDENTIFIER &&
+          tokens[2]->value == "." && tokens[3]->token_type == Lexer::TokenType::IDENTIFIER)
+      {
+        EzVal field_ptr = gep_field(lookup_var(tokens[1]->value),
+                                     tokens[1]->value, tokens[3]->value);
+        if (field_ptr)
+          return field_ptr;
+      }
+    }
+
+    if (tokens.size() >= 2 && tokens[0]->value == "*" &&
+        (tokens.size() == 2 || tokens[1]->value != "*"))
+    {
+      std::vector<Parser::ASTNode *> inner(tokens.begin() + 1, tokens.end());
+      EzVal ptr = eval_expr_children(inner, hint + "*");
+      if (ptr)
+      {
+        EzType pointee = hint.empty() ? ez_i32() : cshift_type(hint);
+        return ez_load(mod, pointee, ptr, "deref");
+      }
+    }
+
     // Binary expression: lhs op rhs
     // Find rightmost low-precedence operator (simple left-associative)
     int op_idx = find_binary_op(tokens);
@@ -1533,7 +1570,19 @@ private:
       EzVal base_ptr = lookup_var(base);
       if (base_ptr)
       {
-        EzVal field_ptr = gep_field(base_ptr, base, field);
+            auto vit = var_type_map.find(base);
+        bool is_ptr_var = (vit != var_type_map.end() && !vit->second.empty() &&
+                           vit->second.back() == '*');
+        EzVal gep_base = base_ptr;
+        if (is_ptr_var)
+        {
+          // Determine the struct type name (strip trailing *)
+          std::string pointed = vit->second.substr(0, vit->second.size() - 1);
+          auto sit = struct_map.find(pointed);
+          EzType struct_ty = (sit != struct_map.end()) ? sit->second.llvm_type : ez_i8();
+          gep_base = ez_load(mod, ez_ptr_to(struct_ty), base_ptr, (base + "_deref").c_str());
+        }
+        EzVal field_ptr = gep_field(gep_base, base, field);
         std::string ftype = field_type_of(base, field);
         EzType fty = cshift_type(ftype.empty() ? hint : ftype);
         return ez_load(mod, fty, field_ptr, field.c_str());
