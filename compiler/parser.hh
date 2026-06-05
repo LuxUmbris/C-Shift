@@ -21,6 +21,12 @@ public:
     size_t line;
     size_t depth;
     Lexer::TokenType token_type = Lexer::TokenType::IDENTIFIER; // for Token nodes
+    // Generic annotation written by the checker, read by codegen.
+    // For Switch nodes that are voided-state guards this is set to:
+    //   "voided"  — the switched variable was statically known to be voided
+    //   "valid"   — the switched variable was statically known to be valid
+    //   ""        — unknown / not a voided-state guard (default)
+    std::string meta;
 
     ASTNode(std::string t, std::string v, size_t l, size_t d)
         : type(std::move(t)), value(std::move(v)), line(l), depth(d)
@@ -104,6 +110,15 @@ private:
         return parse_struct();
       if (kw == "def")
         return parse_function();
+      if (kw == "export")
+      {
+        // export def <name>(...) { ... }
+        // Consume 'export', then parse the function normally and mark it.
+        advance_token();
+        ASTNode *fn = parse_function();
+        fn->meta = "export";
+        return fn;
+      }
       if (kw == "enum")
         return parse_enum();
       if (kw == "tunnel")

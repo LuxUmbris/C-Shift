@@ -145,6 +145,10 @@ public:
   // Print resolution steps to stderr
   bool verbose = false;
 
+  // Extra -I paths forwarded to libclang when parsing C headers via
+  // `import <header.h>` or `import "header.h"`.
+  std::vector<std::string> extra_include_dirs;
+
   // ── Public API ────────────────────────────────────────────────────────────
 
   // Resolve a ModuleImport name ("std", "io::file", …) to a .cll path.
@@ -560,7 +564,7 @@ static inline ResolvedAST resolve_all_imports(std::vector<Parser::ASTNode *> &as
         std::cerr << "[import] C header " << (is_system ? "<" : "\"") << header_name
                   << (is_system ? ">" : "\"") << "\n";
       // parse_c_header returns freshly-allocated nodes — treat as owned
-      std::vector<Parser::ASTNode *> hnodes = parse_c_header(header_name, is_system, {}, verbose);
+      std::vector<Parser::ASTNode *> hnodes = parse_c_header(header_name, is_system, loader.extra_include_dirs, verbose);
       for (auto *hn : hnodes)
       {
         result.all.push_back(hn);

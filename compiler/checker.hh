@@ -428,9 +428,41 @@ private:
   {
     std::string type = extract_base_type(n->value);
     std::string name = extract_name(n->value);
+
+    if (!is_known_type(type))
+      add_warning(n->line, "Unknown type '" + type + "' for const '" + name + "'");
+
     declare({name, type, arena_depth, false, is_pointer_type(type), true, false});
+
     if (!n->children.empty())
-      check_expression(n->children[0]);
+    {
+      auto *init = n->children[0];
+      // Same literal type-mismatch checks as check_declaration
+      if (init->type == "Expression" && init->children.size() == 1)
+      {
+        auto *tok = init->children[0];
+        if (tok->token_type == Lexer::TokenType::STRING && type != "string" &&
+            type != "char*" && !is_pointer_type(type))
+          add_error(n->line,
+                    "Type mismatch: string literal assigned to const '" + type + " " + name + "'");
+        if (tok->token_type == Lexer::TokenType::NUMBER && type == "string")
+          add_error(n->line,
+                    "Type mismatch: numeric literal assigned to const '" + type + " " + name + "'");
+        if (tok->token_type == Lexer::TokenType::NUMBER &&
+            (type == "bool") && tok->value != "0" && tok->value != "1")
+          add_warning(n->line,
+                      "Suspicious: non-boolean numeric literal assigned to const 'bool " + name + "'");
+        // float literal to integer type
+        if (tok->token_type == Lexer::TokenType::NUMBER && tok->value.find('.') != std::string::npos)
+        {
+          if (type == "int8" || type == "int16" || type == "int32" || type == "int64" ||
+              type == "uint8" || type == "uint16" || type == "uint32" || type == "uint64")
+            add_error(n->line,
+                      "Type mismatch: float literal assigned to integer const '" + type + " " + name + "'");
+        }
+      }
+      check_expression(init);
+    }
   }
 
   void check_reserve(Parser::ASTNode *n)
@@ -792,6 +824,15 @@ private:
         add_warning(n->line,
                     "switch on voided variable '" + switched_var + "' without 'case voided'");
     }
+
+    // Annotate the Switch node with the statically-known voided state so that
+    // codegen can emit a direct unconditional branch with zero runtime overhead.
+    //   meta == "voided"  → variable was definitely voided here
+    //   meta == "valid"   → variable was definitely valid here (guard is redundant
+    //                        but legal; codegen takes the valid branch directly)
+    //   meta == ""        → not a voided-state guard (regular numeric switch)
+    if (is_voided_guard)
+      n->meta = was_voided ? "voided" : "valid";
 
     // Check each case body
     switch_depth++;

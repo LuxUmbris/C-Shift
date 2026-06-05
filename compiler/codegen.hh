@@ -362,6 +362,12 @@ private:
     EzFunc *f = ez_func(mod, name.c_str(), ret, params.data(), (unsigned)params.size(), 0);
     for (unsigned i = 0; i < pnames.size(); ++i)
       ez_set_param_name(f, i, pnames[i].c_str());
+    // Non-exported functions get internal linkage — invisible to the C linker.
+    // export def → ExternalLinkage (visible/callable from C).
+    if (n->meta == "export")
+      LLVMSetLinkage(f->fn, LLVMExternalLinkage);
+    else
+      LLVMSetLinkage(f->fn, LLVMInternalLinkage);
     func_map[name] = f;
   }
 
@@ -505,7 +511,7 @@ private:
     else if (t == "Tunnel")
       emit_tunnel(n);
     else if (t == "Move")
-    { /* voided-state is static; no runtime action */
+    { /* voided-state is statically resolved by the checker; no runtime action */
     }
     else if (t == "Reset")
     { /* no runtime action */
@@ -1019,6 +1025,7 @@ private:
       if (total_params > 0)
         LLVMGetParamTypes(fn_type, param_types.data());
 
+      bool is_vararg_fn = LLVMIsFunctionVarArg(fn_type) != 0;
       for (auto &grp : arg_groups)
       {
         std::string arg_hint = "";
@@ -1027,7 +1034,18 @@ private:
           arg_hint = hint_from_llvm_type(param_types[arg_idx]);
         EzVal v = eval_expr_children(grp, arg_hint);
         if (v)
+        {
           args.push_back(v);
+        }
+        else if (!is_vararg_fn && arg_idx < regular_params)
+        {
+          // Arg failed to evaluate but the function expects a specific type
+          // here. Emit a zero constant of the declared type so LLVM IR
+          // verification does not fail with "wrong number of arguments".
+          args.push_back(LLVMConstNull(param_types[arg_idx]));
+        }
+        // For vararg extra args that evaluated to nullptr we just drop them;
+        // dropping variadic args cannot cause a verifier count mismatch.
       }
     }
 
@@ -1048,6 +1066,38 @@ private:
           }
           // Pass the alloca pointer directly (it IS the address)
           args.push_back(slot);
+        }
+      }
+    }
+
+    // ── Guard: ensure non-vararg calls have exactly the right arg count ──────
+    {
+      EzType fn_type2 = LLVMGlobalGetValueType(f->fn);
+      bool va2 = LLVMIsFunctionVarArg(fn_type2) != 0;
+      unsigned total_params2 = LLVMCountParamTypes(fn_type2);
+      auto tit2 = func_tunnels.find(fname);
+      unsigned n_tunnels2 = tit2 != func_tunnels.end() ? (unsigned)tit2->second.size() : 0;
+      unsigned regular2 = total_params2 - n_tunnels2;
+
+      if (!va2)
+      {
+        // args = [user_args... , tunnel_args...]
+        // The tunnel args were just appended, so user_args_count = args.size() - n_tunnels2
+        unsigned user_args_count = (unsigned)args.size() > n_tunnels2
+                                       ? (unsigned)args.size() - n_tunnels2
+                                       : 0;
+        if (user_args_count < regular2)
+        {
+          std::vector<LLVMTypeRef> all_ptypes(total_params2);
+          if (total_params2 > 0)
+            LLVMGetParamTypes(fn_type2, all_ptypes.data());
+          for (unsigned i = user_args_count; i < regular2; ++i)
+            args.insert(args.begin() + i, LLVMConstNull(all_ptypes[i]));
+        }
+        else if (user_args_count > regular2)
+        {
+          unsigned excess = user_args_count - regular2;
+          args.erase(args.begin() + regular2, args.begin() + regular2 + excess);
         }
       }
     }
@@ -1309,9 +1359,50 @@ private:
     if (n->children.empty())
       return;
 
+    // ── Voided-state guard: fully static, zero runtime cost ─────────────────
+    // The checker has already resolved whether the switched variable was
+    // voided or valid at this point and stored the result in n->meta:
+    //   "voided" → unconditional br to the 'case voided' block
+    //   "valid"  → unconditional br to the 'case valid' block
+    //   ""       → regular numeric switch (handled below)
+    if (!n->meta.empty())
+    {
+      bool take_voided = (n->meta == "voided");
+
+      // Find the target case body
+      Parser::ASTNode *target_case = nullptr;
+      std::string target_val = take_voided ? "voided" : "valid";
+      for (size_t i = 1; i < n->children.size(); ++i)
+      {
+        auto *c = n->children[i];
+        if (c->type == "Case" && c->value == target_val)
+        {
+          target_case = c;
+          break;
+        }
+      }
+      // If the expected arm is missing, emit nothing (checker already warned)
+      if (!target_case)
+        return;
+
+      // Emit the body inline — no branch overhead at all
+      EzBlock *end_b = ez_block(current_func, "sw.end");
+      loop_stack.push_back({end_b, nullptr, true});
+
+      for (auto *stmt : target_case->children)
+        emit_stmt(stmt);
+      if (!current_block_has_terminator())
+        ez_br(mod, end_b);
+
+      loop_stack.pop_back();
+      current_block = end_b;
+      ez_use(end_b);
+      return;
+    }
+
+    // ── Regular numeric switch ───────────────────────────────────────────────
     EzVal switched = emit_expression_val(n->children[0], "int32");
 
-    // Count cases
     std::vector<Parser::ASTNode *> cases;
     Parser::ASTNode *default_node = nullptr;
     for (size_t i = 1; i < n->children.size(); ++i)
@@ -1323,50 +1414,30 @@ private:
         default_node = c;
     }
 
-    EzBlock *end_b = ez_block(current_func, "sw.end");
-
-    // Build case blocks
+    EzBlock *end_b    = ez_block(current_func, "sw.end");
     std::vector<EzBlock *> case_blocks;
     for (auto *c : cases)
       case_blocks.push_back(ez_block(current_func, ("sw.case." + c->value).c_str()));
     EzBlock *default_b = default_node ? ez_block(current_func, "sw.default") : end_b;
 
-    // LLVM switch instruction
     LLVMValueRef sw =
         LLVMBuildSwitch(mod->builder, switched, default_b->bb, (unsigned)cases.size());
     for (size_t i = 0; i < cases.size(); ++i)
     {
       const std::string &val_s = cases[i]->value;
-      // valid/voided are symbolic; map to i32 sentinel values for now
       long long ival = 0;
-      if (val_s == "valid")
-        ival = 1;
-      else if (val_s == "voided")
-        ival = 0;
-      else
-      {
-        try
-        {
-          ival = std::stoll(val_s);
-        }
-        catch (...)
-        {
-        }
-      }
+      try { ival = std::stoll(val_s); } catch (...) {}
       LLVMAddCase(sw, LLVMConstInt(ez_i32(), (unsigned long long)ival, 1), case_blocks[i]->bb);
     }
 
-    // Push switch context for break handling
     loop_stack.push_back({end_b, nullptr, true});
 
-    // Emit case bodies
     for (size_t i = 0; i < cases.size(); ++i)
     {
       current_block = case_blocks[i];
       ez_use(case_blocks[i]);
       for (auto *stmt : cases[i]->children)
         emit_stmt(stmt);
-      // Guard against double terminator (break already added one)
       if (!current_block_has_terminator())
         ez_br(mod, end_b);
     }
@@ -1376,13 +1447,11 @@ private:
       ez_use(default_b);
       for (auto *stmt : default_node->children)
         emit_stmt(stmt);
-      // Guard against double terminator
       if (!current_block_has_terminator())
         ez_br(mod, end_b);
     }
 
     loop_stack.pop_back();
-
     current_block = end_b;
     ez_use(end_b);
   }
@@ -1529,6 +1598,20 @@ private:
       std::vector<Parser::ASTNode *> idx_toks;
       for (size_t i = 2; i < tokens.size() - 1; ++i)
         idx_toks.push_back(tokens[i]);
+
+      // arr[[:]] — length-of operator
+      if (idx_toks.size() == 1 && idx_toks[0]->value == "[:]")
+      {
+        auto eit = arena_array_elem_type.find(arr);
+        if (eit != arena_array_elem_type.end())
+        {
+          EzVal len_ptr = get_arena_len_ptr(arr);
+          if (len_ptr)
+            return ez_load(mod, ez_i64(), len_ptr, "arr_len");
+        }
+        return nullptr;
+      }
+
       EzVal idx = eval_expr_children(idx_toks, "int64");
       if (!idx)
         return nullptr;
@@ -1601,6 +1684,7 @@ private:
     int depth = 0;
     for (auto &level : prec)
     {
+      depth = 0; // reset for each precedence scan
       // scan right-to-left at depth 0
       for (int i = (int)tokens.size() - 1; i >= 1; --i)
       {
@@ -1723,6 +1807,7 @@ private:
     if (total_params > 0)
       LLVMGetParamTypes(fn_type, param_types.data());
 
+    bool is_vararg_fn2 = LLVMIsFunctionVarArg(fn_type) != 0;
     std::vector<EzVal> args;
     for (auto &grp : arg_groups)
     {
@@ -1731,7 +1816,16 @@ private:
           (arg_idx < regular_params) ? hint_from_llvm_type(param_types[arg_idx]) : "";
       EzVal v = eval_expr_children(grp, arg_hint);
       if (v)
+      {
         args.push_back(v);
+      }
+      else if (!is_vararg_fn2 && arg_idx < regular_params)
+      {
+        // Arg failed to evaluate but the function expects a specific type
+        // here. Emit a zero constant of the declared type so LLVM IR
+        // verification does not fail with "wrong number of arguments".
+        args.push_back(LLVMConstNull(param_types[arg_idx]));
+      }
     }
 
     // Append hidden tunnel pointer args — find or create caller slots
@@ -1747,6 +1841,26 @@ private:
           declare_var(tp.name, slot, tp.type);
         }
         args.push_back(slot);
+      }
+    }
+
+    // ── Guard: ensure non-vararg calls have exactly the right arg count ──────
+    if (!is_vararg_fn2)
+    {
+      // At this point args = [user_args... , tunnel_args...]
+      // Expected layout:     [regular_params..., tunnel_params...]
+      // If user provided fewer args than regular_params, pad before tunnels.
+      unsigned user_args_now = (unsigned)args.size() - n_tunnels2;
+      if (user_args_now < regular_params)
+      {
+        for (unsigned pi = user_args_now; pi < regular_params; ++pi)
+          args.insert(args.begin() + pi, LLVMConstNull(param_types[pi]));
+      }
+      // If user provided too many args, trim the excess before tunnel args.
+      else if (user_args_now > regular_params)
+      {
+        unsigned excess = user_args_now - regular_params;
+        args.erase(args.begin() + regular_params, args.begin() + regular_params + excess);
       }
     }
 
