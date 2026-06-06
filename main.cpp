@@ -362,6 +362,7 @@ int main(int argc, char **argv)
   bool check_only = false;
   bool verbose = false;
   std::vector<std::string> linker_flags_storage;
+  std::vector<std::string> extra_include_dirs_storage;
 
   // Optimization level: 0=none(debug), 1=less, 2=default, 3=aggressive
   // Stored as the LLVM pipeline string for LLVMRunPasses.
@@ -448,6 +449,13 @@ int main(int argc, char **argv)
       linker_flags_storage.push_back(a);
     else if (a == "--link-flag" && i + 1 < argc)
       linker_flags_storage.push_back(argv[++i]);
+    else if (a.size() >= 2 && a[0] == '-' && a[1] == 'I')
+    {
+      if (a.size() > 2)
+        extra_include_dirs_storage.push_back(a.substr(2));
+      else if (i + 1 < argc)
+        extra_include_dirs_storage.push_back(argv[++i]);
+    }
     else if (a[0] != '-')
     {
       if (!src_path.empty())
@@ -522,6 +530,7 @@ int main(int argc, char **argv)
            "/opt/homebrew/share/cshift",
        })
     loader.search_dirs.push_back(d);
+  loader.extra_include_dirs = extra_include_dirs_storage;
 
   // ── Lex + parse the main source ─────────────────────────────────────────
   Lexer lexer(read_file(src_path));

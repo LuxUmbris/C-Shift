@@ -103,8 +103,96 @@ class Codegen
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
-  void push_scope() { var_scopes.push_back({}); }
-  void pop_scope() { var_scopes.pop_back(); }
+  // ── Arena-based scope model ───────────────────────────────────────────────
+  // Every scope that may heap-allocate owns a cshift_arena_t stack slot.
+  // All managed allocations (Vector, T[], etc.) register their pointer with
+  // the arena via cshift_arena_push(). On scope exit ONE call to
+  // cshift_arena_free_all() releases everything.  `reset;` calls
+  // cshift_arena_reset() which frees data but keeps the arena alive.
+
+  struct ArenaScope { EzVal arena_slot; /* alloca ptr, or nullptr if no allocs yet */ };
+  std::vector<ArenaScope> arena_stack;
+
+  EzVal get_or_create_scope_arena()
+  {
+    if (arena_stack.empty()) return nullptr;
+    ArenaScope &as = arena_stack.back();
+    if (as.arena_slot) return as.arena_slot;
+    // Represent cshift_arena_t as [3 x i64] — opaque, passed by pointer.
+    EzType arena_ty = LLVMArrayType(ez_i64(), 3);
+    as.arena_slot = alloca_in_entry(current_func, arena_ty, "__arena");
+    ensure_arena_fns();
+    EzVal init_args[] = {as.arena_slot};
+    ez_call(mod, func_map["__cshift_arena_init"], init_args, 1, "");
+    return as.arena_slot;
+  }
+
+  // Wrap a heap pointer with the arena tracker; returns the same pointer.
+  EzVal arena_track(EzVal ptr)
+  {
+    if (!ptr) return ptr;
+    EzVal arena = get_or_create_scope_arena();
+    if (!arena) return ptr;
+    ensure_arena_fns();
+    EzVal push_args[] = {arena, ptr};
+    return ez_call(mod, func_map["__cshift_arena_push"], push_args, 2, "tracked");
+  }
+
+  void emit_arena_free()
+  {
+    if (arena_stack.empty()) return;
+    EzVal slot = arena_stack.back().arena_slot;
+    if (!slot) return;
+    ensure_arena_fns();
+    EzVal args[] = {slot};
+    ez_call(mod, func_map["__cshift_arena_free_all"], args, 1, "");
+  }
+
+  void emit_arena_reset_stmt()
+  {
+    EzVal arena = get_or_create_scope_arena();
+    if (!arena) return;
+    ensure_arena_fns();
+    EzVal args[] = {arena};
+    ez_call(mod, func_map["__cshift_arena_reset"], args, 1, "");
+  }
+
+  void ensure_arena_fns()
+  {
+    auto ensure = [&](const char *name, EzType ret,
+                      std::initializer_list<EzType> params)
+    {
+      if (func_map.count(name)) return;
+      std::vector<EzType> pv(params);
+      func_map[name] = ez_extern(mod, name, ret, pv.data(), (unsigned)pv.size(), 0);
+    };
+    ensure("__cshift_arena_init",     ez_void(), {ez_ptr()});
+    ensure("__cshift_arena_push",     ez_ptr(),  {ez_ptr(), ez_ptr()});
+    ensure("__cshift_arena_free_all", ez_void(), {ez_ptr()});
+    ensure("__cshift_arena_reset",    ez_void(), {ez_ptr()});
+  }
+
+  // Keep managed_free_fns to identify which types are heap-allocated
+  // (needed for correct &v semantics — load the ptr rather than addr-of slot).
+  static const std::unordered_map<std::string, std::string> &managed_free_fns()
+  {
+    static const std::unordered_map<std::string, std::string> m = {
+        {"Vector","vec_free"},{"HashMap","map_free"},{"LinkedList","list_free"},
+        {"Set","set_free"},{"Deque","deque_free"},{"RingBuffer","ring_free"},
+        {"Pool","pool_free"},{"SortedVec","svec_free"},
+        {"StringBuilder","sb_free"},{"BitSet","bitset_free"},
+    };
+    return m;
+  }
+
+  void push_scope() { var_scopes.push_back({}); arena_stack.push_back({nullptr}); }
+
+  void pop_scope()
+  {
+    emit_arena_free();   // one call frees all managed allocs in this scope
+    var_scopes.pop_back();
+    arena_stack.pop_back();
+  }
 
   // name → declared C<< type string (for struct GEP resolution)
   std::unordered_map<std::string, std::string> var_type_map;
@@ -511,10 +599,18 @@ private:
     else if (t == "Tunnel")
       emit_tunnel(n);
     else if (t == "Move")
-    { /* voided-state is statically resolved by the checker; no runtime action */
+    {
+      // Set the runtime validity flag to false so that a switch guard with
+      // meta=="unknown" can branch correctly at runtime.
+      const std::string &vname = n->value;
+      EzVal vslot = lookup_var("__track_validity_" + vname);
+      if (vslot)
+        ez_store(mod, LLVMConstInt(ez_i1(), 0, 0), vslot);
+      // (voided-state tracking for static paths is done in the checker)
     }
     else if (t == "Reset")
-    { /* no runtime action */
+    {
+      emit_arena_reset_stmt();
     }
     else if (t == "Break")
       emit_break(n);
@@ -575,6 +671,7 @@ private:
   {
     ensure_alloc_fns();
     arena_array_elem_type[name] = elem_type_s;
+    // __data pointer is tracked by arena_track() in emit_array_append — no manual cleanup needed.
     EzType i64 = ez_i64();
 
     // Allocate len, cap, data slots
@@ -641,7 +738,10 @@ private:
     EzFunc *realloc_fn = func_map["realloc"];
     EzVal rargs[] = {old_data, new_bytes};
     EzVal new_data = ez_call(mod, realloc_fn, rargs, 2, "new_data");
-    ez_store(mod, new_data, data_ptr);
+    // Track the new allocation with the scope arena (replaces old pointer).
+    // arena_track is a no-op if no arena exists yet — harmless.
+    EzVal tracked_data = arena_track(new_data);
+    ez_store(mod, tracked_data, data_ptr);
     ez_br(mod, store_b);
 
     // store block
@@ -675,16 +775,97 @@ private:
       return;
     }
 
-    EzType ty = cshift_type(type_s);
+    // Strip template params to get base type name: "Vector<int32>" → "Vector"
+    std::string base_type = type_s;
+    {
+      auto lt = base_type.find('<');
+      if (lt != std::string::npos)
+        base_type = base_type.substr(0, lt);
+    }
 
+    // Check if this is a managed container type (Vector, HashMap, …)
+    const auto &mfns = managed_free_fns();
+    auto mfit = mfns.find(base_type);
+    bool is_managed = (mfit != mfns.end());
+
+    if (is_managed)
+    {
+      // Managed types are heap-allocated: the variable holds a *pointer*
+      // to the heap object returned by vec_new / map_new / etc.
+      // We store the pointer in a ptr-sized alloca and register a cleanup.
+      EzVal slot = alloca_in_entry(current_func, ez_ptr(), vname.c_str());
+      ez_store(mod, LLVMConstNull(ez_ptr()), slot); // init to null
+      declare_var(vname, slot, type_s);
+
+      if (!n->children.empty())
+      {
+        EzVal init = emit_expression_val(n->children[0], type_s);
+        if (init)
+        {
+          // Track heap pointer with scope arena — freed on scope exit.
+          EzVal tracked = arena_track(init);
+          ez_store(mod, tracked, slot);
+        }
+      }
+      return;
+    }
+
+    EzType ty = cshift_type(type_s);
     EzVal slot = alloca_in_entry(current_func, ty, vname.c_str());
     declare_var(vname, slot, type_s);
+
+    // Hidden runtime-validity flag: __track_validity_<name>.
+    // Starts true. Set to false by `move`. Used by switch guards when the
+    // checker cannot statically determine voided state (meta == "unknown").
+    {
+      std::string vflag = "__track_validity_" + vname;
+      EzVal vslot = alloca_in_entry(current_func, ez_i1(), vflag.c_str());
+      ez_store(mod, LLVMConstInt(ez_i1(), 1, 0), vslot);
+      declare_var(vflag, vslot, "bool");
+    }
 
     if (!n->children.empty())
     {
       EzVal init = emit_expression_val(n->children[0], type_s);
       if (init)
+      {
+        // Auto-coerce numeric types (e.g. i64 → i32 from strlen on 64-bit).
+        // If the coercion is lossy (wider → narrower) it still happens but
+        // the checker would have emitted a warning; we just do the trunc/sext.
+        LLVMTypeRef init_ty = LLVMTypeOf(init);
+        if (init_ty != ty)
+        {
+          LLVMTypeKind init_kind = LLVMGetTypeKind(init_ty);
+          LLVMTypeKind dest_kind = LLVMGetTypeKind(ty);
+          bool init_int = (init_kind == LLVMIntegerTypeKind);
+          bool dest_int = (dest_kind == LLVMIntegerTypeKind);
+          bool init_fp  = (init_kind == LLVMDoubleTypeKind || init_kind == LLVMFloatTypeKind);
+          bool dest_fp  = (dest_kind == LLVMDoubleTypeKind || dest_kind == LLVMFloatTypeKind);
+
+          if (init_int && dest_int)
+          {
+            unsigned iw = LLVMGetIntTypeWidth(init_ty);
+            unsigned dw = LLVMGetIntTypeWidth(ty);
+            if (dw > iw)
+              init = LLVMBuildSExt(mod->builder, init, ty, "decl_widen");
+            else
+              init = LLVMBuildTrunc(mod->builder, init, ty, "decl_trunc");
+          }
+          else if (init_fp && dest_fp)
+          {
+            if (dest_kind == LLVMDoubleTypeKind)
+              init = LLVMBuildFPExt(mod->builder, init, ty, "decl_fpext");
+            else
+              init = LLVMBuildFPTrunc(mod->builder, init, ty, "decl_fptrunc");
+          }
+          else if (init_int && dest_fp)
+            init = LLVMBuildSIToFP(mod->builder, init, ty, "decl_itof");
+          else if (init_fp && dest_int)
+            init = LLVMBuildFPToSI(mod->builder, init, ty, "decl_ftoi");
+          // ptr ↔ ptr: compatible in opaque-ptr LLVM — no cast needed
+        }
         ez_store(mod, init, slot);
+      }
     }
   }
 
@@ -987,6 +1168,49 @@ private:
     }
   }
 
+  // Coerce a value to match the declared parameter type.
+  // Handles integer widening (i32 → i64), truncation (i64 → i32),
+  // and int↔ptr no-ops (both are opaque ptr in LLVM opaque-ptr mode).
+  EzVal coerce_to_param(EzVal v, LLVMTypeRef expected_ty)
+  {
+    if (!v || !expected_ty)
+      return v;
+    LLVMTypeRef actual_ty = LLVMTypeOf(v);
+    if (actual_ty == expected_ty)
+      return v;
+
+    LLVMTypeKind exp_kind = LLVMGetTypeKind(expected_ty);
+    LLVMTypeKind act_kind = LLVMGetTypeKind(actual_ty);
+
+    // Integer ↔ integer: widen or truncate
+    if (exp_kind == LLVMIntegerTypeKind && act_kind == LLVMIntegerTypeKind)
+    {
+      unsigned exp_w = LLVMGetIntTypeWidth(expected_ty);
+      unsigned act_w = LLVMGetIntTypeWidth(actual_ty);
+      if (exp_w > act_w)
+        return LLVMBuildSExt(mod->builder, v, expected_ty, "coerce_widen");
+      else if (exp_w < act_w)
+        return LLVMBuildTrunc(mod->builder, v, expected_ty, "coerce_trunc");
+    }
+    // Float ↔ float
+    if (exp_kind == LLVMDoubleTypeKind && act_kind == LLVMFloatTypeKind)
+      return LLVMBuildFPExt(mod->builder, v, expected_ty, "coerce_fpext");
+    if (exp_kind == LLVMFloatTypeKind && act_kind == LLVMDoubleTypeKind)
+      return LLVMBuildFPTrunc(mod->builder, v, expected_ty, "coerce_fptrunc");
+    // int → float
+    if ((exp_kind == LLVMDoubleTypeKind || exp_kind == LLVMFloatTypeKind) &&
+        act_kind == LLVMIntegerTypeKind)
+      return LLVMBuildSIToFP(mod->builder, v, expected_ty, "coerce_itof");
+    // float → int
+    if (exp_kind == LLVMIntegerTypeKind &&
+        (act_kind == LLVMDoubleTypeKind || act_kind == LLVMFloatTypeKind))
+      return LLVMBuildFPToSI(mod->builder, v, expected_ty, "coerce_ftoi");
+
+    // Otherwise: bitcast (handles ptr↔ptr variations etc.)
+    // Only bitcast if same size; otherwise leave as-is and let verifier catch it.
+    return v;
+  }
+
   EzVal emit_call_val(Parser::ASTNode *n, const std::string &result_name)
   {
     const std::string &fname = n->value;
@@ -1035,6 +1259,9 @@ private:
         EzVal v = eval_expr_children(grp, arg_hint);
         if (v)
         {
+          // Coerce to declared param type (e.g. i32 → i64)
+          if (!is_vararg_fn && arg_idx < regular_params)
+            v = coerce_to_param(v, param_types[arg_idx]);
           args.push_back(v);
         }
         else if (!is_vararg_fn && arg_idx < regular_params)
@@ -1195,20 +1422,41 @@ private:
     if (n->children.empty())
       return;
 
+    // Checker annotated this If with a compile-time result — emit only the
+    // live branch directly, with no branch instruction at all.
+    if (n->meta == "always_true")
+    {
+      push_scope();
+      if (n->children.size() > 1) emit_block_body(n->children[1]);
+      pop_scope();
+      return;
+    }
+    if (n->meta == "always_false")
+    {
+      if (n->children.size() > 2)
+      {
+        push_scope();
+        auto *el = n->children[2];
+        if (el->type == "If") emit_if(el);
+        else emit_block_body(el);
+        pop_scope();
+      }
+      return;
+    }
+
     EzVal cond = emit_condition(n->children[0]);
 
     EzBlock *then_b = ez_block(current_func, "if.then");
     EzBlock *else_b = ez_block(current_func, "if.else");
-    EzBlock *end_b = ez_block(current_func, "if.end");
+    EzBlock *end_b  = ez_block(current_func, "if.end");
 
     ez_cond_br(mod, cond, then_b, else_b);
 
     // then
     current_block = then_b;
     ez_use(then_b);
-    if (n->children.size() > 1)
-      emit_block_body(n->children[1]);
-    ez_br(mod, end_b);
+    if (n->children.size() > 1) emit_block_body(n->children[1]);
+    if (!current_block_has_terminator()) ez_br(mod, end_b);
 
     // else
     current_block = else_b;
@@ -1216,12 +1464,10 @@ private:
     if (n->children.size() > 2)
     {
       auto *el = n->children[2];
-      if (el->type == "If")
-        emit_if(el);
-      else
-        emit_block_body(el);
+      if (el->type == "If") emit_if(el);
+      else emit_block_body(el);
     }
-    ez_br(mod, end_b);
+    if (!current_block_has_terminator()) ez_br(mod, end_b);
 
     current_block = end_b;
     ez_use(end_b);
@@ -1367,6 +1613,58 @@ private:
     //   ""       → regular numeric switch (handled below)
     if (!n->meta.empty())
     {
+      // ── meta == "unknown": runtime branch on __track_validity_<var> ──────
+      if (n->meta == "unknown")
+      {
+        // Get the switched variable name from the first expression token
+        std::string switched_var;
+        if (!n->children[0]->children.empty())
+          switched_var = n->children[0]->children[0]->value;
+
+        // Load the runtime validity flag
+        EzVal vflag_slot = switched_var.empty() ? nullptr
+                         : lookup_var("__track_validity_" + switched_var);
+        EzVal is_valid = vflag_slot
+            ? ez_load(mod, ez_i1(), vflag_slot, "is_valid")
+            : LLVMConstInt(ez_i1(), 1, 0); // no flag → assume valid
+
+        Parser::ASTNode *valid_case = nullptr, *voided_case = nullptr;
+        for (size_t i = 1; i < n->children.size(); ++i)
+        {
+          auto *c = n->children[i];
+          if (c->type == "Case" && c->value == "valid")  valid_case  = c;
+          if (c->type == "Case" && c->value == "voided") voided_case = c;
+        }
+
+        EzBlock *end_b    = ez_block(current_func, "sw.end");
+        EzBlock *valid_b  = valid_case  ? ez_block(current_func, "sw.valid")  : end_b;
+        EzBlock *voided_b = voided_case ? ez_block(current_func, "sw.voided") : end_b;
+
+        // i1 true → valid, false → voided
+        LLVMBuildCondBr(mod->builder, is_valid, valid_b->bb, voided_b->bb);
+
+        loop_stack.push_back({end_b, nullptr, true});
+
+        auto emit_arm = [&](EzBlock *blk, Parser::ASTNode *arm)
+        {
+          if (!arm) return;
+          current_block = blk;
+          ez_use(blk);
+          for (auto *stmt : arm->children)
+            emit_stmt(stmt);
+          if (!current_block_has_terminator())
+            ez_br(mod, end_b);
+        };
+        emit_arm(valid_b,  valid_case);
+        emit_arm(voided_b, voided_case);
+
+        loop_stack.pop_back();
+        current_block = end_b;
+        ez_use(end_b);
+        return;
+      }
+
+      // ── meta == "voided" or "valid": static, zero-cost ───────────────────
       bool take_voided = (n->meta == "voided");
 
       // Find the target case body
@@ -1543,9 +1841,24 @@ private:
     {
       if (tokens.size() == 2 && tokens[1]->token_type == Lexer::TokenType::IDENTIFIER)
       {
-        EzVal ptr = lookup_var(tokens[1]->value);
-        if (ptr)
-          return ptr; // alloca pointer IS the address
+        const std::string &vname = tokens[1]->value;
+        EzVal slot = lookup_var(vname);
+        if (slot)
+        {
+          // For managed container types (Vector, HashMap, …) the slot holds a
+          // heap pointer. `&v` in C<< means "pass v to a function taking T*",
+          // which is just the heap pointer itself — not the address of the slot.
+          auto vit = var_type_map.find(vname);
+          if (vit != var_type_map.end())
+          {
+            std::string btype = vit->second;
+            auto lt = btype.find('<');
+            if (lt != std::string::npos) btype = btype.substr(0, lt);
+            if (managed_free_fns().count(btype))
+              return ez_load(mod, ez_ptr(), slot, (vname + "_ptr").c_str());
+          }
+          return slot; // alloca pointer IS the address for regular vars
+        }
       }
       if (tokens.size() == 4 && tokens[1]->token_type == Lexer::TokenType::IDENTIFIER &&
           tokens[2]->value == "." && tokens[3]->token_type == Lexer::TokenType::IDENTIFIER)
@@ -1817,6 +2130,9 @@ private:
       EzVal v = eval_expr_children(grp, arg_hint);
       if (v)
       {
+        // Coerce to declared param type (e.g. i32 → i64)
+        if (!is_vararg_fn2 && arg_idx < regular_params)
+          v = coerce_to_param(v, param_types[arg_idx]);
         args.push_back(v);
       }
       else if (!is_vararg_fn2 && arg_idx < regular_params)

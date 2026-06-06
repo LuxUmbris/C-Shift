@@ -5,6 +5,12 @@ def add(int32 x, int32 y)
     tunnel x + y -> int32 result;
 }
 
+template<typename T>
+struct pointer
+{
+    T* ptr;
+};
+
 entry
 {
     int32 x = 5;
@@ -15,4 +21,5 @@ entry
         i += 1;
     }
     puts("Hello, C<< world!");
+    printf("pointer value = %i\n", *p.ptr);
 }

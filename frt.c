@@ -260,3 +260,63 @@ double now_seconds(void)
   return (double)clock() / (double)CLOCKS_PER_SEC;
 #endif
 }
+
+/* ── C<< Arena Allocator ──────────────────────────────────────────────────── */
+/* Each C<< scope that allocates heap memory creates a cshift_arena_t.        */
+/* All heap allocations in that scope are registered here. On scope exit,    */
+/* cshift_arena_free_all() frees every registered pointer in one pass.       */
+/* reset; calls cshift_arena_reset() which frees all data but keeps the      */
+/* arena struct alive for re-use in the same scope.                          */
+
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    void  **ptrs;   /* registered heap pointers */
+    size_t  count;  /* number of registered pointers */
+    size_t  cap;    /* allocated capacity of ptrs[] */
+} cshift_arena_t;
+
+/* Initialize an arena (already stack-allocated by the caller). */
+static inline void cshift_arena_init(cshift_arena_t *a)
+{
+    a->ptrs  = NULL;
+    a->count = 0;
+    a->cap   = 0;
+}
+
+/* Register a heap pointer with the arena. Returns ptr unchanged so it can   */
+/* be used as a pass-through: p = cshift_arena_push(arena, vec_new(16));     */
+static inline void *cshift_arena_push(cshift_arena_t *a, void *ptr)
+{
+    if (!ptr) return ptr;
+    if (a->count >= a->cap) {
+        size_t new_cap = a->cap ? a->cap * 2 : 8;
+        a->ptrs = realloc(a->ptrs, new_cap * sizeof(void *));
+        a->cap  = new_cap;
+    }
+    a->ptrs[a->count++] = ptr;
+    return ptr;
+}
+
+/* Free all registered pointers. The arena struct itself is also freed.      */
+/* Call this on normal scope exit.                                           */
+static inline void cshift_arena_free_all(cshift_arena_t *a)
+{
+    for (size_t i = a->count; i-- > 0; )   /* LIFO order */
+        free(a->ptrs[i]);
+    free(a->ptrs);
+    a->ptrs  = NULL;
+    a->count = 0;
+    a->cap   = 0;
+}
+
+/* Free all registered pointers but keep the arena alive.                    */
+/* Called by the `reset;` statement.                                         */
+static inline void cshift_arena_reset(cshift_arena_t *a)
+{
+    for (size_t i = a->count; i-- > 0; )
+        free(a->ptrs[i]);
+    /* keep a->ptrs buffer; reset count so it can be reused */
+    a->count = 0;
+}

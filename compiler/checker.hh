@@ -22,7 +22,8 @@ public:
     std::string name;
     std::string type; // C<< type string
     size_t depth;     // arena depth where declared
-    bool is_voided;   // has been moved
+    bool is_voided;        // definitely moved at this point in all paths
+    bool is_voided_maybe;  // moved on some paths but not others → needs runtime bool
     bool is_pointer;  // contains pointer (matters for VOP)
     bool is_const;
     bool is_shared;
@@ -55,6 +56,109 @@ public:
 private:
   // Stack of scopes. Each scope maps name -> Symbol.
   using Scope = std::unordered_map<std::string, Symbol>;
+
+  // ── Compile-time constant expression evaluator ────────────────────────────
+  // Returns {known, value}: known=true when the expression is a compile-time
+  // constant we can fold.  Handles literals, simple comparisons, and logical
+  // operators on literals.  Conservative: returns known=false for anything
+  // involving variables or function calls.
+  struct ConstVal { bool known; long long value; };
+
+  ConstVal eval_const_expr(Parser::ASTNode *n) const
+  {
+    if (!n) return {false, 0};
+
+    // Single-token: numeric literal
+    if (n->type == "Token")
+    {
+      if (n->token_type == Lexer::TokenType::NUMBER)
+      {
+        try { return {true, (long long)std::stod(n->value)}; } catch (...) {}
+      }
+      if (n->value == "true")  return {true, 1};
+      if (n->value == "false") return {true, 0};
+      // Variable — not a constant we know
+      return {false, 0};
+    }
+
+    // Expression node: collect tokens and try to evaluate
+    if (n->type == "Expression")
+    {
+      auto &ch = n->children;
+      // Single child — recurse
+      if (ch.size() == 1) return eval_const_expr(ch[0]);
+
+      // Binary operator pattern: [lhs_tokens...] [op] [rhs_tokens...]
+      // We only handle simple 3-token case: lhs op rhs
+      if (ch.size() == 3)
+      {
+        auto lv = eval_const_expr(ch[0]);
+        auto rv = eval_const_expr(ch[2]);
+        if (!lv.known || !rv.known) return {false, 0};
+        const std::string &op = ch[1]->value;
+        long long l = lv.value, r = rv.value;
+        if (op == "+")  return {true, l + r};
+        if (op == "-")  return {true, l - r};
+        if (op == "*")  return {true, l * r};
+        if (op == "/")  return {true, r != 0 ? l / r : 0};
+        if (op == "%")  return {true, r != 0 ? l % r : 0};
+        if (op == "==") return {true, l == r ? 1 : 0};
+        if (op == "!=") return {true, l != r ? 1 : 0};
+        if (op == "<")  return {true, l <  r ? 1 : 0};
+        if (op == ">")  return {true, l >  r ? 1 : 0};
+        if (op == "<=") return {true, l <= r ? 1 : 0};
+        if (op == ">=") return {true, l >= r ? 1 : 0};
+        if (op == "&&") return {true, (l && r) ? 1 : 0};
+        if (op == "||") return {true, (l || r) ? 1 : 0};
+      }
+      // Prefix: op rhs
+      if (ch.size() == 2 && ch[0]->type == "Token")
+      {
+        auto rv = eval_const_expr(ch[1]);
+        if (!rv.known) return {false, 0};
+        if (ch[0]->value == "!") return {true, rv.value ? 0 : 1};
+        if (ch[0]->value == "-") return {true, -rv.value};
+      }
+      // For multi-token expressions, try to find a binary op in the middle
+      // by scanning for a known operator at the top level (depth 0)
+      // This handles `1 + 2 + 3` etc. by left-fold
+      ConstVal acc = eval_const_expr(ch[0]);
+      for (size_t i = 1; i + 1 < ch.size(); i += 2)
+      {
+        if (!acc.known) return {false, 0};
+        auto rv2 = eval_const_expr(ch[i + 1]);
+        if (!rv2.known) return {false, 0};
+        const std::string &op = ch[i]->value;
+        long long l = acc.value, r = rv2.value;
+        if (op == "+")  { acc = {true, l + r}; continue; }
+        if (op == "-")  { acc = {true, l - r}; continue; }
+        if (op == "*")  { acc = {true, l * r}; continue; }
+        if (op == "/")  { acc = {true, r ? l/r : 0}; continue; }
+        if (op == "==") { acc = {true, l==r?1:0}; continue; }
+        if (op == "!=") { acc = {true, l!=r?1:0}; continue; }
+        if (op == "<")  { acc = {true, l<r?1:0}; continue; }
+        if (op == ">")  { acc = {true, l>r?1:0}; continue; }
+        if (op == "<=") { acc = {true, l<=r?1:0}; continue; }
+        if (op == ">=") { acc = {true, l>=r?1:0}; continue; }
+        if (op == "&&") { acc = {true, (l&&r)?1:0}; continue; }
+        if (op == "||") { acc = {true, (l||r)?1:0}; continue; }
+        return {false, 0};
+      }
+      return acc;
+    }
+    return {false, 0};
+  }
+
+  // Convenience: evaluate if-condition as a tristate
+  // Returns: -1 = definitely false, 1 = definitely true, 0 = unknown
+  int eval_branch_condition(Parser::ASTNode *cond) const
+  {
+    if (!cond) return 0;
+    auto cv = eval_const_expr(cond);
+    if (!cv.known) return 0;
+    return cv.value ? 1 : -1;
+  }
+
   std::vector<Scope> scope_stack;
   size_t arena_depth = 0;
 
@@ -374,7 +478,7 @@ private:
       {
         std::string ptype = extract_base_type(p->value);
         std::string pname = extract_name(p->value);
-        declare({pname, ptype, arena_depth, false, is_pointer_type(ptype), false, false});
+        declare({pname, ptype, arena_depth, false, false, is_pointer_type(ptype), false, false});
       }
     }
     // Check body
@@ -404,7 +508,7 @@ private:
     std::string name = extract_name(n->value);
     if (!is_known_type(type))
       add_warning(n->line, "Unknown type '" + type + "' for variable '" + name + "'");
-    declare({name, type, arena_depth, false, is_pointer_type(type), false, false});
+    declare({name, type, arena_depth, false, false, is_pointer_type(type), false, false});
     if (!n->children.empty())
     {
       auto *init = n->children[0];
@@ -432,7 +536,7 @@ private:
     if (!is_known_type(type))
       add_warning(n->line, "Unknown type '" + type + "' for const '" + name + "'");
 
-    declare({name, type, arena_depth, false, is_pointer_type(type), true, false});
+    declare({name, type, arena_depth, false, false, is_pointer_type(type), true, false});
 
     if (!n->children.empty())
     {
@@ -478,7 +582,7 @@ private:
       child_start = 1;
     }
 
-    declare({name, type, arena_depth, false, is_pointer_type(type), false, is_shared});
+    declare({name, type, arena_depth, false, false, is_pointer_type(type), false, is_shared});
 
     if (n->children.size() > child_start)
     {
@@ -703,24 +807,97 @@ private:
 
   void check_if(Parser::ASTNode *n)
   {
-    if (!n->children.empty())
-      check_expression(n->children[0]);
-    if (n->children.size() > 1)
-      check_block(n->children[1]);
-    if (n->children.size() > 2)
+    if (n->children.empty()) return;
+
+    // Try to evaluate the condition at compile time
+    int cond_static = eval_branch_condition(n->children[0]);
+    check_expression(n->children[0]);
+
+    // Annotate the If node so codegen can skip dead branches entirely
+    if (cond_static == 1)  n->meta = "always_true";
+    if (cond_static == -1) n->meta = "always_false";
+
+    // Snapshot voided state before branches
+    std::unordered_map<std::string, bool> snap_before;
+    for (auto &scope : scope_stack)
+      for (auto &[nm, sym] : scope)
+        snap_before[nm] = sym.is_voided;
+
+    bool has_else = (n->children.size() > 2);
+
+    if (cond_static == 1)
+    {
+      // Condition is definitely TRUE — only then-branch is taken
+      if (n->children.size() > 1) check_block(n->children[1]);
+      // else-branch never executes — skip it entirely (no voided-state effect)
+      // Voided state after = voided state after then-branch: already updated
+      return;
+    }
+    if (cond_static == -1)
+    {
+      // Condition is definitely FALSE — only else-branch (if any) is taken
+      if (has_else)
+      {
+        auto *el = n->children[2];
+        if (el->type == "If") check_if(el);
+        else check_block(el);
+      }
+      // then-branch never executes
+      return;
+    }
+
+    // Condition unknown at compile time — check both branches and merge
+    if (n->children.size() > 1) check_block(n->children[1]);
+
+    std::unordered_map<std::string, bool> snap_after_then;
+    for (auto &scope : scope_stack)
+      for (auto &[nm, sym] : scope)
+        snap_after_then[nm] = sym.is_voided;
+
+    // Restore to before-state for the else branch
+    for (auto &scope : scope_stack)
+      for (auto &[nm, sym] : scope)
+        if (snap_before.count(nm)) sym.is_voided = snap_before[nm];
+
+    if (has_else)
     {
       auto *el = n->children[2];
-      if (el->type == "If")
-        check_if(el);
-      else
-        check_block(el);
+      if (el->type == "If") check_if(el);
+      else check_block(el);
+    }
+
+    // Merge states
+    for (auto &scope : scope_stack)
+    {
+      for (auto &[nm, sym] : scope)
+      {
+        bool v_then   = snap_after_then.count(nm) ? snap_after_then[nm] : (snap_before.count(nm) ? snap_before[nm] : false);
+        bool v_else   = sym.is_voided;
+        bool v_before = snap_before.count(nm) ? snap_before[nm] : false;
+
+        if (v_then && v_else && has_else)
+          sym.is_voided = true;           // definitely voided in ALL paths
+        else if ((v_then || v_else) && !v_before)
+        {
+          sym.is_voided = false;
+          sym.is_voided_maybe = true;     // moved on SOME paths → needs runtime bool
+        }
+      }
     }
   }
 
   void check_while(Parser::ASTNode *n)
   {
-    if (!n->children.empty())
-      check_expression(n->children[0]);
+    if (n->children.empty()) return;
+
+    // Snapshot before loop
+    std::unordered_map<std::string, bool> snap_before;
+    for (auto &scope : scope_stack)
+      for (auto &[nm, sym] : scope)
+        snap_before[nm] = sym.is_voided;
+
+    check_expression(n->children[0]);
+
     if (n->children.size() > 1)
     {
       push_scope();
@@ -728,6 +905,21 @@ private:
       check_block(n->children[1]);
       loop_depth--;
       pop_scope();
+    }
+
+    // Any move inside the loop body is "maybe" — the loop may not run at all.
+    // Promote newly-voided variables to maybe-voided.
+    for (auto &scope : scope_stack)
+    {
+      for (auto &[nm, sym] : scope)
+      {
+        bool v_before = snap_before.count(nm) ? snap_before[nm] : false;
+        if (sym.is_voided && !v_before)
+        {
+          sym.is_voided = false;
+          sym.is_voided_maybe = true;
+        }
+      }
     }
   }
 
@@ -756,7 +948,7 @@ private:
     loop_depth++;
     std::string type = extract_base_type(n->value);
     std::string item = extract_name(n->value);
-    declare({item, type, arena_depth, false, is_pointer_type(type), false, false});
+    declare({item, type, arena_depth, false, false, is_pointer_type(type), false, false});
     if (!n->children.empty())
       check_expression(n->children[0]);
     if (n->children.size() > 1)
@@ -793,19 +985,32 @@ private:
     if (!n->children[0]->children.empty())
       switched_var = n->children[0]->children[0]->value;
 
-    // For a valid/voided guard, accessing a voided variable in the switch
-    // expression is legal
+    // For a valid/voided guard, accessing a voided/maybe-voided variable in the switch
+    // expression is legal — it IS the guard itself
     bool was_voided = false;
+    bool was_voided_maybe = false;
     if (is_voided_guard && !switched_var.empty())
     {
       Symbol *sym = lookup(switched_var);
-      if (sym && sym->is_voided)
+      if (sym)
       {
-        was_voided = true;
-        sym->is_voided = false;
+        was_voided       = sym->is_voided;
+        was_voided_maybe = sym->is_voided_maybe;
+        sym->is_voided       = false;
+        sym->is_voided_maybe = false;
       }
     }
     check_expression(n->children[0]);
+    // Restore
+    if (is_voided_guard && !switched_var.empty())
+    {
+      Symbol *sym = lookup(switched_var);
+      if (sym)
+      {
+        sym->is_voided       = was_voided;
+        sym->is_voided_maybe = was_voided_maybe;
+      }
+    }
     // Restore voided state for branch checking
     if (was_voided)
     {
@@ -832,7 +1037,19 @@ private:
     //                        but legal; codegen takes the valid branch directly)
     //   meta == ""        → not a voided-state guard (regular numeric switch)
     if (is_voided_guard)
-      n->meta = was_voided ? "voided" : "valid";
+    {
+      if (was_voided)
+        n->meta = "voided";
+      else
+      {
+        // Check if the variable is "maybe voided" — moved on some paths
+        Symbol *sym2 = lookup(switched_var);
+        if (sym2 && sym2->is_voided_maybe)
+          n->meta = "unknown";   // needs runtime bool __track_validity_<var>
+        else
+          n->meta = "valid";
+      }
+    }
 
     // Check each case body
     switch_depth++;
@@ -894,8 +1111,16 @@ private:
       auto *sym = lookup(n->value);
       if (sym && sym->is_voided)
       {
-        add_error(n->line, "Use of voided variable '" + n->value + "' — guard with switch(" +
-                               n->value + ") { case valid / case voided }");
+        add_error(n->line, "Use of voided variable '" + n->value +
+                               "' — guard with switch(" + n->value +
+                               ") { case valid: … case voided: … }");
+      }
+      else if (sym && sym->is_voided_maybe)
+      {
+        add_error(n->line, "Variable '" + n->value +
+                               "' may be voided (moved on some paths) — "
+                               "guard with switch(" + n->value +
+                               ") { case valid: … case voided: … }");
       }
       // VOP Lifetime Law: pointer access
       if (sym && sym->is_pointer)
@@ -1074,4 +1299,59 @@ private:
         return true;
     return false;
   }
+
+  // Check if a numeric type assignment needs a coercion warning.
+  // Returns "" if fine, a warning string if narrowing, an error string if incompatible.
+  // "cannot cast 'from' to 'to'" is emitted when types are structurally incompatible.
+  std::string check_type_coercion(const std::string &from_type, const std::string &to_type,
+                                   size_t line)
+  {
+    if (from_type == to_type) return "";
+
+    // Integer types — widths
+    static const std::unordered_map<std::string,int> int_width = {
+      {"int8",8},{"int16",16},{"int32",32},{"int64",64},
+      {"uint8",8},{"uint16",16},{"uint32",32},{"uint64",64},
+      {"bool",1},{"char",8}
+    };
+    static const std::unordered_set<std::string> fp_types = {"float32","float64"};
+    static const std::unordered_set<std::string> ptr_types = {"string","voided*"};
+
+    bool from_int = int_width.count(from_type);
+    bool to_int   = int_width.count(to_type);
+    bool from_fp  = fp_types.count(from_type);
+    bool to_fp    = fp_types.count(to_type);
+    bool from_ptr = (from_type.find('*') != std::string::npos) || ptr_types.count(from_type);
+    bool to_ptr   = (to_type.find('*')   != std::string::npos) || ptr_types.count(to_type);
+
+    // int → int: ok but warn on narrowing
+    if (from_int && to_int)
+    {
+      int fw = int_width.at(from_type), tw = int_width.at(to_type);
+      if (fw > tw)
+        add_warning(line, "Implicit narrowing: '" + from_type + "' assigned to '" +
+                         to_type + "' — value may be truncated");
+      return "";
+    }
+    // float → float: ok
+    if (from_fp && to_fp) return "";
+    // int → float or float → int: allowed with warning
+    if ((from_int && to_fp) || (from_fp && to_int))
+    {
+      add_warning(line, "Implicit numeric conversion: '" + from_type +
+                       "' assigned to '" + to_type + "'");
+      return "";
+    }
+    // ptr → ptr or ptr ↔ voided*: allowed
+    if (from_ptr && to_ptr) return "";
+    // string (ptr) is compatible with any pointer target
+    if ((from_ptr || from_type == "string") && (to_ptr || to_type == "string")) return "";
+
+    // Everything else is incompatible — but literal mismatches are caught by
+    // check_declaration/check_const already.  For function-call results we emit:
+    if (!from_type.empty() && !to_type.empty())
+      add_error(line, "cannot cast '" + from_type + "' to '" + to_type + "'");
+    return "error";
+  }
+
 };

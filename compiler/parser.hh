@@ -151,6 +151,18 @@ private:
       // Look ahead: IDENT ( => call, IDENT = => assign, IDENT += etc => assign
       // Also handles field access chains: IDENT.FIELD = ...
       size_t la = 1;
+      // Skip template arguments: Vector<int32>, HashMap<K, V>, etc.
+      if (peek_token(la).value == "<")
+      {
+        la++; // skip <
+        int tpl_depth = 1;
+        while (tpl_depth > 0 && peek_token(la).type != Lexer::TokenType::END_OF_FILE)
+        {
+          if (peek_token(la).value == "<") tpl_depth++;
+          else if (peek_token(la).value == ">") tpl_depth--;
+          la++;
+        }
+      }
       // skip potential pointer/slice decorators
       while (peek_token(la).value == "*" || peek_token(la).value == "[" ||
              peek_token(la).value == "[:]")
@@ -167,7 +179,7 @@ private:
       // Array append: IDENT << expr ;
       if (peek_token(la).value == "<<")
         return parse_array_append();
-      // Struct-typed declaration: IDENT IDENT
+      // Struct-typed or generic-typed declaration: IDENT IDENT or IDENT<T> IDENT
       if (peek_token(la).type == Lexer::TokenType::IDENTIFIER)
         return parse_declaration();
     }
