@@ -110,14 +110,19 @@ class Codegen
   // cshift_arena_free_all() releases everything.  `reset;` calls
   // cshift_arena_reset() which frees data but keeps the arena alive.
 
-  struct ArenaScope { EzVal arena_slot; /* alloca ptr, or nullptr if no allocs yet */ };
+  struct ArenaScope
+  {
+    EzVal arena_slot; /* alloca ptr, or nullptr if no allocs yet */
+  };
   std::vector<ArenaScope> arena_stack;
 
   EzVal get_or_create_scope_arena()
   {
-    if (arena_stack.empty()) return nullptr;
+    if (arena_stack.empty())
+      return nullptr;
     ArenaScope &as = arena_stack.back();
-    if (as.arena_slot) return as.arena_slot;
+    if (as.arena_slot)
+      return as.arena_slot;
     // Represent cshift_arena_t as [3 x i64] — opaque, passed by pointer.
     EzType arena_ty = LLVMArrayType(ez_i64(), 3);
     as.arena_slot = alloca_in_entry(current_func, arena_ty, "__arena");
@@ -130,9 +135,11 @@ class Codegen
   // Wrap a heap pointer with the arena tracker; returns the same pointer.
   EzVal arena_track(EzVal ptr)
   {
-    if (!ptr) return ptr;
+    if (!ptr)
+      return ptr;
     EzVal arena = get_or_create_scope_arena();
-    if (!arena) return ptr;
+    if (!arena)
+      return ptr;
     ensure_arena_fns();
     EzVal push_args[] = {arena, ptr};
     return ez_call(mod, func_map["__cshift_arena_push"], push_args, 2, "tracked");
@@ -140,9 +147,11 @@ class Codegen
 
   void emit_arena_free()
   {
-    if (arena_stack.empty()) return;
+    if (arena_stack.empty())
+      return;
     EzVal slot = arena_stack.back().arena_slot;
-    if (!slot) return;
+    if (!slot)
+      return;
     ensure_arena_fns();
     EzVal args[] = {slot};
     ez_call(mod, func_map["__cshift_arena_free_all"], args, 1, "");
@@ -151,7 +160,8 @@ class Codegen
   void emit_arena_reset_stmt()
   {
     EzVal arena = get_or_create_scope_arena();
-    if (!arena) return;
+    if (!arena)
+      return;
     ensure_arena_fns();
     EzVal args[] = {arena};
     ez_call(mod, func_map["__cshift_arena_reset"], args, 1, "");
@@ -159,17 +169,17 @@ class Codegen
 
   void ensure_arena_fns()
   {
-    auto ensure = [&](const char *name, EzType ret,
-                      std::initializer_list<EzType> params)
+    auto ensure = [&](const char *name, EzType ret, std::initializer_list<EzType> params)
     {
-      if (func_map.count(name)) return;
+      if (func_map.count(name))
+        return;
       std::vector<EzType> pv(params);
       func_map[name] = ez_extern(mod, name, ret, pv.data(), (unsigned)pv.size(), 0);
     };
-    ensure("__cshift_arena_init",     ez_void(), {ez_ptr()});
-    ensure("__cshift_arena_push",     ez_ptr(),  {ez_ptr(), ez_ptr()});
+    ensure("__cshift_arena_init", ez_void(), {ez_ptr()});
+    ensure("__cshift_arena_push", ez_ptr(), {ez_ptr(), ez_ptr()});
     ensure("__cshift_arena_free_all", ez_void(), {ez_ptr()});
-    ensure("__cshift_arena_reset",    ez_void(), {ez_ptr()});
+    ensure("__cshift_arena_reset", ez_void(), {ez_ptr()});
   }
 
   // Keep managed_free_fns to identify which types are heap-allocated
@@ -177,19 +187,23 @@ class Codegen
   static const std::unordered_map<std::string, std::string> &managed_free_fns()
   {
     static const std::unordered_map<std::string, std::string> m = {
-        {"Vector","vec_free"},{"HashMap","map_free"},{"LinkedList","list_free"},
-        {"Set","set_free"},{"Deque","deque_free"},{"RingBuffer","ring_free"},
-        {"Pool","pool_free"},{"SortedVec","svec_free"},
-        {"StringBuilder","sb_free"},{"BitSet","bitset_free"},
+        {"Vector", "vec_free"},    {"HashMap", "map_free"},    {"LinkedList", "list_free"},
+        {"Set", "set_free"},       {"Deque", "deque_free"},    {"RingBuffer", "ring_free"},
+        {"Pool", "pool_free"},     {"SortedVec", "svec_free"}, {"StringBuilder", "sb_free"},
+        {"BitSet", "bitset_free"},
     };
     return m;
   }
 
-  void push_scope() { var_scopes.push_back({}); arena_stack.push_back({nullptr}); }
+  void push_scope()
+  {
+    var_scopes.push_back({});
+    arena_stack.push_back({nullptr});
+  }
 
   void pop_scope()
   {
-    emit_arena_free();   // one call frees all managed allocs in this scope
+    emit_arena_free(); // one call frees all managed allocs in this scope
     var_scopes.pop_back();
     arena_stack.pop_back();
   }
@@ -839,8 +853,8 @@ private:
           LLVMTypeKind dest_kind = LLVMGetTypeKind(ty);
           bool init_int = (init_kind == LLVMIntegerTypeKind);
           bool dest_int = (dest_kind == LLVMIntegerTypeKind);
-          bool init_fp  = (init_kind == LLVMDoubleTypeKind || init_kind == LLVMFloatTypeKind);
-          bool dest_fp  = (dest_kind == LLVMDoubleTypeKind || dest_kind == LLVMFloatTypeKind);
+          bool init_fp = (init_kind == LLVMDoubleTypeKind || init_kind == LLVMFloatTypeKind);
+          bool dest_fp = (dest_kind == LLVMDoubleTypeKind || dest_kind == LLVMFloatTypeKind);
 
           if (init_int && dest_int)
           {
@@ -1310,9 +1324,8 @@ private:
       {
         // args = [user_args... , tunnel_args...]
         // The tunnel args were just appended, so user_args_count = args.size() - n_tunnels2
-        unsigned user_args_count = (unsigned)args.size() > n_tunnels2
-                                       ? (unsigned)args.size() - n_tunnels2
-                                       : 0;
+        unsigned user_args_count =
+            (unsigned)args.size() > n_tunnels2 ? (unsigned)args.size() - n_tunnels2 : 0;
         if (user_args_count < regular2)
         {
           std::vector<LLVMTypeRef> all_ptypes(total_params2);
@@ -1427,7 +1440,8 @@ private:
     if (n->meta == "always_true")
     {
       push_scope();
-      if (n->children.size() > 1) emit_block_body(n->children[1]);
+      if (n->children.size() > 1)
+        emit_block_body(n->children[1]);
       pop_scope();
       return;
     }
@@ -1437,8 +1451,10 @@ private:
       {
         push_scope();
         auto *el = n->children[2];
-        if (el->type == "If") emit_if(el);
-        else emit_block_body(el);
+        if (el->type == "If")
+          emit_if(el);
+        else
+          emit_block_body(el);
         pop_scope();
       }
       return;
@@ -1448,15 +1464,17 @@ private:
 
     EzBlock *then_b = ez_block(current_func, "if.then");
     EzBlock *else_b = ez_block(current_func, "if.else");
-    EzBlock *end_b  = ez_block(current_func, "if.end");
+    EzBlock *end_b = ez_block(current_func, "if.end");
 
     ez_cond_br(mod, cond, then_b, else_b);
 
     // then
     current_block = then_b;
     ez_use(then_b);
-    if (n->children.size() > 1) emit_block_body(n->children[1]);
-    if (!current_block_has_terminator()) ez_br(mod, end_b);
+    if (n->children.size() > 1)
+      emit_block_body(n->children[1]);
+    if (!current_block_has_terminator())
+      ez_br(mod, end_b);
 
     // else
     current_block = else_b;
@@ -1464,10 +1482,13 @@ private:
     if (n->children.size() > 2)
     {
       auto *el = n->children[2];
-      if (el->type == "If") emit_if(el);
-      else emit_block_body(el);
+      if (el->type == "If")
+        emit_if(el);
+      else
+        emit_block_body(el);
     }
-    if (!current_block_has_terminator()) ez_br(mod, end_b);
+    if (!current_block_has_terminator())
+      ez_br(mod, end_b);
 
     current_block = end_b;
     ez_use(end_b);
@@ -1622,22 +1643,23 @@ private:
           switched_var = n->children[0]->children[0]->value;
 
         // Load the runtime validity flag
-        EzVal vflag_slot = switched_var.empty() ? nullptr
-                         : lookup_var("__track_validity_" + switched_var);
-        EzVal is_valid = vflag_slot
-            ? ez_load(mod, ez_i1(), vflag_slot, "is_valid")
-            : LLVMConstInt(ez_i1(), 1, 0); // no flag → assume valid
+        EzVal vflag_slot =
+            switched_var.empty() ? nullptr : lookup_var("__track_validity_" + switched_var);
+        EzVal is_valid = vflag_slot ? ez_load(mod, ez_i1(), vflag_slot, "is_valid")
+                                    : LLVMConstInt(ez_i1(), 1, 0); // no flag → assume valid
 
         Parser::ASTNode *valid_case = nullptr, *voided_case = nullptr;
         for (size_t i = 1; i < n->children.size(); ++i)
         {
           auto *c = n->children[i];
-          if (c->type == "Case" && c->value == "valid")  valid_case  = c;
-          if (c->type == "Case" && c->value == "voided") voided_case = c;
+          if (c->type == "Case" && c->value == "valid")
+            valid_case = c;
+          if (c->type == "Case" && c->value == "voided")
+            voided_case = c;
         }
 
-        EzBlock *end_b    = ez_block(current_func, "sw.end");
-        EzBlock *valid_b  = valid_case  ? ez_block(current_func, "sw.valid")  : end_b;
+        EzBlock *end_b = ez_block(current_func, "sw.end");
+        EzBlock *valid_b = valid_case ? ez_block(current_func, "sw.valid") : end_b;
         EzBlock *voided_b = voided_case ? ez_block(current_func, "sw.voided") : end_b;
 
         // i1 true → valid, false → voided
@@ -1647,7 +1669,8 @@ private:
 
         auto emit_arm = [&](EzBlock *blk, Parser::ASTNode *arm)
         {
-          if (!arm) return;
+          if (!arm)
+            return;
           current_block = blk;
           ez_use(blk);
           for (auto *stmt : arm->children)
@@ -1655,7 +1678,7 @@ private:
           if (!current_block_has_terminator())
             ez_br(mod, end_b);
         };
-        emit_arm(valid_b,  valid_case);
+        emit_arm(valid_b, valid_case);
         emit_arm(voided_b, voided_case);
 
         loop_stack.pop_back();
@@ -1712,7 +1735,7 @@ private:
         default_node = c;
     }
 
-    EzBlock *end_b    = ez_block(current_func, "sw.end");
+    EzBlock *end_b = ez_block(current_func, "sw.end");
     std::vector<EzBlock *> case_blocks;
     for (auto *c : cases)
       case_blocks.push_back(ez_block(current_func, ("sw.case." + c->value).c_str()));
@@ -1724,7 +1747,13 @@ private:
     {
       const std::string &val_s = cases[i]->value;
       long long ival = 0;
-      try { ival = std::stoll(val_s); } catch (...) {}
+      try
+      {
+        ival = std::stoll(val_s);
+      }
+      catch (...)
+      {
+      }
       LLVMAddCase(sw, LLVMConstInt(ez_i32(), (unsigned long long)ival, 1), case_blocks[i]->bb);
     }
 
@@ -1853,7 +1882,8 @@ private:
           {
             std::string btype = vit->second;
             auto lt = btype.find('<');
-            if (lt != std::string::npos) btype = btype.substr(0, lt);
+            if (lt != std::string::npos)
+              btype = btype.substr(0, lt);
             if (managed_free_fns().count(btype))
               return ez_load(mod, ez_ptr(), slot, (vname + "_ptr").c_str());
           }

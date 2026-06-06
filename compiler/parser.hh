@@ -158,8 +158,10 @@ private:
         int tpl_depth = 1;
         while (tpl_depth > 0 && peek_token(la).type != Lexer::TokenType::END_OF_FILE)
         {
-          if (peek_token(la).value == "<") tpl_depth++;
-          else if (peek_token(la).value == ">") tpl_depth--;
+          if (peek_token(la).value == "<")
+            tpl_depth++;
+          else if (peek_token(la).value == ">")
+            tpl_depth--;
           la++;
         }
       }
