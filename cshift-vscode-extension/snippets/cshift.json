@@ -1,121 +1,110 @@
 {
+  "Entry Point": {
+    "prefix": "entry",
+    "body": ["entry", "{", "\t$0", "}"],
+    "description": "Program entry point"
+  },
   "Function Definition": {
-    "prefix": "fn",
-    "body": [
-      "def ${1:functionName}(${2:parameters})",
-      "{",
-      "\t$0",
-      "}"
-    ],
-    "description": "Define a C<< function"
+    "prefix": "def",
+    "body": ["def ${1:name}(${2:params})", "{", "\t$0", "}"],
+    "description": "Internal function"
+  },
+  "Exported Function": {
+    "prefix": "export def",
+    "body": ["export def ${1:name}(${2:params})", "{", "\t$0", "}"],
+    "description": "Exported C-ABI function (external linkage)"
   },
   "Function with Tunnel": {
-    "prefix": "fn_tunnel",
+    "prefix": "deft",
     "body": [
-      "def ${1:functionName}(${2:parameters})",
+      "def ${1:name}(${2:type} ${3:param})",
       "{",
-      "\ttunnel ${3:expression} -> ${4:type} ${5:result};",
+      "\ttunnel ${4:$3} -> ${5:type} ${6:result};",
       "}"
     ],
-    "description": "Function with tunnel output"
+    "description": "Function with a tunnel output"
+  },
+  "Tunnel": {
+    "prefix": "tunnel",
+    "body": "tunnel ${1:expr} -> ${2:type} ${3:name};",
+    "description": "Tunnel a value to the caller's scope"
+  },
+  "Reserve": {
+    "prefix": "reserve",
+    "body": "reserve ${1:type} ${2:name} = ${3:call}();",
+    "description": "Reserve a variable filled by an upcoming tunnel"
+  },
+  "Reserve Shared": {
+    "prefix": "reserve shared",
+    "body": "reserve<shared> ${1:type} ${2:name} = ${3:call}();",
+    "description": "Read-only reserve (immutable after first fill)"
   },
   "Struct Definition": {
     "prefix": "struct",
-    "body": [
-      "struct ${1:StructName}",
-      "{",
-      "\t${2:int32 field1};",
-      "\t${3:float32 field2};",
-      "}"
-    ],
-    "description": "Define a struct"
+    "body": ["struct ${1:Name}", "{", "\t${2:int32 field};", "}"],
+    "description": "Data-only struct"
   },
   "Enum Definition": {
     "prefix": "enum",
-    "body": [
-      "enum ${1:EnumName} : ${2:int32}",
-      "{",
-      "\t${3:Value1},",
-      "\t${4:Value2}",
-      "}"
-    ],
-    "description": "Define an enum"
+    "body": ["enum ${1:Name}", "{", "\t${2:A},", "\t${3:B},", "}"],
+    "description": "Enumeration type"
   },
   "Template Struct": {
-    "prefix": "template_struct",
+    "prefix": "template struct",
     "body": [
       "template<typename ${1:T}>",
-      "struct ${2:GenericName}",
+      "struct ${2:Name}",
       "{",
-      "\t${1:T} data;",
-      "\tuint64 length;",
+      "\t${1:T} ${3:data};",
       "}"
     ],
     "description": "Generic template struct"
   },
   "Template Function": {
-    "prefix": "template_fn",
+    "prefix": "template def",
     "body": [
       "template<typename ${1:T}>",
-      "def ${2:functionName}(${1:T} ${3:param})",
+      "def ${2:name}(${1:T}* ${3:ptr})",
       "{",
-      "\ttunnel ${4:expression} -> ${1:T} ${5:result};",
+      "\ttunnel ${4:*$3} -> ${1:T} ${5:result};",
       "}"
     ],
     "description": "Generic template function"
   },
+  "Namespace": {
+    "prefix": "namespace",
+    "body": ["namespace ${1:Name}", "{", "\t$0", "}"],
+    "description": "Lexical namespace (no arena boundary)"
+  },
   "If Statement": {
     "prefix": "if",
-    "body": [
-      "if (${1:condition})",
-      "{",
-      "\t$0",
-      "}"
-    ],
+    "body": ["if (${1:condition})", "{", "\t$0", "}"],
     "description": "if statement"
   },
   "If-Else": {
-    "prefix": "ifelse",
-    "body": [
-      "if (${1:condition})",
-      "{",
-      "\t${2:// if body}",
-      "}",
-      "else",
-      "{",
-      "\t${3:// else body}",
-      "}"
-    ],
+    "prefix": "ife",
+    "body": ["if (${1:condition})", "{", "\t$2", "}", "else", "{", "\t$0", "}"],
     "description": "if-else statement"
   },
   "While Loop": {
     "prefix": "while",
-    "body": [
-      "while (${1:condition})",
-      "{",
-      "\t$0",
-      "}"
-    ],
+    "body": ["while (${1:condition})", "{", "\t$0", "}"],
     "description": "while loop"
   },
   "For Loop": {
     "prefix": "for",
     "body": [
-      "for (${1:int32 i = 0}; ${2:i < 10}; ${3:i += 1})",
+      "for (${1:int32} ${2:i} = ${3:0}; ${2:i} < ${4:n};)",
       "{",
       "\t$0",
+      "\t${2:i} += 1;",
       "}"
     ],
     "description": "for loop"
   },
   "Foreach Loop": {
     "prefix": "foreach",
-    "body": [
-      "foreach (${1:int32 item} : ${2:array})",
-      "{",
-      "\t$0",
-      "}"
-    ],
+    "body": ["foreach (${1:int32} ${2:val} : ${3:arr})", "{", "\t$0", "}"],
     "description": "foreach loop"
   },
   "Switch Statement": {
@@ -123,72 +112,91 @@
     "body": [
       "switch (${1:expr})",
       "{",
-      "\tcase ${2:value1}:",
-      "\t{",
+      "\tcase ${2:value}:",
       "\t\t$0",
-      "\t}",
       "\tdefault:",
-      "\t{",
       "\t\tbreak;",
-      "\t}",
       "}"
     ],
-    "description": "switch statement"
+    "description": "Numeric switch statement"
   },
-  "Voided State Guard": {
-    "prefix": "voided_guard",
+  "Voided-State Guard": {
+    "prefix": "switchv",
     "body": [
-      "switch (${1:pointer})",
+      "switch (${1:var})",
       "{",
-      "\tcase valid",
-      "\t{",
-      "\t\t${2:// pointer is valid}",
-      "\t}",
-      "\tcase voided",
-      "\t{",
-      "\t\t${3:// pointer is voided}",
-      "\t}",
+      "\tcase valid:",
+      "\t\t$0",
+      "\tcase voided:",
+      "\t\t// ${1:var} was moved",
       "}"
     ],
-    "description": "Guard for voided state"
+    "description": "Voided-state guard (valid/voided branches)"
   },
-  "Reserve Statement": {
-    "prefix": "reserve",
-    "body": [
-      "reserve ${1:int32} ${2:result} = ${3:function}();"
-    ],
-    "description": "Reserve and call function"
-  },
-  "Move Statement": {
+  "Move": {
     "prefix": "move",
-    "body": [
-      "move ${1:variable};"
-    ],
-    "description": "Move variable to voided state"
+    "body": "move ${1:var};",
+    "description": "Void a variable (requires switch guard for later use)"
   },
-  "Import Standard Library": {
-    "prefix": "import_std",
-    "body": [
-      "import std;"
-    ],
+  "Reset Arena": {
+    "prefix": "reset",
+    "body": "reset;",
+    "description": "Free all arena data in current scope (keep scope alive)"
+  },
+  "Const Declaration": {
+    "prefix": "const",
+    "body": "const ${1:int32} ${2:NAME} = ${3:value};",
+    "description": "Compile-time constant"
+  },
+  "Variable Declaration": {
+    "prefix": "var",
+    "body": "${1:int32} ${2:name} = ${3:0};",
+    "description": "Variable declaration with initializer"
+  },
+  "Arena Array Declaration": {
+    "prefix": "arr",
+    "body": "${1:int32}[] ${2:arr};",
+    "description": "Arena-bound dynamic array"
+  },
+  "Array Append": {
+    "prefix": "<<",
+    "body": "${1:arr} << ${2:value};",
+    "description": "Append a value to an arena array"
+  },
+  "Array Length": {
+    "prefix": "len",
+    "body": "${1:uint64} ${2:len} = ${3:arr}[[:]];",
+    "description": "Get length of an arena array"
+  },
+  "Vector Declaration": {
+    "prefix": "vec",
+    "body": "Vector<${1:int32}> ${2:v} = vec_new(${3:16});",
+    "description": "Arena-managed Vector<T>"
+  },
+  "HashMap Declaration": {
+    "prefix": "map",
+    "body": "HashMap<${1:string}, ${2:int32}> ${3:m} = map_new();",
+    "description": "Arena-managed HashMap<K,V>"
+  },
+  "StringBuilder Declaration": {
+    "prefix": "sb",
+    "body": "StringBuilder ${1:sb} = sb_new();",
+    "description": "Arena-managed StringBuilder"
+  },
+  "Import Module": {
+    "prefix": "import std",
+    "body": "import std;",
     "description": "Import standard library"
   },
-  "Import C Function": {
-    "prefix": "import_c",
-    "body": [
-      "import ${1:int32} ${2:functionName}(${3:parameters});"
-    ],
-    "description": "Import C function"
+  "Import C Header": {
+    "prefix": "import header",
+    "body": "import \"${1:header.h}\";",
+    "description": "Import a C header via libclang"
   },
-  "Entry Point": {
-    "prefix": "entry",
-    "body": [
-      "entry",
-      "{",
-      "\t$0",
-      "}"
-    ],
-    "description": "Program entry point"
+  "Import C Function": {
+    "prefix": "import fn",
+    "body": "import ${1:voided} ${2:name}(${3:params});",
+    "description": "Import a single C function"
   },
   "Hello World": {
     "prefix": "hello",
@@ -202,28 +210,9 @@
     ],
     "description": "Hello world program"
   },
-  "Namespace": {
-    "prefix": "namespace",
-    "body": [
-      "namespace ${1:MyNamespace}",
-      "{",
-      "\t$0",
-      "}"
-    ],
-    "description": "Define a namespace"
-  },
-  "Const Declaration": {
-    "prefix": "const",
-    "body": [
-      "const ${1:int32} ${2:CONSTANT_NAME} = ${3:value};"
-    ],
-    "description": "Declare a constant"
-  },
-  "Variable Declaration": {
-    "prefix": "var",
-    "body": [
-      "${1:int32} ${2:variableName}${3: = ${4:value}};$0"
-    ],
-    "description": "Declare a variable"
+  "Printf": {
+    "prefix": "printf",
+    "body": "printf(\"${1:%d\\n}\", ${2:value});",
+    "description": "printf call"
   }
 }

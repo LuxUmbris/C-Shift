@@ -1,8 +1,8 @@
 {
   "name": "cshift-language",
   "displayName": "C<< (C-Shift) Language Support",
-  "description": "Full syntax highlighting, IntelliSense, error checking, and autocomplete for the C<< systems language",
-  "version": "1.1.0",
+  "description": "Syntax highlighting, IntelliSense, real compiler error highlighting, and autocomplete for C<<",
+  "version": "1.2.0",
   "author": "C<< Contributors",
   "license": "Apache 2.0",
   "publisher": "cshift",
@@ -21,7 +21,6 @@
     "arena",
     "vop"
   ],
-  "icon": "icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/LuxUmbris/C-Shift"
@@ -45,11 +44,7 @@
         "extensions": [
           ".cll"
         ],
-        "configuration": "./language-configuration.json",
-        "icon": {
-          "light": "./icons/cshift-light.svg",
-          "dark": "./icons/cshift-dark.svg"
-        }
+        "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
@@ -73,7 +68,7 @@
       },
       {
         "command": "cshift.checkSyntax",
-        "title": "Check Syntax",
+        "title": "Check Syntax (no build)",
         "category": "C<<"
       },
       {
@@ -87,19 +82,56 @@
         "command": "cshift.compileFile",
         "key": "ctrl+shift+b",
         "when": "editorLangId == cshift"
+      },
+      {
+        "command": "cshift.checkSyntax",
+        "key": "ctrl+shift+k",
+        "when": "editorLangId == cshift"
+      },
+      {
+        "command": "cshift.formatDocument",
+        "key": "alt+shift+f",
+        "when": "editorLangId == cshift"
       }
     ],
+    "configuration": {
+      "title": "C<< Language",
+      "properties": {
+        "cshift.compilerPath": {
+          "type": "string",
+          "default": "cshift",
+          "description": "Path to the cshift compiler binary. Defaults to 'cshift' (must be on PATH)."
+        },
+        "cshift.stdPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the directory containing std.cll (sets CSHIFT_STD_PATH). Leave empty to use the default."
+        },
+        "cshift.checkDelay": {
+          "type": "number",
+          "default": 800,
+          "description": "Milliseconds to wait after the last keystroke before running the checker."
+        },
+        "cshift.enableRealTimeDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run cshift --check-only in the background and show errors/warnings inline."
+        }
+      }
+    },
     "configurationDefaults": {
       "[cshift]": {
         "editor.formatOnSave": true,
-        "editor.wordBasedSuggestions": false,
-        "editor.tabSize": 2,
-        "editor.insertSpaces": true
+        "editor.wordBasedSuggestions": "off",
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.rulers": [
+          100
+        ]
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "node ./build.js",
     "test": "node ./test.js"
   },
   "devDependencies": {
