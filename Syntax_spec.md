@@ -1,6 +1,6 @@
 # C<< (C-Shift) Language Specification
 
-> **Version:** 0.8 (2026)  
+> **Version:** 0.9 (2026)  
 > **Extension:** `.cll`  
 > **Entry point:** `entry { … }`  
 > **Paradigm:** Arena-scoped, VOP (Vertical Ownership Programming), C-ABI-compatible
