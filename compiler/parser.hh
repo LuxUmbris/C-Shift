@@ -110,6 +110,10 @@ private:
         return parse_struct();
       if (kw == "def")
         return parse_function();
+      if (kw == "dec")
+        return parse_dec();
+      if (kw == "class")
+        return parse_class();
       if (kw == "export")
       {
         // export def <name>(...) { ... }
@@ -163,6 +167,12 @@ private:
           la++;
         }
       }
+      // Array element assignment: IDENT[expr] = ...  (check BEFORE decorator skip
+      // so we don't confuse arr[i] = v with a type annotation like T[] name)
+      if (peek_token(la).value == "[" && peek_token(la + 1).value != "]" &&
+          peek_token(la + 1).value != ":" && peek_token(la + 1).value != ":")
+        return parse_assignment();
+
       // skip potential pointer/slice decorators
       while (peek_token(la).value == "*" || peek_token(la).value == "[" ||
              peek_token(la).value == "[:]")
@@ -225,6 +235,99 @@ private:
     match_token(Lexer::TokenType::KEYWORD, "entry");
     ASTNode *node = new ASTNode("Entry", "main", ln, current_depth);
     node->children.push_back(parse_block());
+    return node;
+  }
+
+  // dec name(params);                      — no tunnel outputs
+  // dec name(params) -> type t1, type t2;  — with tunnel outputs
+  ASTNode *parse_dec()
+  {
+    size_t ln = current_line();
+    match_token(Lexer::TokenType::KEYWORD, "dec");
+    std::string name = match_token(Lexer::TokenType::IDENTIFIER).value;
+
+    ASTNode *node = new ASTNode("FuncDecl", name, ln, current_depth);
+    node->children.push_back(parse_parameters());
+
+    // Optional tunnel-output signature list
+    ASTNode *tunnels = new ASTNode("DeclTunnels", "", ln, current_depth);
+    if (peek_token().value == "->")
+    {
+      advance_token();
+      while (true)
+      {
+        std::string ttype = parse_type_string();
+        std::string tname = match_token(Lexer::TokenType::IDENTIFIER).value;
+        tunnels->children.push_back(new ASTNode("DeclTunnel", ttype + " " + tname, ln, current_depth));
+        if (peek_token().value == ",")
+        {
+          advance_token();
+          continue;
+        }
+        break;
+      }
+    }
+    node->children.push_back(tunnels);
+    match_token(Lexer::TokenType::OPERATOR, ";");
+    return node;
+  }
+
+  // class Name { fields...; def method(params) { body } ... }
+  // Desugars to: struct Name { fields }  +  free functions Name_method(Name* self, params)
+  ASTNode *parse_class()
+  {
+    size_t ln = current_line();
+    match_token(Lexer::TokenType::KEYWORD, "class");
+    std::string name = match_token(Lexer::TokenType::IDENTIFIER).value;
+    match_token(Lexer::TokenType::OPERATOR, "{");
+
+    ASTNode *node = new ASTNode("Class", name, ln, current_depth);
+    ASTNode *fields  = new ASTNode("Fields", "", ln, current_depth);
+    ASTNode *methods = new ASTNode("Methods", "", ln, current_depth);
+
+    while (peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
+    {
+      if (peek_token().value == "def")
+      {
+        // Method: def name(params) [-> type tname,...] { body }
+        advance_token(); // 'def'
+        std::string mname = match_token(Lexer::TokenType::IDENTIFIER).value;
+        ASTNode *method = new ASTNode("Method", mname, current_line(), current_depth);
+        method->children.push_back(parse_parameters());
+
+        // Optional tunnel outputs in the signature (purely documentary —
+        // actual tunnel statements inside the body drive codegen, same as def)
+        if (peek_token().value == "->")
+        {
+          advance_token();
+          ASTNode *tunnels = new ASTNode("DeclTunnels", "", current_line(), current_depth);
+          while (true)
+          {
+            std::string ttype = parse_type_string();
+            std::string tname = match_token(Lexer::TokenType::IDENTIFIER).value;
+            tunnels->children.push_back(new ASTNode("DeclTunnel", ttype + " " + tname, current_line(), current_depth));
+            if (peek_token().value == ",") { advance_token(); continue; }
+            break;
+          }
+          method->children.push_back(tunnels);
+        }
+
+        method->children.push_back(parse_block());
+        methods->children.push_back(method);
+      }
+      else
+      {
+        // Field: type name;
+        std::string ftype = parse_type_string();
+        std::string fname = match_token(Lexer::TokenType::IDENTIFIER).value;
+        match_token(Lexer::TokenType::OPERATOR, ";");
+        fields->children.push_back(new ASTNode("Field", ftype + " " + fname, current_line(), current_depth));
+      }
+    }
+    match_token(Lexer::TokenType::OPERATOR, "}");
+
+    node->children.push_back(fields);
+    node->children.push_back(methods);
     return node;
   }
 
@@ -409,7 +512,18 @@ private:
   ASTNode *parse_call_statement()
   {
     size_t ln = current_line();
-    std::string name = advance_token().value; // IDENT
+    // Consume base name and optional .method chain: "v.push" or "v.x.y"
+    std::string name = advance_token().value; // first IDENT
+    while (peek_token().value == "." &&
+           peek_token(1).type == Lexer::TokenType::IDENTIFIER &&
+           (peek_token(2).value == "(" ||
+            (peek_token(2).value == "." &&
+             peek_token(3).type == Lexer::TokenType::IDENTIFIER &&
+             peek_token(4).value == "(")))
+    {
+      advance_token();                          // consume '.'
+      name += "." + advance_token().value;      // consume next IDENT
+    }
     ASTNode *node = new ASTNode("CallStatement", name, ln, current_depth);
     match_token(Lexer::TokenType::OPERATOR, "(");
     ASTNode *args = new ASTNode("Args", "", ln, current_depth);
@@ -740,12 +854,13 @@ private:
       match_token(Lexer::TokenType::OPERATOR, ">");
     }
 
-    // Type-inferred reserve: reserve varname = fn(...)
-    // Detected when an identifier is followed immediately by '=' (no type kw).
+    // Type-inferred reserve: reserve varname = fn(...)  or  reserve varname << tunnel_name [= fn()]
+    // Detected when an identifier is followed immediately by '=' or '<<' (no type kw).
     std::string type;
     std::string name;
     bool type_inferred = false;
-    if ((peek_token().type == Lexer::TokenType::IDENTIFIER) && (peek_token(1).value == "="))
+    if ((peek_token().type == Lexer::TokenType::IDENTIFIER) &&
+        (peek_token(1).value == "=" || peek_token(1).value == "<<"))
     {
       // No explicit type — will be inferred from the tunnel in codegen
       type = "__infer__";
@@ -761,6 +876,16 @@ private:
     ASTNode *node = new ASTNode("Reserve", type + " " + name, ln, current_depth);
     if (is_shared)
       node->children.push_back(new ASTNode("Shared", "shared", ln, current_depth));
+
+    // Extended tunnel-binding syntax: reserve [type] name << tunnel_name [= call();]
+    // Binds this reserve slot explicitly to a named tunnel output, instead of
+    // relying on positional/type inference.
+    if (peek_token().value == "<<")
+    {
+      advance_token();
+      std::string tunnel_name = match_token(Lexer::TokenType::IDENTIFIER).value;
+      node->children.push_back(new ASTNode("TunnelBind", tunnel_name, ln, current_depth));
+    }
 
     if (peek_token().value == "=")
     {

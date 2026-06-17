@@ -1,0 +1,24 @@
+// C-Shift Raylib Interop Test — native struct support (no wrapper needed)
+// Build:
+//   cshift raylib_test.cll -I/path/to/raylib/src -c -o raylib_test.o
+//   gcc raylib_test.o libraylib.a -lm -ldl -lpthread -lGL -lX11 -lXrandr -lXinerama -lXcursor -lXi -o raylib_test
+
+import "raylib.h";
+
+entry
+{
+    InitWindow(800, 450, "Hello from C<<!");
+    SetTargetFPS(60);
+
+    while (WindowShouldClose() == false)
+    {
+        BeginDrawing();
+        ClearBackground(30, 30, 46, 255);
+        DrawText("Hello from C<<!", 220, 190, 30, 205, 214, 244, 255);
+        DrawText("C-Shift Raylib Interop Test", 175, 240, 20, 166, 227, 161, 255);
+        DrawRectangle(350, 300, 100, 8, 137, 180, 250, 255);
+        EndDrawing();
+    }
+
+    CloseWindow();
+}

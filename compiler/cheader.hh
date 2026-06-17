@@ -110,22 +110,59 @@ static std::string clang_type_to_cshift(CXType t)
     return inner + "*";
   }
 
+  case CXType_Record:
+  {
+    // Struct by-value: expand to flat list of primitive field types.
+    struct FlatFields { std::vector<std::string> fields; bool ok = true; };
+    FlatFields fc;
+    clang_Type_visitFields(canon,
+      [](CXCursor c, CXClientData data) -> CXVisitorResult {
+        auto *fc = reinterpret_cast<FlatFields *>(data);
+        if (fc->fields.size() >= 8) { fc->ok = false; return CXVisit_Break; }
+        // Recursively get the field type
+        CXType ft = clang_getCursorType(c);
+        CXType ft_canon = clang_getCanonicalType(ft);
+        // Only handle primitive fields — nested structs stay as voided*
+        std::string mapped;
+        switch ((int)ft_canon.kind) {
+          case 3:  mapped = "bool";    break; // _Bool
+          case 4:  mapped = "int8";    break; // Char_U
+          case 5:  mapped = "uint8";   break; // UChar
+          case 6:  mapped = "uint16";  break; // UShort
+          case 7:  mapped = "uint32";  break; // UInt
+          case 8:  mapped = "uint64";  break; // ULong
+          case 10: mapped = "uint64";  break; // ULongLong
+          case 13: mapped = "int8";    break; // Char_S
+          case 14: mapped = "int8";    break; // SChar
+          case 15: mapped = "int16";   break; // Short
+          case 17: mapped = "int32";   break; // Int
+          case 18: mapped = "int64";   break; // Long
+          case 20: mapped = "int64";   break; // LongLong
+          case 21: mapped = "float32"; break; // Float
+          case 22: mapped = "float64"; break; // Double
+          case 101: mapped = "voided*"; break; // Pointer — allow ptrs in structs
+          default: fc->ok = false; return CXVisit_Break;
+        }
+        fc->fields.push_back(mapped);
+        return CXVisit_Continue;
+      }, &fc);
+    if (fc.ok && !fc.fields.empty()) {
+      std::string result = "flat:";
+      for (size_t i = 0; i < fc.fields.size(); ++i) { if (i) result += ","; result += fc.fields[i]; }
+      return result;
+    }
+    return "voided*"; // large or complex struct
+  }
+
   case CXType_Elaborated:
   {
-    // struct Foo / union Foo — use the named type if we can
+    // Elaborated type (typedef'd struct, union) — get the named type and recurse.
     CXType named = clang_Type_getNamedType(canon);
-    CXString spelling = clang_getTypeSpelling(named);
-    std::string s = clang_getCString(spelling);
-    clang_disposeString(spelling);
-    // Strip "struct " / "union " prefix
-    if (s.substr(0, 7) == "struct ")
-      s = s.substr(7);
-    else if (s.substr(0, 6) == "union ")
-      s = s.substr(6);
-    // If anonymous → opaque pointer
-    if (s.empty() || s[0] == '(')
-      return "voided*";
-    return "voided*"; // structs are opaque unless declared in .cll
+    CXType named_canon = clang_getCanonicalType(named);
+    if (named_canon.kind == CXType_Record)
+      return clang_type_to_cshift(named_canon); // delegate to Record case above
+    // Anonymous or opaque
+    return "voided*";
   }
 
   case CXType_FunctionProto:
@@ -134,11 +171,33 @@ static std::string clang_type_to_cshift(CXType t)
 
   default:
   {
-    // Last resort: use the spelling
+    // Last resort: map common C type spellings to C<< primitives,
+    // then fall back to voided* for anything else.
     CXString spelling = clang_getTypeSpelling(canon);
     std::string s = clang_getCString(spelling);
     clang_disposeString(spelling);
-    (void)s;
+    // Strip leading "const " / "volatile "
+    for (const char *pfx : {"const ", "volatile ", "signed ", "unsigned "})
+    {
+      while (s.rfind(pfx, 0) == 0)
+        s = s.substr(strlen(pfx));
+    }
+    if (s == "int" || s == "int32_t")   return "int32";
+    if (s == "unsigned int" || s == "uint32_t") return "uint32";
+    if (s == "short" || s == "int16_t") return "int16";
+    if (s == "unsigned short" || s == "uint16_t") return "uint16";
+    if (s == "long" || s == "long int" || s == "int64_t") return "int64";
+    if (s == "unsigned long" || s == "unsigned long int" || s == "uint64_t") return "uint64";
+    if (s == "long long" || s == "long long int") return "int64";
+    if (s == "unsigned long long") return "uint64";
+    if (s == "char" || s == "int8_t") return "int8";
+    if (s == "unsigned char" || s == "uint8_t") return "uint8";
+    if (s == "float")  return "float32";
+    if (s == "double") return "float64";
+    if (s == "bool" || s == "_Bool") return "bool";
+    if (s == "void")   return "voided";
+    if (s == "size_t" || s == "uintptr_t" || s == "ptrdiff_t") return "uint64";
+    if (s == "ssize_t" || s == "intptr_t") return "int64";
     return "voided*";
   }
   }
@@ -213,7 +272,17 @@ static CXChildVisitResult header_visitor(CXCursor cursor, CXCursor /*parent*/,
   ctx->nodes->push_back(node);
 
   if (ctx->verbose)
-    std::cerr << "[cheader] imported: " << ret_s << " " << fname << "()\n";
+  {
+    std::string params_s;
+    for (auto *p : cparams->children)
+    {
+      if (!params_s.empty()) params_s += ", ";
+      params_s += p->value;
+    }
+    if (is_vararg) params_s += params_s.empty() ? "..." : ", ...";
+    std::cerr << "[cheader] imported: " << ret_s << " " << fname
+              << "(" << params_s << ")\n";
+  }
 
   return CXChildVisit_Continue;
 }

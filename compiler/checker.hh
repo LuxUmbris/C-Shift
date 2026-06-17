@@ -266,6 +266,58 @@ private:
       }
       if (n->type == "Struct")
         struct_types.insert(n->value);
+      if (n->type == "FuncDecl")
+      {
+        // dec name(params) [-> type t1, type t2];
+        FuncSig sig;
+        sig.name = n->value;
+        if (!n->children.empty() && n->children[0]->type == "Parameters")
+          for (auto *p : n->children[0]->children)
+            if (p->type == "Param")
+              sig.params.push_back({extract_base_type(p->value), extract_name(p->value)});
+        if (n->children.size() >= 2 && n->children[1]->type == "DeclTunnels")
+          for (auto *t : n->children[1]->children)
+            sig.tunnels.push_back({extract_base_type(t->value), extract_name(t->value)});
+        func_table[sig.name] = sig;
+      }
+      if (n->type == "Class")
+      {
+        // class Name { fields; methods }
+        // → register Name as a struct type, and Name_method as functions
+        struct_types.insert(n->value);
+        Parser::ASTNode *fields_node = nullptr, *methods_node = nullptr;
+        for (auto *c : n->children)
+        {
+          if (c->type == "Fields")  fields_node  = c;
+          if (c->type == "Methods") methods_node = c;
+        }
+        // Register struct fields for field-access checking
+        if (fields_node)
+        {
+          auto *struct_node = new Parser::ASTNode("Struct", n->value, n->line, n->depth);
+          for (auto *f : fields_node->children)
+            struct_node->children.push_back(f);
+          check_struct(struct_node);
+        }
+        // Register each method as Name_method with self prepended
+        if (methods_node)
+          for (auto *m : methods_node->children)
+          {
+            FuncSig sig;
+            sig.name = n->value + "_" + m->value;
+            sig.params.push_back({n->value + "*", "self"});
+            Parser::ASTNode *orig_params = nullptr;
+            for (auto *c : m->children)
+              if (c->type == "Parameters") orig_params = c;
+            if (orig_params)
+              for (auto *p : orig_params->children)
+                if (p->type == "Param")
+                  sig.params.push_back({extract_base_type(p->value), extract_name(p->value)});
+            if (m->children.size() >= 2)
+              collect_tunnels_from_block(m->children.back(), sig.tunnels);
+            func_table[sig.name] = sig;
+          }
+      }
       if (n->type == "Enum")
       {
         auto name = n->value;
@@ -372,6 +424,11 @@ private:
 
     if (n->type == "Function")
       check_function(n);
+    else if (n->type == "FuncDecl")
+    { /* signature already registered in collect_signatures — nothing to check */
+    }
+    else if (n->type == "Class")
+      check_class(n);
     else if (n->type == "Entry")
       check_entry(n);
     else if (n->type == "Struct")
@@ -393,6 +450,8 @@ private:
       check_move(n);
     else if (n->type == "Assignment")
       check_assignment(n);
+    else if (n->type == "IndexAssignment")
+      check_index_assignment(n);
     else if (n->type == "CallStatement")
       check_call_statement(n);
     else if (n->type == "If")
@@ -449,6 +508,42 @@ private:
       check_node(c);
   }
 
+  // class Name { fields; def method(params) { body } }
+  // Each method is checked as if it were:
+  //   def Name_method(Name* self, params) { body }
+  // using the FuncSig already registered in collect_signatures.
+  void check_class(Parser::ASTNode *n)
+  {
+    Parser::ASTNode *methods_node = nullptr;
+    for (auto *c : n->children)
+      if (c->type == "Methods") methods_node = c;
+    if (!methods_node) return;
+
+    for (auto *m : methods_node->children)
+    {
+      std::string fn_name = n->value + "_" + m->value;
+
+      Parser::ASTNode *orig_params = nullptr;
+      Parser::ASTNode *body = nullptr;
+      for (auto *c : m->children)
+      {
+        if (c->type == "Parameters") orig_params = c;
+        else if (c->type == "Block")  body = c;
+      }
+
+      auto *synth = new Parser::ASTNode("Function", fn_name, m->line, m->depth);
+      auto *params = new Parser::ASTNode("Parameters", "", m->line, m->depth);
+      params->children.push_back(new Parser::ASTNode("Param", n->value + "* self", m->line, m->depth));
+      if (orig_params)
+        for (auto *p : orig_params->children)
+          params->children.push_back(p);
+      synth->children.push_back(params);
+      synth->children.push_back(body ? body : new Parser::ASTNode("Block", "", m->line, m->depth));
+
+      check_function(synth);
+    }
+  }
+
   void check_struct(Parser::ASTNode *n)
   {
     struct_types.insert(n->value);
@@ -459,6 +554,11 @@ private:
       std::string ftype = extract_base_type(field->value);
       if (!is_known_type(ftype))
         add_warning(field->line, "Unknown field type '" + ftype + "' in struct '" + n->value + "'");
+      if (ftype.size() >= 2 && ftype.substr(ftype.size() - 2) == "[]")
+        add_warning(field->line,
+                    "'" + ftype + "' as a struct/class field only supports raw element "
+                    "access (no .len(), no subscript bounds tracking) — use Vector<" +
+                    ftype.substr(0, ftype.size() - 2) + "> instead for length-aware access.");
     }
   }
 
@@ -507,7 +607,7 @@ private:
     std::string type = extract_base_type(n->value);
     std::string name = extract_name(n->value);
     if (!is_known_type(type))
-      add_warning(n->line, "Unknown type '" + type + "' for variable '" + name + "'");
+      add_error(n->line, "Unknown type '" + type + "' — did you forget to import a header or define the struct?");
     declare({name, type, arena_depth, false, false, is_pointer_type(type), false, false});
     if (!n->children.empty())
     {
@@ -582,6 +682,14 @@ private:
       child_start = 1;
     }
 
+    // Extended syntax: reserve [type] name << tunnel_name [= call();]
+    std::string explicit_tunnel_name;
+    if (n->children.size() > child_start && n->children[child_start]->type == "TunnelBind")
+    {
+      explicit_tunnel_name = n->children[child_start]->value;
+      child_start++;
+    }
+
     declare({name, type, arena_depth, false, false, is_pointer_type(type), false, is_shared});
 
     if (n->children.size() > child_start)
@@ -589,12 +697,45 @@ private:
       auto *init = n->children[child_start];
       // init is an Expression containing function call tokens
       // Validate: if it's a function call, check exactly one tunnel matches
-      check_reserve_init(n, type, name, init);
+      check_reserve_init(n, type, name, init, explicit_tunnel_name);
+
+      // If a TunnelBind name was given, verify the called function actually
+      // has a tunnel with that name.
+      if (!explicit_tunnel_name.empty() && !init->children.empty() &&
+          init->children[0]->type == "Token")
+      {
+        std::string func_name = init->children[0]->value;
+        std::string lookup_name = func_name;
+        // Method call: obj.method(...) → resolve "ClassName_method"
+        if (init->children.size() >= 4 && init->children[1]->value == "." &&
+            init->children[3]->value == "(")
+        {
+          std::string obj_name = init->children[0]->value;
+          std::string method_name = init->children[2]->value;
+          auto *sym = lookup(obj_name);
+          std::string base_type = sym ? sym->type : "";
+          auto lt = base_type.find('<');
+          if (lt != std::string::npos) base_type = base_type.substr(0, lt);
+          lookup_name = base_type + "_" + method_name;
+          func_name = lookup_name;
+        }
+        if (func_table.count(lookup_name))
+        {
+          auto &sig = func_table[lookup_name];
+          bool found = false;
+          for (auto &t : sig.tunnels)
+            if (t.name == explicit_tunnel_name) { found = true; break; }
+          if (!found)
+            add_error(n->line, "reserve: '" + func_name + "' has no tunnel output named '" +
+                                  explicit_tunnel_name + "'");
+        }
+      }
     }
   }
 
   void check_reserve_init(Parser::ASTNode *reserve_node, const std::string &want_type,
-                          const std::string &want_name, Parser::ASTNode *expr)
+                          const std::string &want_name, Parser::ASTNode *expr,
+                          const std::string &tunnel_bind_name = "")
   {
     if (!expr || expr->children.empty())
       return;
@@ -623,11 +764,18 @@ private:
         if (sig.tunnels.empty())
           add_error(reserve_node->line,
                     "reserve without type: '" + func_name + "' has no tunnel outputs.");
+        else if (!tunnel_bind_name.empty())
+        {
+          // Explicit binding: reserve name << tunnel_name = call();
+          // Valid as long as the named tunnel exists (checked separately
+          // in check_reserve via explicit_tunnel_name validation above).
+        }
         else if (sig.tunnels.size() > 1)
           add_error(reserve_node->line,
                     "reserve without type: '" + func_name +
-                        "' has multiple tunnels — specify the type explicitly.");
-        // single tunnel: OK
+                        "' has multiple tunnels — specify the type explicitly or use "
+                        "'reserve name << tunnel_name = " + func_name + "();'.");
+        // single tunnel, or explicit binding to an existing tunnel: OK
         check_expression(expr);
         return;
       }
@@ -752,8 +900,23 @@ private:
 
   void check_call_statement(Parser::ASTNode *n)
   {
-    if (!func_table.count(n->value))
-      add_warning(n->line, "Call to undeclared function '" + n->value + "' (may be external)");
+    const std::string &fullname = n->value;
+    auto dot = fullname.find('.');
+    if (dot != std::string::npos)
+    {
+      // Method call: v.method(args) — check base var exists
+      std::string obj = fullname.substr(0, dot);
+      if (!lookup(obj))
+        add_error(n->line, "Undeclared variable '" + obj + "'");
+      // Check args
+      if (!n->children.empty())
+        for (auto *a : n->children[0]->children)
+          check_expression(a);
+      return;
+    }
+    if (!func_table.count(fullname))
+      add_error(n->line, "Call to undeclared function '" + fullname +
+                       "' — declare it with: import voided " + fullname + "(params);");
     if (!n->children.empty())
       for (auto *a : n->children[0]->children)
       {
@@ -783,9 +946,9 @@ private:
     std::string ret_type = extract_base_type(n->value);
     std::string func_name = extract_name(n->value);
 
-    // Validate return type (void / C<< primitives are all fine; warn on
-    // unknowns)
-    if (!is_known_type(ret_type) && ret_type != "voided")
+    // Validate return type
+    if (ret_type.rfind("flat:", 0) == 0) { /* flat struct return — always valid */ }
+    else if (!is_known_type(ret_type) && ret_type != "voided")
       add_warning(n->line, "CImport '" + func_name + "': unknown return type '" + ret_type + "'");
 
     // Validate each parameter type
@@ -796,6 +959,8 @@ private:
         if (p->type == "Variadic")
           continue; // ... is always valid
         std::string ptype = extract_base_type(p->value);
+        // flat: types are expanded struct args from cheader — always valid
+        if (ptype.rfind("flat:", 0) == 0) continue;
         if (!is_known_type(ptype) && ptype != "voided")
           add_warning(p->line, "CImport '" + func_name + "': unknown param type '" + ptype + "'");
       }
@@ -805,7 +970,22 @@ private:
     // needed.
   }
 
-  void check_if(Parser::ASTNode *n)
+  void check_index_assignment(Parser::ASTNode *n)
+  {
+    auto sp = n->value.rfind(' ');
+    std::string arr = n->value.substr(0, sp);
+    auto *sym = lookup(arr);
+    if (!sym)
+      add_error(n->line, "Undeclared variable '" + arr + "'");
+    else if (sym->is_voided_maybe || sym->is_voided)
+      add_error(n->line, "Assignment to voided variable '" + arr + "'");
+    else if (sym->is_const)
+      add_error(n->line, "Assignment to const variable '" + arr + "'");
+    for (auto *child : n->children)
+      check_expression(child);
+  }
+
+    void check_if(Parser::ASTNode *n)
   {
     if (n->children.empty()) return;
 
@@ -1122,6 +1302,17 @@ private:
                                "guard with switch(" + n->value +
                                ") { case valid: … case voided: … }");
       }
+      // __arena / __arena_null are compiler built-ins — always valid
+      if (n->value == "__arena" || n->value == "__arena_null")
+        return;
+      // Named color constants (WHITE, RED, etc.) — always valid
+      static const std::unordered_set<std::string> color_names = {
+        "LIGHTGRAY","GRAY","DARKGRAY","YELLOW","GOLD","ORANGE","PINK","RED",
+        "MAROON","GREEN","LIME","DARKGREEN","SKYBLUE","BLUE","DARKBLUE","PURPLE",
+        "VIOLET","DARKPURPLE","BEIGE","BROWN","DARKBROWN","WHITE","BLACK",
+        "BLANK","MAGENTA","RAYWHITE"
+      };
+      if (color_names.count(n->value)) return;
       // VOP Lifetime Law: pointer access
       if (sym && sym->is_pointer)
       {
@@ -1292,6 +1483,20 @@ private:
     if (template_types.count(base))
       return true;
     if (template_types.count(base + "<...>"))
+      return true;
+    // flat:<t0>,<t1> — expanded struct (from C header import)
+    if (t.rfind("flat:", 0) == 0)
+      return true;
+    // Raw C type spellings that cheader may emit before canonicalization
+    static const std::unordered_set<std::string> c_spellings = {
+      "int","unsigned","unsigned int","short","unsigned short",
+      "long","unsigned long","long long","unsigned long long",
+      "size_t","ssize_t","ptrdiff_t","intptr_t","uintptr_t",
+      "int8_t","int16_t","int32_t","int64_t",
+      "uint8_t","uint16_t","uint32_t","uint64_t",
+      "float","double","_Bool"
+    };
+    if (c_spellings.count(base))
       return true;
     // If any struct type is registered with matching prefix (templated struct)
     for (auto &s : struct_types)

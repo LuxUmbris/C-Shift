@@ -1,0 +1,97 @@
+import "raylib.h";
+import std;
+
+entry
+{
+    InitWindow(800, 600, "C<< Breakout");
+    SetTargetFPS(60);
+
+    float32 px = 350.0;
+    float32 py = 550.0;
+    float32 pw = 100.0;
+    float32 ph = 15.0;
+
+    float32 bx = 400.0;
+    float32 by = 300.0;
+    float32 bvx = 3.0;
+    float32 bvy = -3.0;
+    float32 br = 10.0;
+
+    int32 score = 0;
+    int32 lives = 3;
+
+    int32[] bricks_x;
+    int32[] bricks_y;
+    int32[] bricks_alive;
+
+    int32 col = 0;
+    while (col < 8)
+    {
+        int32 row = 0;
+        while (row < 4)
+        {
+            bricks_x << (col * 90 + 50);
+            bricks_y << (row * 35 + 50);
+            bricks_alive << 1;
+            row += 1;
+        }
+        col += 1;
+    }
+
+    while (WindowShouldClose() == false)
+    {
+        if (IsKeyDown(263)) { px -= 5.0; }
+        if (IsKeyDown(262)) { px += 5.0; }
+
+        bx += bvx;
+        by += bvy;
+
+        if (bx < br)         { bvx = bvx * -1.0; }
+        if (bx > 800.0 - br) { bvx = bvx * -1.0; }
+        if (by < br)         { bvy = bvy * -1.0; }
+        if (by > 600.0)      { lives -= 1; bx = 400.0; by = 300.0; }
+
+        if (bx > px && bx < px + pw && by > py - br && by < py + ph)
+        {
+            bvy = bvy * -1.0;
+        }
+
+        int32 i = 0;
+        while (i < bricks_alive[[:]]) 
+        {
+            if (bricks_alive[i] == 1)
+            {
+                int32 brickx = bricks_x[i];
+                int32 bricky = bricks_y[i];
+                if (bx > brickx && bx < brickx + 80 && by > bricky && by < bricky + 25)
+                {
+                    bricks_alive[i] = 0;
+                    bvy = bvy * -1.0;
+                    score += 10;
+                }
+            }
+            i += 1;
+        }
+
+        BeginDrawing();
+        ClearBackground(20, 20, 35, 255);
+        DrawRectangle(px, py, pw, ph, 100, 200, 255, 255);
+        DrawCircle(bx, by, br, 255, 220, 100, 255);
+
+        int32 j = 0;
+        while (j < bricks_alive[[:]]) 
+        {
+            if (bricks_alive[j] == 1)
+            {
+                DrawRectangle(bricks_x[j], bricks_y[j], 80, 25, 255, 80, 100, 255);
+            }
+            j += 1;
+        }
+
+        DrawText("SCORE:", 10, 10, 20, 200, 200, 200, 255);
+        DrawText("LIVES:", 10, 35, 20, 200, 200, 200, 255);
+        EndDrawing();
+    }
+
+    CloseWindow();
+}

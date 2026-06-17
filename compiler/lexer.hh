@@ -49,7 +49,8 @@ private:
       {"const", TokenType::KEYWORD},    {"float64", TokenType::KEYWORD},
       {"reset", TokenType::KEYWORD},    {"break", TokenType::KEYWORD},
       {"continue", TokenType::KEYWORD}, {"template", TokenType::KEYWORD},
-      {"typename", TokenType::KEYWORD}, {"export", TokenType::KEYWORD}};
+      {"typename", TokenType::KEYWORD}, {"export", TokenType::KEYWORD},
+      {"dec", TokenType::KEYWORD},      {"class", TokenType::KEYWORD}};
 
   // Operators sorted by length (Maximal Munch)
   std::vector<std::pair<std::string, TokenType>> operator_lookup = {

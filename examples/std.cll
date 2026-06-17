@@ -33,11 +33,21 @@ import int32  sprintf   (string buf, string fmt, ...);
 import int32  snprintf  (string buf, uint64 n, string fmt, ...);
 import int32  sscanf    (string buf, string fmt, ...);
 
-// --- File I/O ---
+// --- File I/O (low-level, use helpers below for most cases) ---
 import voided* fopen    (string path, string mode);
 import int32   fclose   (voided* stream);
 import uint64  fread    (voided* buf, uint64 size, uint64 n, voided* stream);
 import uint64  fwrite   (voided* buf, uint64 size, uint64 n, voided* stream);
+import int32   fflush   (voided* stream);
+
+// --- High-level file helpers (frt.c) ---
+// read_file_s_a: read entire file into a string, tracked by scope arena
+import string  read_file_s_a (string path, voided* arena);
+import string  read_file_s   (string path);          // untracked — prefer _a version
+import int32   write_file_s  (string path, string contents);   // returns 0 on success
+import int32   append_file_s (string path, string contents);   // append to file
+import int32   file_exists   (string path);          // 1 if readable
+import int64   file_size_s   (string path);          // size in bytes or -1
 import int32   fseek    (voided* stream, int64 offset, int32 whence);
 import int64   ftell    (voided* stream);
 import voided  rewind   (voided* stream);
@@ -61,10 +71,6 @@ import voided* tmpfile  ();
 // ════════════════════════════════════════════════════════════
 
 // --- Allocation ---
-import voided* malloc   (uint64 size);
-import voided* calloc   (uint64 n, uint64 size);
-import voided* realloc  (voided* ptr, uint64 new_size);
-import voided  free     (voided* ptr);
 
 // --- Memory ops ---
 import voided* memcpy   (voided* dst, voided* src, uint64 n);
@@ -262,7 +268,6 @@ import int32   setsockopt(int32 fd, int32 level, int32 optname, voided* optval, 
 import int32   getsockopt(int32 fd, int32 level, int32 optname, voided* optval, uint32* optlen);
 import int32   shutdown (int32 fd, int32 how);
 import int32   getaddrinfo (string host, string service, voided* hints, voided** res);
-import voided  freeaddrinfo(voided* res);
 import string  gai_strerror(int32 err);
 import int32   getnameinfo  (voided* addr, uint32 addrlen, string host, uint32 hostlen, string serv, uint32 servlen, int32 flags);
 import uint32  htonl    (uint32 x);
@@ -431,19 +436,49 @@ import voided  set_errno   (int32 val);
 import int32   add_i32_safe (int32 a, int32 b, int32* out);
 import int32   mul_i32_safe (int32 a, int32 b, int32* out);
 
-// Heap string builder (returns malloc'd string — caller must free)
+// ── Safe string functions (frt.c) ──────────────────────────────────────────
+// Strings are null-terminated char* — fully C-ABI compatible.
+// All functions are null-safe (never crash on NULL input).
+
+// Length and character access
+import int32   str_len        (string s);                          // null-safe strlen → 0
+import char    str_char_at    (string s, int32 idx);               // safe s[idx] → 0 if OOB
+import int32   str_to_int     (string s);
+import float64 str_to_float   (string s);
+
+// Comparison and search
+import int32   str_eq         (string a, string b);                // 1 if equal, 0 if not
+import int32   str_starts_with(string s, string prefix);
+import int32   str_ends_with  (string s, string suffix);
+import int32   str_index_of   (string s, string needle);           // -1 if not found
+
+// Arena-tracked string builders (automatically freed with scope)
+import string  str_concat_a   (string a, string b,     voided* arena);
+import string  str_repeat_a   (string s, int32 n,      voided* arena);
+import string  str_slice_a    (string s, int32 start, int32 end, voided* arena);
+import string  str_replace_a  (string s, string from, string to, voided* arena);
+import string  int_to_str_a   (int64 val,              voided* arena);
+import string  float_to_str_a (float64 val, int32 precision, voided* arena);
+import string  str_to_upper_a (string s,               voided* arena);
+import string  str_to_lower_a (string s,               voided* arena);
+import string  str_trim_a     (string s,               voided* arena);
+
+// Legacy untracked variants (prefer the _a versions above)
 import string  str_concat   (string a, string b);
 import string  str_repeat   (string s, int32 n);
 import string  str_slice    (string s, int32 start, int32 end);
-import int32   str_index_of (string s, string needle);
 import string  str_replace  (string s, string from, string to);
 import string  int_to_str   (int64 val);
 import string  float_to_str (float64 val, int32 precision);
 
 // I/O helpers
-import string  read_line    ();                  // reads one line from stdin, malloc'd
-import string  read_file_s  (string path);       // entire file into malloc'd string
-import int32   write_file_s (string path, string contents);
+import string  read_line    ();                  // reads one line from stdin (arena-free use read_line_a)
+import string  read_line_a  (voided* arena);       // arena-tracked read_line — freed with scope
+import string  str_concat_a (string a, string b, voided* arena);
+import string  int_to_str_a (int64 val, voided* arena);
+import string  float_to_str_a(float64 val, int32 precision, voided* arena);
+import string  str_slice_a  (string s, int32 start, int32 end, voided* arena);
+import string  str_replace_a(string s, string from, string to, voided* arena);
 
 // Timing
 import float64 now_seconds  ();                  // monotonic clock in seconds
@@ -457,7 +492,6 @@ import float64 now_seconds  ();                  // monotonic clock in seconds
 
 /* ─── Vector<T>: Dynamic array with chunk-based allocation ─── */
 
-template<typename T>
 struct Vector
 {
   voided* chunks;           /* array of chunk pointers (no copies) */
@@ -466,47 +500,30 @@ struct Vector
   uint64  len;              /* total elements in vector */
 };
 
-template<typename T>
-import voided* vec_new         (uint64 chunk_size);
-template<typename T>
-import voided  vec_free        (Vector<T>* v);
-template<typename T>
-import int32   vec_push        (Vector<T>* v, T elem);
-template<typename T>
-import int32   vec_pop         (Vector<T>* v, T* out);
-template<typename T>
-import T       vec_get         (Vector<T>* v, uint64 idx);
-template<typename T>
-import int32   vec_set         (Vector<T>* v, uint64 idx, T elem);
-template<typename T>
+import voided* vec_new(uint64 chunk_size);
+import int32 vec_push(voided* v, int64 elem);
+import int32 vec_pop(voided* v, voided* out);
+import int64 vec_get(voided* v, uint64 idx);
+import int32 vec_set(voided* v, uint64 idx, int64 elem);
 import uint64  vec_len         (Vector<T>* v);
-template<typename T>
-import int32   vec_insert      (Vector<T>* v, uint64 idx, T elem);
-template<typename T>
-import int32   vec_remove      (Vector<T>* v, uint64 idx, T* out);
-template<typename T>
+import int32 vec_insert(voided* v, uint64 idx, T elem);
+import int32 vec_remove(voided* v, uint64 idx, T* out);
 import voided  vec_clear       (Vector<T>* v);
-template<typename T>
-import int32   vec_reserve     (Vector<T>* v, uint64 capacity);
+import int32 vec_reserve(voided* v, uint64 capacity);
 
 /* Zero-copy iterators */
-template<typename T>
 struct VecIter
 {
   Vector<T>* vec;
   uint64 idx;
 };
 
-template<typename T>
 import VecIter<T> vec_iter_begin (Vector<T>* v);
-template<typename T>
 import int32       vec_iter_next  (VecIter<T>* it, T* out);
 
 
 /* ─── HashMap<K, V>: Hash table with chaining ─── */
 
-template<typename K>
-template<typename V>
 struct HashMap
 {
   voided* buckets;          /* array of bucket lists */
@@ -515,35 +532,19 @@ struct HashMap
   uint64  capacity;         /* max before rehash */
 };
 
-template<typename K>
-template<typename V>
-import voided* map_new    ();
-template<typename K>
-template<typename V>
-import voided  map_free   (HashMap<K, V>* m);
-template<typename K>
-template<typename V>
-import int32   map_insert (HashMap<K, V>* m, K key, V value);
-template<typename K>
-template<typename V>
-import int32   map_remove (HashMap<K, V>* m, K key);
-template<typename K>
-template<typename V>
-import int32   map_get    (HashMap<K, V>* m, K key, V* out);
-template<typename K>
-template<typename V>
-import int32   map_contains (HashMap<K, V>* m, K key);
-template<typename K>
-template<typename V>
-import uint64  map_len    (HashMap<K, V>* m);
-template<typename K>
-template<typename V>
-import voided  map_clear  (HashMap<K, V>* m);
+import voided* map_new();
+import int32 map_insert(voided* m, string key, int64 value);
+import int32 map_set(voided* m, string key, int64 value);
+import int32 map_has(voided* m, string key);             // alias for map_contains
+import int32 map_remove(voided* m, string key);
+import int32 map_get(voided* m, string key, voided* out);
+import int32 map_contains(voided* m, string key);
+import uint64 map_len(voided* m);
+import voided map_clear(voided* m);
 
 
 /* ─── LinkedList<T>: Intrusive doubly-linked list ─── */
 
-template<typename T>
 struct LinkedList
 {
   voided* head;
@@ -551,7 +552,6 @@ struct LinkedList
   uint64  len;
 };
 
-template<typename T>
 struct LinkNode
 {
   T       data;
@@ -559,51 +559,32 @@ struct LinkNode
   voided* next;
 };
 
-template<typename T>
 import voided* list_new     ();
-template<typename T>
-import voided  list_free    (LinkedList<T>* l);
-template<typename T>
-import int32   list_push_front (LinkedList<T>* l, T elem);
-template<typename T>
-import int32   list_push_back  (LinkedList<T>* l, T elem);
-template<typename T>
-import int32   list_pop_front  (LinkedList<T>* l, T* out);
-template<typename T>
-import int32   list_pop_back   (LinkedList<T>* l, T* out);
-template<typename T>
-import uint64  list_len    (LinkedList<T>* l);
-template<typename T>
-import voided  list_clear  (LinkedList<T>* l);
+import int32 list_push_front(voided* l, int64 elem);
+import int32 list_push_back(voided* l, int64 elem);
+import int32 list_pop_front(voided* l, voided* out);
+import int32 list_pop_back(voided* l, voided* out);
+import uint64 list_len(voided* l);
+import voided list_clear(voided* l);
 
 
 /* ─── Set<T>: Hash set (uses HashMap internally) ─── */
 
-template<typename T>
 struct Set
 {
   voided* map;              /* HashMap<T, bool> */
 };
 
-template<typename T>
 import voided* set_new      ();
-template<typename T>
-import voided  set_free     (Set<T>* s);
-template<typename T>
-import int32   set_insert   (Set<T>* s, T elem);
-template<typename T>
-import int32   set_remove   (Set<T>* s, T elem);
-template<typename T>
-import int32   set_contains (Set<T>* s, T elem);
-template<typename T>
-import uint64  set_len      (Set<T>* s);
-template<typename T>
-import voided  set_clear    (Set<T>* s);
+import int32 set_insert(voided* s, int64 elem);
+import int32 set_remove(voided* s, int64 elem);
+import int32 set_contains(voided* s, int64 elem);
+import uint64 set_len(voided* s);
+import voided set_clear(voided* s);
 
 
 /* ─── Deque<T>: Double-ended queue with ring buffer ─── */
 
-template<typename T>
 struct Deque
 {
   voided* buffer;           /* circular ring buffer */
@@ -613,29 +594,18 @@ struct Deque
   uint64  len;
 };
 
-template<typename T>
 import voided* deque_new      (uint64 capacity);
-template<typename T>
-import voided  deque_free     (Deque<T>* d);
-template<typename T>
 import int32   deque_push_front (Deque<T>* d, T elem);
-template<typename T>
 import int32   deque_push_back  (Deque<T>* d, T elem);
-template<typename T>
 import int32   deque_pop_front  (Deque<T>* d, T* out);
-template<typename T>
 import int32   deque_pop_back   (Deque<T>* d, T* out);
-template<typename T>
 import T       deque_at     (Deque<T>* d, uint64 idx);
-template<typename T>
 import uint64  deque_len    (Deque<T>* d);
-template<typename T>
 import voided  deque_clear  (Deque<T>* d);
 
 
 /* ─── RingBuffer<T>: Fixed-size circular buffer (lock-free safe) ─── */
 
-template<typename T>
 struct RingBuffer
 {
   voided* buffer;           /* pre-allocated array */
@@ -644,25 +614,16 @@ struct RingBuffer
   uint64  read_pos;         /* read index (atomic) */
 };
 
-template<typename T>
 import voided* ring_new     (uint64 capacity);
-template<typename T>
-import voided  ring_free    (RingBuffer<T>* rb);
-template<typename T>
 import int32   ring_push    (RingBuffer<T>* rb, T elem);   /* returns 0 if full */
-template<typename T>
 import int32   ring_pop     (RingBuffer<T>* rb, T* out);   /* returns 0 if empty */
-template<typename T>
 import uint64  ring_available_read  (RingBuffer<T>* rb);
-template<typename T>
 import uint64  ring_available_write (RingBuffer<T>* rb);
-template<typename T>
 import voided  ring_clear   (RingBuffer<T>* rb);
 
 
 /* ─── Pool<T>: Object pool for allocation-free usage patterns ─── */
 
-template<typename T>
 struct Pool
 {
   voided* free_list;        /* linked list of free objects */
@@ -671,32 +632,21 @@ struct Pool
   uint64  num_free;
 };
 
-template<typename T>
 import voided* pool_new     (uint64 num_objects);
-template<typename T>
-import voided  pool_free    (Pool<T>* p);
-template<typename T>
 import T*      pool_acquire (Pool<T>* p);
-template<typename T>
 import voided  pool_release (Pool<T>* p, T* obj);
-template<typename T>
 import uint64  pool_available (Pool<T>* p);
-template<typename T>
 import voided  pool_reset   (Pool<T>* p);
 
 
 /* ─── Pair<A, B>: Simple tuple ─── */
 
-template<typename A>
-template<typename B>
 struct Pair
 {
   A first;
   B second;
 };
 
-template<typename A>
-template<typename B>
 import Pair<A, B> pair_make (A a, B b);
 
 
@@ -709,7 +659,6 @@ struct BitSet
 };
 
 import voided* bitset_new    (uint64 num_bits);
-import voided  bitset_free   (BitSet* bs);
 import int32   bitset_set    (BitSet* bs, uint64 idx);
 import int32   bitset_clear  (BitSet* bs, uint64 idx);
 import int32   bitset_toggle (BitSet* bs, uint64 idx);
@@ -723,7 +672,6 @@ import voided  bitset_not    (BitSet* bs);
 
 /* ─── Lazy<T>: Compute-on-demand caching ─── */
 
-template<typename T>
 struct Lazy
 {
   voided* compute_fn;       /* function pointer: voided*() -> T */
@@ -731,11 +679,8 @@ struct Lazy
   int32   computed;
 };
 
-template<typename T>
 import Lazy<T> lazy_new     (voided* fn);
-template<typename T>
 import T       lazy_force   (Lazy<T>* l);
-template<typename T>
 import int32   lazy_is_computed (Lazy<T>* l);
 
 
@@ -760,7 +705,6 @@ struct StringBuilder
 };
 
 import voided* sb_new       ();
-import voided  sb_free      (StringBuilder* sb);
 import int32   sb_append    (StringBuilder* sb, string s);
 import int32   sb_append_char (StringBuilder* sb, char c);
 import int32   sb_append_int   (StringBuilder* sb, int64 val);
@@ -771,7 +715,6 @@ import voided  sb_clear     (StringBuilder* sb);
 
 /* ─── Buffer<T>: Safe typed buffers ─── */
 
-template<typename T>
 struct Buffer
 {
   T*     data;
@@ -779,40 +722,25 @@ struct Buffer
   uint64 capacity;
 };
 
-template<typename T>
 import Buffer<T> buf_new     (uint64 capacity);
-template<typename T>
 import voided    buf_free    (Buffer<T>* b);
-template<typename T>
 import int32     buf_resize  (Buffer<T>* b, uint64 new_size);
-template<typename T>
 import int32     buf_push    (Buffer<T>* b, T elem);
-template<typename T>
 import T         buf_pop     (Buffer<T>* b);
-template<typename T>
 import voided    buf_fill    (Buffer<T>* b, T val);
-template<typename T>
 import voided    buf_copy    (Buffer<T>* dst, Buffer<T>* src);
 
 
 /* ─── Sorted Containers ─── */
 
-template<typename T>
 struct SortedVec
 {
   voided* vec;              /* Vector<T> internally */
   voided* cmp_fn;           /* comparison function */
 };
 
-template<typename T>
 import voided* svec_new     (voided* cmp_fn);
-template<typename T>
-import voided  svec_free    (SortedVec<T>* sv);
-template<typename T>
-import int32   svec_insert  (SortedVec<T>* sv, T elem);
-template<typename T>
-import int32   svec_remove  (SortedVec<T>* sv, T elem);
-template<typename T>
-import int32   svec_find    (SortedVec<T>* sv, T elem);
-template<typename T>
-import uint64  svec_len     (SortedVec<T>* sv);
+import int32 svec_insert(voided* sv);
+import int32 svec_remove(voided* sv);
+import int32 svec_find(voided* sv);
+import uint64 svec_len(voided* sv);

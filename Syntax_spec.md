@@ -1,184 +1,153 @@
-# C<< (C-Shift) Language Syntax Specification
+# C<< (C-Shift) Language Specification
 
-> **Language version:** C-Shift 0.7 (2026)  
-> **Source extension:** `.cll`  
+> **Version:** 0.8 (2026)  
+> **Extension:** `.cll`  
 > **Entry point:** `entry { … }`  
-> **Paradigm:** Arena-based, VOP (Vertical Ownership Programming), C-ABI-compatible
+> **Paradigm:** Arena-scoped, VOP (Vertical Ownership Programming), C-ABI-compatible
 
 ---
 
 ## Table of Contents
 
 1. [Lexical Structure](#1-lexical-structure)
-2. [Primitive Types](#2-primitive-types)
-3. [Type Expressions](#3-type-expressions)
-4. [Top-Level Declarations](#4-top-level-declarations)
-5. [The Entry Point](#5-the-entry-point)
-6. [Functions and Tunnels](#6-functions-and-tunnels)
-7. [Variables](#7-variables)
-8. [The Voided State and `move`](#8-the-voided-state-and-move)
-9. [Expressions and Operators](#9-expressions-and-operators)
-10. [Statements and Control Flow](#10-statements-and-control-flow)
-11. [Templates and Generic Types](#11-templates-and-generic-types)
-12. [Structs](#12-structs)
-13. [Enums](#13-enums)
-14. [Namespaces](#14-namespaces)
-15. [Arrays and Slices](#15-arrays-and-slices)
-16. [Raw Strings](#16-raw-strings)
+2. [Types](#2-types)
+3. [Top-Level Items](#3-top-level-items)
+4. [Entry Point](#4-entry-point)
+5. [Functions and Tunnels](#5-functions-and-tunnels)
+   - [5a. Forward Declarations (`dec`)](#5a-forward-declarations-dec)
+   - [5b. Extended `reserve` — Tunnel Binding (`<<`)](#5b-extended-reserve--explicit-tunnel-binding-)
+   - [5c. Zero-Cost Classes (`class`)](#5c-zero-cost-classes-class)
+6. [Variables and Constants](#6-variables-and-constants)
+7. [The Voided State and `move`](#7-the-voided-state-and-move)
+8. [Expressions](#8-expressions)
+9. [Control Flow](#9-control-flow)
+10. [Arena Model and `reset`](#10-arena-model-and-reset)
+11. [Arrays](#11-arrays)
+12. [Generic Container Types](#12-generic-container-types)
+13. [Method Syntax](#13-method-syntax)
+14. [Structs and Enums](#14-structs-and-enums)
+15. [Templates](#15-templates)
+16. [Namespaces](#16-namespaces)
 17. [Imports and C-ABI Interop](#17-imports-and-c-abi-interop)
-18. [Arena Model and VOP Rules](#18-arena-model-and-vop-rules)
-19. [Compile-Time Constants](#19-compile-time-constants)
-20. [Reserved Words](#20-reserved-words)
-21. [Complete Operator Table](#21-complete-operator-table)
-22. [Grammar Summary (EBNF)](#22-grammar-summary-ebnf)
+18. [Standard Library (`std`)](#18-standard-library-std)
+19. [Raylib Integration](#19-raylib-integration)
+20. [Export](#20-export)
+21. [Raw Strings](#21-raw-strings)
+22. [Reserved Words](#22-reserved-words)
+23. [Operator Table](#23-operator-table)
+24. [Grammar (EBNF)](#24-grammar-ebnf)
+25. [Annotated Examples](#25-annotated-examples)
 
 ---
 
 ## 1. Lexical Structure
 
-### 1.1 Comments
+### Comments
+```cll
+// single-line
+/* block comment */
+```
+
+### Identifiers
+```
+[a-zA-Z_][a-zA-Z0-9_]*
+```
+
+### Literals
+| Kind | Examples |
+|------|----------|
+| Integer | `0`, `42`, `0xFF` |
+| Float | `3.14`, `1.0e-5` |
+| String | `"hello\nworld"` (C escape sequences) |
+| Bool | `true`, `false` |
+| Raw string | see §21 |
+
+---
+
+## 2. Types
+
+### Primitive types
+
+| Type | Width | Notes |
+|------|-------|-------|
+| `int8` | 8 bit | signed |
+| `int16` | 16 bit | signed |
+| `int32` | 32 bit | signed |
+| `int64` | 64 bit | signed |
+| `uint8` | 8 bit | unsigned |
+| `uint16` | 16 bit | unsigned |
+| `uint32` | 32 bit | unsigned |
+| `uint64` | 64 bit | unsigned |
+| `float32` | 32 bit | IEEE-754 |
+| `float64` | 64 bit | IEEE-754 double |
+| `bool` | 1 bit | `true` / `false` |
+| `char` | 8 bit | unsigned byte |
+| `string` | ptr | null-terminated `char*` (C-ABI compatible) |
+| `voided` | — | C `void`; `voided*` = opaque pointer |
+
+### Pointer types
+```cll
+int32*      // pointer to int32
+voided*     // void pointer (C-ABI opaque)
+string      // already a pointer (char*)
+```
+
+### Array / slice types
+```cll
+int32[]     // arena-bound dynamic array (§11)
+int32[:]    // non-owning slice
+int32[16]   // fixed-size stack array
+```
+
+### Generic types
+```cll
+Vector<int32>
+HashMap<string, int32>
+```
+Template params are stripped at compile time; the base name must match a known struct.
+
+### Automatic numeric coercion
+
+When a value of one numeric type is assigned to a different numeric type, the compiler automatically coerces it:
+
+- **Widening** (e.g. `int32 → int64`) — always safe, emits `sext`/`fpext`
+- **Narrowing** (e.g. `int64 → int32`) — emits `trunc`, produces a checker warning
+- **Float ↔ int** — emits `sitofp` / `fptosi`, produces a checker warning
+- **Incompatible types** — `cannot cast 'T' to 'U'` error
 
 ```cll
-// single-line comment
-/* block comment — nesting not supported */
-```
-
-### 1.2 Identifiers
-
-```
-identifier ::= [a-zA-Z_][a-zA-Z0-9_]*
-```
-
-Identifiers matching a keyword are reserved and cannot be used as names.
-
-### 1.3 Integer and Float Literals
-
-```
-number ::= [0-9]+ | [0-9]+ '.' [0-9]+
-```
-
-### 1.4 String Literals
-
-```
-string_literal ::= '"' ( escape_char | [^"] )* '"'
-```
-
-Standard C escape sequences (`\n`, `\t`, `\0`, `\\`, `\"`) are supported.
-
-### 1.5 Raw Strings
-
-See [§16 Raw Strings](#16-raw-strings).
-
-### 1.6 Whitespace
-
-All whitespace (space, tab, CR, LF) is ignored between tokens.
-
----
-
-## 2. Primitive Types
-
-| Type      | Width  | Description                         |
-|-----------|--------|-------------------------------------|
-| `int8`    | 8 bit  | Signed integer                      |
-| `int16`   | 16 bit | Signed integer                      |
-| `int32`   | 32 bit | Signed integer                      |
-| `int64`   | 64 bit | Signed integer                      |
-| `uint8`   | 8 bit  | Unsigned integer                    |
-| `uint16`  | 16 bit | Unsigned integer                    |
-| `uint32`  | 32 bit | Unsigned integer                    |
-| `uint64`  | 64 bit | Unsigned integer                    |
-| `float32` | 32 bit | IEEE-754 single-precision float     |
-| `float64` | 64 bit | IEEE-754 double-precision float     |
-| `bool`    | 1 bit  | Boolean (`true` / `false`)          |
-| `char`    | 8 bit  | Single character (unsigned byte)    |
-| `string`  | ptr    | Pointer to null-terminated C string |
-| `voided`  | —      | Absence of type (C-interop)         |
-
-`string` lowers to `i8*`. `voided` lowers to `void`; `voided*` lowers to `i8*`.
-
----
-
-## 3. Type Expressions
-
-```
-type_expr      ::= base_type pointer_suffix? array_suffix?
-base_type      ::= primitive_type | identifier | identifier '<' type_args '>'
-pointer_suffix ::= '*'+
-array_suffix   ::= '[]'          // arena-bound dynamic array
-                 | '[:]'         // non-owning slice
-                 | '[' expr ']'  // sized array
-type_args      ::= type_expr ( ',' type_expr )*
-```
-
-### Examples
-
-```cll
-int32            // plain int
-int32*           // pointer to int32
-uint8[:]         // slice of bytes (non-owning view)
-float32[]        // arena-bound dynamic array
-Vector<int32>    // generic container (heap-allocated, arena-managed)
-voided*          // opaque pointer (void* in C)
+int32 len = strlen("hi");  // strlen returns uint64 → auto-truncated to int32
 ```
 
 ---
 
-## 4. Top-Level Declarations
+## 3. Top-Level Items
 
-A C<< source file is a flat sequence of top-level items processed in order. A forward-declaration pass runs before codegen, so definitions may appear in any order.
+A `.cll` file is a flat list of top-level items (order doesn't matter — a forward-declaration pass runs first):
 
-Top-level items:
-- `import` (module or C-function or C-header)
-- `export def` / `def` — function definition
-- `struct` definition
-- `enum` definition
-- `namespace` block
-- `entry` block (exactly one per program)
-- `const` declaration
-- `template<typename T>` generic definition
-
-### `export def`
-
-```cll
-export def my_function(int32 x)
-{
-    tunnel x * 2 -> int32 result;
-}
 ```
-
-`export def` gives the function **external linkage** so it is callable from C or other languages. Plain `def` gets **internal linkage** (invisible to the linker — safe for dead-code elimination).
+program ::= (import | struct | enum | namespace | def | export def
+            | entry | const | template)*
+```
 
 ---
 
-## 5. The Entry Point
+## 4. Entry Point
 
-Every executable C<< program must contain exactly one `entry` block. It compiles to C `main()`.
+Every executable has exactly one `entry` block, which compiles to C `main()`:
 
 ```cll
 entry
 {
-    // program body
+    puts("Hello, C<< world!");
 }
 ```
 
 ---
 
-## 6. Functions and Tunnels
+## 5. Functions and Tunnels
 
-### 6.1 Function Definition
-
-```
-function_def ::= ['export'] 'def' identifier '(' parameter_list ')' block
-parameter_list ::= ( type_expr identifier ( ',' type_expr identifier )* )?
-```
-
-Functions have **no return type annotation**. Output travels through `tunnel` statements.
-
-### 6.2 Tunnel Statement
-
-```
-tunnel_stmt ::= 'tunnel' expression '->' type_expr identifier ';'
-```
+### Definition
 
 ```cll
 def add(int32 a, int32 b)
@@ -187,228 +156,401 @@ def add(int32 a, int32 b)
 }
 ```
 
-Rules:
-- The expression before `->` is the output value.
-- The `type identifier` after `->` names the target in the caller's scope.
-- Multiple tunnels are allowed; each fills a matching `reserve`d variable.
-- Tunneling a pointer type warns the VOP checker (pointer escapes its arena).
+Functions have **no return type**. Values leave through `tunnel` statements. This enforces a single clear data-flow direction.
 
-### 6.3 Calling a Function
+### Tunnel statement
 
-```cll
-// Classic: reserve first, then call
-reserve int32 result;
-add(5, 7);
-
-// Inline: reserve + call in one line
-reserve int32 result = add(5, 7);
-
-// Type-inferred (single tunnel output):
-reserve result = add(5, 7);
+```
+tunnel expression -> type identifier ;
 ```
 
-### 6.4 Multiple Tunnel Outputs
+The expression is computed and stored into the caller's `reserve`d slot.
+
+### Calling a function
 
 ```cll
-def compute(int32 x, int32 y)
+// reserve first, then call fills it
+reserve int32 result;
+add(3, 4);
+
+// inline: reserve + call
+reserve int32 result = add(3, 4);
+
+// type-inferred (single tunnel output)
+reserve result = add(3, 4);
+```
+
+### Multiple tunnel outputs
+
+```cll
+def divide(int32 a, int32 b)
 {
-    tunnel x + y -> int32 sum;
-    tunnel x * y -> int32 product;
+    tunnel a / b -> int32 quotient;
+    tunnel a % b -> int32 remainder;
 }
 
 entry
 {
-    reserve int32 sum;
-    reserve int32 product;
-    compute(8, 4);  // fills both
+    reserve int32 quotient;
+    reserve int32 remainder;
+    divide(17, 5);
+    printf("%d r %d\n", quotient, remainder);
 }
 ```
 
-### 6.5 Implicit Tunnel in Expressions
+### Inline usage
 
-When a function has exactly one tunnel output it may be used inline:
+When a function has exactly one tunnel output it can be used directly as an expression:
 
 ```cll
-printf("%d\n", add(4, 8));  // add's tunnel value is passed directly
+printf("%d\n", add(4, 8));
 ```
 
 ---
 
-## 7. Variables
+---
 
-### 7.1 Plain Declaration
+## 5a. Forward Declarations (`dec`)
+
+A function defined later in the file (or mutually recursive with another
+function) can be **forward-declared** with `dec`. This registers the
+function's signature — including its `tunnel` output names and types — so
+calls before the `def` appears type-check correctly.
 
 ```
-declaration ::= type_expr identifier ( '=' expression )? ';'
+dec name(params) [-> type t1, type t2, ...];
 ```
 
 ```cll
-int32 x;
-int32 y = 42;
+dec is_even(int32 n) -> int32 result;
+dec is_odd(int32 n)  -> int32 result;
+
+def is_even(int32 n)
+{
+    if (n == 0)
+    {
+        tunnel 1 -> int32 result;
+    }
+    else
+    {
+        reserve int32 r = is_odd(n - 1);
+        tunnel r -> int32 result;
+    }
+}
+
+def is_odd(int32 n)
+{
+    if (n == 0)
+    {
+        tunnel 0 -> int32 result;
+    }
+    else
+    {
+        reserve int32 r = is_even(n - 1);
+        tunnel r -> int32 result;
+    }
+}
+```
+
+### Rules
+
+- The parameter list and tunnel signature of `dec` must match the later `def`. (The compiler does not currently cross-check this exhaustively — mismatches may surface as link-time or runtime errors.)
+- If no tunnel outputs are declared (`dec name(params);`), the function must not contain `tunnel` statements with named outputs that callers rely on before the `def` is seen.
+- `dec` with no matching `def` anywhere in the program leaves an external declaration — useful for linking against functions defined in other translation units or C code (combined with `export def` on the defining side).
+- `export` may be combined: `export dec name(params) -> type t;` is accepted by the parser but linkage is determined by the `def`'s own `export` modifier.
+
+---
+
+## 5b. Extended `reserve` — Explicit Tunnel Binding (`<<`)
+
+When a function has **multiple** `tunnel` outputs, a plain `reserve` matches
+by name (the reserve's variable name must equal the tunnel's target name) or
+by type (if exactly one tunnel of that type exists). The `<<` syntax lets you
+**explicitly** bind a reserve slot to a specific named tunnel output,
+regardless of the reserve variable's own name:
+
+```
+reserve [type] target_name << tunnel_name [= func_name(args);]
+```
+
+```cll
+def compute(int32 x)
+{
+    tunnel x * 2 -> int32 doubled;
+    tunnel x * 3 -> int32 tripled;
+}
+
+entry
+{
+    // Bind to "tripled" explicitly — works even though the local
+    // variable is named "t", not "tripled"
+    reserve int32 t << tripled = compute(10);
+    printf("tripled = %d\n", t);   // 30
+
+    // Type can also be inferred when binding explicitly
+    reserve r << doubled = compute(5);
+    printf("doubled = %d\n", r);   // 10
+}
+```
+
+### Rules
+
+- `tunnel_name` must be the name of one of the tunnel outputs declared (via `tunnel expr -> type tunnel_name;` in the body, or via `dec ... -> type tunnel_name;`) by the called function — checked at compile time:
+  ```
+  [CHECKER ERROR] reserve: 'compute' has no tunnel output named 'nonexistent'
+  ```
+- Without `<<`, normal name/type matching rules apply (§5).
+- With `<<` and **no explicit type** (`reserve name << tunnel_name = call();`), the type is inferred from the bound tunnel's declared type — even when the function has multiple tunnels (the usual "multiple tunnels — specify the type explicitly" error does not apply when `<<` disambiguates).
+- Works with both plain function calls and method calls (`reserve r << result = obj.method();`).
+
+---
+
+## 5c. Zero-Cost Classes (`class`)
+
+`class` is sugar for a `struct` plus free functions that take a pointer to
+that struct as their first parameter (`self`). There is no vtable, no
+inheritance, and no runtime overhead — `obj.method(args)` compiles to a
+direct call `ClassName_method(&obj, args)`.
+
+```
+class Name
+{
+    type field1;
+    type field2;
+
+    def method1(params)
+    {
+        // self.field1, self.field2 ...
+    }
+
+    def method2(params) -> type tname
+    {
+        tunnel expr -> type tname;
+    }
+}
+```
+
+### Desugaring
+
+```cll
+class Player
+{
+    float32 x;
+    float32 y;
+    int32 health;
+
+    def take_damage(int32 amount)
+    {
+        self.health -= amount;
+    }
+
+    def is_alive() -> int32 alive
+    {
+        if (self.health > 0)
+        {
+            tunnel 1 -> int32 alive;
+        }
+        else
+        {
+            tunnel 0 -> int32 alive;
+        }
+    }
+}
+```
+
+is equivalent to:
+
+```cll
+struct Player
+{
+    float32 x;
+    float32 y;
+    int32 health;
+}
+
+def Player_take_damage(Player* self, int32 amount)
+{
+    self.health -= amount;
+}
+
+def Player_is_alive(Player* self) -> int32 alive
+{
+    if (self.health > 0)
+    {
+        tunnel 1 -> int32 alive;
+    }
+    else
+    {
+        tunnel 0 -> int32 alive;
+    }
+}
+```
+
+### Usage
+
+```cll
+entry
+{
+    Player p;
+    p.x = 0.0;
+    p.y = 0.0;
+    p.health = 100;
+
+    p.take_damage(30);
+
+    reserve int32 alive = p.is_alive();
+    printf("health=%d alive=%d\n", p.health, alive);  // health=70 alive=1
+}
+```
+
+`p.take_damage(30)` desugars to `Player_take_damage(&p, 30)`. `self` inside a
+method has type `Player*`, so `self.field` uses the same auto-dereferencing
+field-access codegen as any other pointer-to-struct field access (§8).
+
+### Rules
+
+- Field declarations come first, methods after (order within each group is preserved).
+- A method may declare `tunnel` outputs exactly like a top-level `def` — including the `-> type tname` signature form, and `reserve r = obj.method()` / `reserve r << tname = obj.method()` both work (§5b).
+- A method name cannot be a reserved keyword (e.g. `move`, `reset`) — this is the same restriction as for any identifier.
+- `class` instances live on the stack (or in their enclosing arena) like any `struct` — there is no separate heap allocation or `class_free`. Arena/VOP rules (§10) apply identically: a `Player` declared inside a sub-scope is destroyed when that scope exits, same as any other stack value.
+- Classes do not support inheritance, virtual methods, constructors, or destructors. Initialize fields manually after declaration, as shown above.
+
+## 6. Variables and Constants
+
+### Declaration
+
+```cll
+int32 x = 42;
+float32 pi = 3.14159;
 string name = "Alice";
-Vector<int32> v = vec_new(16);   // generic type — heap-allocated, arena-managed
+Vector<int32> v = vec_new(16);   // arena-managed, freed automatically
 ```
 
-Variables are owned by the current arena (scope block). Heap-allocated variables (e.g. `Vector<T>`, `T[]`) are freed automatically when their arena exits via a single bulk-free operation — not RAII.
-
-### 7.2 Reserve
-
-```
-reserve_stmt ::= 'reserve' ('<' 'shared' '>')? type_expr identifier ( '=' expression )? ';'
-```
-
-`reserve` declares a variable that receives a `tunnel` value from an upcoming call. It lives in the current scope and survives the called function.
-
-`reserve<shared>` is read-only after initialization:
+### Reserve (tunnel target)
 
 ```cll
-reserve<shared> int32 config = load_config();
-// config = 5;  // checker error
+reserve int32 result = some_fn(x);
+reserve<shared> int32 config = load_config();  // read-only after first fill
 ```
 
-### 7.3 Constants
-
-```
-const_decl ::= 'const' type_expr identifier '=' expression ';'
-```
+### Constants
 
 ```cll
 const int32 MAX = 1024;
-const float64 PI = 3.14159265358979;
+const float64 TAU = 6.283185;
 ```
 
-Immutable; reassignment is a checker error. Type mismatches in the initializer are also caught by the checker.
-
-### 7.4 Assignment
-
-```
-assignment ::= lvalue assign_op expression ';'
-assign_op  ::= '=' | '+=' | '-=' | '*=' | '/='
+The checker enforces correct types for constant initialisers:
+```cll
+const int32 x = "hello";  // [ERROR] Type mismatch: string assigned to int32
+const int32 y = 3.14;     // [ERROR] Float literal assigned to integer const
 ```
 
 ---
 
-## 8. The Voided State and `move`
+## 7. The Voided State and `move`
 
-### 8.1 Concept
+### Concept
 
-Every variable tracks whether it holds a **valid** value or has been **moved** (voided). This is a compile-time-tracked property with optional runtime support when the state cannot be determined statically.
+Every variable is either **valid** or **voided**. A voided variable has had ownership transferred via `move`. Using a voided variable without a guard is a compile-time error.
 
-No null pointers — instead, a moved variable is explicitly voided, and access is guarded by a `switch` block.
-
-### 8.2 `move`
-
-```
-move_stmt ::= 'move' identifier ';'
-```
-
-Transitions a variable to the voided state. Accessing a voided variable without a guard is a compile-time error.
+### `move`
 
 ```cll
-int32 x = 10;
-move x;
-// using x here is a checker error
+int32 x = 42;
+move x;          // x is now voided
+printf("%d", x); // [ERROR] Use of voided variable 'x'
 ```
 
-### 8.3 `switch` Guard for Voided State
+### `switch` guard
 
 ```cll
-switch (p)
+switch (x)
 {
     case valid:
-        printf("%d\n", *p);
+        printf("x = %d\n", x);
     case voided:
-        puts("was moved");
+        puts("x was moved");
 }
 ```
 
-The compiler distinguishes three situations:
+### Three resolution modes
 
-| Situation | What happens |
-|-----------|-------------|
-| **Statically voided** — `move` always reached before switch | Checker sets `meta = "voided"` → codegen emits only the `case voided` body, no branch at all |
-| **Statically valid** — `move` never reached | Checker sets `meta = "valid"` → codegen emits only the `case valid` body, no branch at all |
-| **Conditionally voided** — `move` inside an `if`/`while` branch | Checker sets `meta = "unknown"` → codegen emits a hidden `__track_validity_<name>` bool flag; `move` stores `false` into it; the switch does a runtime `cond_br` |
+| Situation | What the compiler does |
+|-----------|----------------------|
+| `move` always reached before `switch` | **Static** — emits only the `case voided` body. Zero runtime cost. |
+| `move` never reached | **Static** — emits only the `case valid` body. Zero runtime cost. |
+| `move` inside an `if`/`while` | **Runtime** — emits a hidden `__track_validity_<name>` bool flag. `move` sets it `false`. The switch does a `cond_br` on it. |
 
-The hidden flag has zero overhead in the static cases. In the conditional case the overhead is exactly one i1 alloca + one store per `move` + one load + branch at the guard.
-
-### 8.4 `reset`
-
-```
-reset_stmt ::= 'reset' ';'
-```
-
-Frees all heap-allocated data tracked by the current scope's arena, **without** exiting the scope. Variables remain declared and can receive new values afterwards. Forbidden if any child scope holds pointers into the current arena.
+The `__track_validity_` prefix is reserved and cannot be used in user code.
 
 ---
 
-## 9. Expressions and Operators
+## 8. Expressions
 
-### 9.1 Arithmetic
+### Arithmetic
+`+` `-` `*` `/` `%`
 
-| Operator | Meaning        |
-|----------|----------------|
-| `+`      | Addition       |
-| `-`      | Subtraction    |
-| `*`      | Multiplication |
-| `/`      | Division       |
-| `%`      | Modulo         |
-
-### 9.2 Comparison
-
+### Comparison
 `==` `!=` `<` `>` `<=` `>=`
 
-### 9.3 Logical
-
+### Logical
 `&&` `||` `!`
 
-### 9.4 Bitwise
+### Bitwise / shift
+`&` `|` `<<` `>>`
 
-`&` `<<` `>>`
+### Compound assignment
+`+=` `-=` `*=` `/=` `%=` `<<=` `>>=`
 
-### 9.5 Compound Assignment
-
-`+= -= *= /= %= <<= >>= **=`
-
-### 9.6 Pointer and Address
-
-| Operator | Meaning              |
-|----------|----------------------|
-| `&`      | Address-of           |
-| `*`      | Dereference          |
-| `->`     | Tunnel target arrow  |
-
-For heap-allocated types (`Vector<T>`, etc.), `&v` returns the stored heap pointer directly, not the address of the local slot.
-
-### 9.7 Field Access
-
-```
-expr '.' identifier
-```
-
-### 9.8 Boolean Literals
-
-`true` `false`
-
-### 9.9 Namespace Resolution
-
-```
-identifier '::' identifier
-```
-
-### 9.10 Array Length
-
+### Address-of and dereference
 ```cll
-uint64 len = arr[[:]] ;
+int32* p = &x;   // address of x
+int32 v = *p;    // dereference
 ```
 
-`arr[[:]]` returns the current element count of an arena-bound array `arr`.
+For **managed container types** (`Vector<T>` etc.), `&v` returns the stored heap pointer directly (not the address of the local slot), so `&v` can be passed to C functions expecting a `Vector*`.
+
+### Array length
+```cll
+uint64 len = arr[[:]] ;   // length of a T[] arena array
+```
+
+Also available as method syntax (see §13):
+```cll
+uint64 len = arr.len();
+```
+
+### Array element access and assignment
+```cll
+int32 x = arr[i];    // read
+arr[i] = 99;         // write
+arr[i] += 1;         // compound assign
+```
+
+### Field access
+```cll
+point.x
+player.position.y
+```
+
+### Namespace resolution
+```cll
+Math::PI
+Engine::Physics::gravity
+```
+
+### Mixed-type arithmetic
+
+Numeric types are automatically promoted before binary operations:
+- `float32 * int32` → both promoted to `float64`, result truncated back to `float32` if hint says so
+- `int32 < uint64` → `int32` widened to `uint64`
 
 ---
 
-## 10. Statements and Control Flow
+## 9. Control Flow
 
-### 10.1 `if` / `else`
+### `if` / `else`
 
 ```cll
 if (x > 0)
@@ -425,9 +567,9 @@ else
 }
 ```
 
-### 10.2 `while`
+**Constant folding:** conditions that are compile-time constants (`1 == 1`, `0 != 0`, etc.) cause the dead branch to be completely omitted from IR — no runtime overhead.
 
-Each iteration body is its own sub-arena.
+### `while`
 
 ```cll
 while (i < 10)
@@ -436,70 +578,251 @@ while (i < 10)
 }
 ```
 
-### 10.3 `for`
+### `for`
 
 ```cll
-for (int32 i = 0; i < 5;)
+for (int32 i = 0; i < n;)
 {
     printf("%d\n", i);
     i += 1;
 }
 ```
 
-Each iteration body is its own sub-arena.
-
-### 10.4 `foreach`
+### `foreach`
 
 ```cll
-foreach (int32 val : my_array)
+foreach (int32 val : arr)
 {
     printf("%d\n", val);
 }
 ```
 
-### 10.5 `break` and `continue`
-
-`break` exits the innermost loop or switch. `continue` restarts the next iteration (not allowed inside switch).
-
-### 10.6 `switch` / `case` / `default`
+### `switch` / `case` / `default`
 
 ```cll
 switch (status)
 {
-    case Active:
-        puts("active");
-    case Inactive:
-        puts("inactive");
+    case 0:
+        puts("ok");
+    case 1:
+        puts("error");
     default:
         puts("unknown");
 }
 ```
 
-No fallthrough. Each case body ends at the next `case`, `default`, or `}`.
+No fallthrough. Voided-state guard form: `case valid:` / `case voided:` — see §7.
 
-**Voided-state guard form** — see [§8.3](#83-switch-guard-for-voided-state).
+### `break` / `continue`
 
-### 10.7 Anonymous Blocks (Sub-Arenas)
+Standard loop control. `break` also exits a `switch`.
 
-A bare `{ … }` block creates a new arena. All variables declared inside — including heap-allocated ones — are freed in bulk when the block exits.
+---
+
+## 10. Arena Model and `reset`
+
+### Arena = Scope
+
+Every `{…}` block is a **scope arena**. All heap allocations in that scope — arena arrays (`T[]`), `Vector<T>`, `HashMap<K,V>`, etc. — are tracked by a `cshift_arena_t` struct. On scope exit, **one** call to `__cshift_arena_free_all()` releases everything. There are no individual destructors.
+
+The arena struct is created lazily: if a scope makes no heap allocations, it costs zero.
+
+### `reset`
+
+```cll
+reset;
+```
+
+Frees all heap data tracked by the current scope's arena **without exiting the scope**. Variables remain declared and can receive new values.
+
+```cll
+int32[] buf;
+buf << 1;
+buf << 2;
+reset;          // buf data freed, len = 0
+buf << 99;      // safe to reuse
+```
+
+### Sub-arenas
+
+Every nested `{…}` block gets its own arena. Data allocated in a sub-block is freed when that block exits — without affecting the parent scope.
 
 ```cll
 {
     Vector<int32> tmp = vec_new(8);
-    vec_push(&tmp, 42);
-    // tmp is freed here automatically — one arena_free_all() call
+    tmp.push(42);
+    // tmp freed here automatically
 }
+// parent scope unaffected
+```
+
+### VOP Depth Law
+
+A pointer must only point to a variable at arena depth ≤ the pointer's own depth. Tunneling a pointer out of a function warns the checker (pointer escapes its arena).
+
+---
+
+## 11. Arrays
+
+### Arena-bound (`T[]`)
+
+Dynamic, heap-allocated, owned by the current scope arena:
+
+```cll
+int32[] nums;
+nums << 10;                  // append
+nums << 20;
+nums << 30;
+uint64 len = nums[[:]] ;     // length (or: nums.len())
+int32 x = nums[1];           // read
+nums[1] = 99;                // write
+nums[1] += 5;                // compound assign
+```
+
+Multiple element types work:
+```cll
+string[] words;
+words << "hello";
+words << "world";
+printf("%s %s\n", words[0], words[1]);
+```
+
+### Fixed-size (`T[N]`)
+
+Stack-allocated:
+```cll
+float32[16] matrix;
+uint8[256] buf;
+```
+
+### Non-owning slice (`T[:]`)
+
+Fat pointer (base + length), does not own memory:
+```cll
+int32[:] view;
 ```
 
 ---
 
-## 11. Templates and Generic Types
+## 12. Generic Container Types
 
+All containers are **arena-managed** — you never call `vec_free` etc. manually. The scope arena frees them automatically.
+
+### `Vector<T>`
+
+```cll
+Vector<int32> v = vec_new(16);
+v.push(10);
+v.push(20);
+int32 x = v.get(0);        // 10
+uint64 len = v.len();      // 2
+v.set(0, 99);
+v.remove(0);
+int32 contains = v.contains(99); // 0 after remove
 ```
-template_def ::= 'template' '<' typename_param ( ',' typename_param )* '>'
-                 ( struct_def | function_def )
-typename_param ::= 'typename' identifier
+
+### `HashMap<K, V>`
+
+```cll
+HashMap<string, int32> scores = map_new();
+scores.set("alice", 100);
+scores.set("bob",   80);
+int32 out = 0;
+scores.get("alice", &out);   // out = 100
+int32 has = scores.has("charlie"); // 0
 ```
+
+### `StringBuilder`
+
+```cll
+StringBuilder sb = sb_new();
+sb.append("Hello, ");
+sb.append_int(42);
+sb.append("!");
+string result = sb.build();   // arena-tracked automatically
+printf("%s\n", result);
+```
+
+### `SortedVec<T>`
+
+```cll
+SortedVec<int32> sv = svec_new(cmp_int32);
+sv.push(30);
+sv.push(10);
+sv.push(20);
+int32 first = sv.get(0);   // 10 (sorted)
+```
+
+### `LinkedList<T>`, `Set<T>`, `BitSet`, `Deque<T>`
+
+Same method-call pattern.
+
+---
+
+## 13. Method Syntax
+
+Container types and arena arrays support dot-method calls instead of free function calls:
+
+```cll
+v.push(x)          // same as vec_push(&v, x)
+v.get(i)           // same as vec_get(&v, i)
+v.len()            // same as vec_len(&v)
+arr.len()          // same as arr[[:]]
+sb.append("hi")    // same as sb_append(&sb, "hi")
+```
+
+Method calls work in **statement** and **expression** position:
+
+```cll
+if (v.len() > 0)
+{
+    printf("first=%d last=%d\n", v.get(0), v.get(v.len() - 1));
+}
+```
+
+### Full method table
+
+| Type | Method | Equivalent |
+|------|--------|-----------|
+| `Vector<T>` | `.push(x)` `.get(i)` `.set(i,x)` `.len()` `.pop()` `.remove(i)` `.contains(x)` `.clear()` | `vec_*` |
+| `HashMap<K,V>` | `.set(k,v)` `.get(k,&out)` `.has(k)` `.remove(k)` `.len()` `.clear()` | `map_*` |
+| `SortedVec<T>` | `.push(x)` `.get(i)` `.len()` `.find(x)` `.remove(i)` | `svec_*` |
+| `StringBuilder` | `.append(s)` `.append_char(c)` `.append_int(n)` `.append_float(f,prec)` `.build()` `.len()` `.clear()` | `sb_*` |
+| `LinkedList<T>` | `.push(x)` `.pop()` `.get(i)` `.len()` | `list_*` |
+| `Set<T>` | `.insert(x)` `.contains(x)` `.remove(x)` `.len()` | `set_*` |
+| `BitSet` | `.set(i)` `.get(i)` `.clear(i)` | `bitset_*` |
+| `T[]` | `.len()` | `arr[[:]]` |
+
+---
+
+## 14. Structs and Enums
+
+### Struct
+
+Data-only (no methods):
+```cll
+struct Vec2
+{
+    float32 x;
+    float32 y;
+}
+
+Vec2 p;
+p.x = 3.0;
+p.y = 4.0;
+```
+
+### Enum
+
+Integer-backed:
+```cll
+enum Direction { North, South, East, West }
+enum ErrorCode : int32 { Ok = 0, NotFound = 404 }
+```
+
+---
+
+## 15. Templates
 
 ```cll
 template<typename T>
@@ -510,436 +833,354 @@ struct Pair
 }
 
 template<typename T>
-def pair_sum(Pair<T>* p)
+def swap(T* a, T* b)
 {
-    tunnel p.first + p.second -> T result;
+    T tmp = *a;
+    *a = *b;
+    *b = tmp;
 }
 ```
 
-Template instantiation is monomorphic at compile time.
-
-### Generic Container Types
-
-The standard library provides heap-allocated generic containers. All are managed by the arena — you do **not** call `vec_free` etc. manually; the scope arena handles it.
-
-| Type | Constructor | Description |
-|------|-------------|-------------|
-| `Vector<T>` | `vec_new(chunk_size)` | Dynamic array |
-| `HashMap<K,V>` | `map_new()` | Hash map |
-| `SortedVec<T>` | `svec_new(cmp)` | Sorted vector |
-| `StringBuilder` | `sb_new()` | String builder |
-
-```cll
-import std;
-
-entry
-{
-    Vector<int32> v = vec_new(16);
-    vec_push(&v, 10);
-    vec_push(&v, 20);
-
-    uint64 len = vec_len(&v);   // 2
-    int32 x = vec_get(&v, 0);   // 10
-
-    // v is freed automatically when the scope exits
-}
-```
+Monomorphically instantiated at compile time.
 
 ---
 
-## 12. Structs
+## 16. Namespaces
 
-Structs are data-only (no methods).
-
-```
-struct_def ::= 'struct' identifier '{' field* '}'
-field      ::= type_expr identifier ';'
-```
-
-```cll
-struct Vec2
-{
-    float32 x;
-    float32 y;
-}
-```
-
----
-
-## 13. Enums
-
-Integer-backed; default backing type is `int32`.
-
-```
-enum_def   ::= 'enum' identifier ( ':' type_expr )? '{' enum_body '}'
-enum_body  ::= enum_value ( ',' enum_value )* ','?
-enum_value ::= identifier ( '=' expression )?
-```
-
-```cll
-enum Direction { North, South, East, West }
-enum ErrorCode : int32 { Ok = 0, NotFound = 404 }
-```
-
----
-
-## 14. Namespaces
-
-Lexical grouping only — no arena boundary.
+Lexical grouping — does **not** create a new arena:
 
 ```cll
 namespace Math
 {
     const float64 PI = 3.14159265358979;
 }
+
+// access:
+float64 area = Math::PI * r * r;
 ```
 
-Nested namespace path in one statement:
-
+Nested path in one statement:
 ```cll
 namespace Engine::Physics { … }
 ```
 
 ---
 
-## 15. Arrays and Slices
-
-### 15.1 Arena-Bound Array (`T[]`)
-
-Heap-allocated, owned by the current scope. Grows dynamically via `<<`. Freed in bulk when the scope's arena is released.
-
-```cll
-int32[] nums;
-nums << 10;
-nums << 20;
-nums << 30;
-uint64 len = nums[[:]] ;   // 3
-int32 x = nums[1];         // 20
-```
-
-### 15.2 Sized Array (`T[N]`)
-
-Stack-allocated, fixed size.
-
-```cll
-float32[16] matrix;
-uint8[256] buffer;
-```
-
-### 15.3 Non-Owning Slice (`T[:]`)
-
-A fat pointer (base + length). Does not own memory. VOP law: may only reference arenas that outlive the slice.
-
-```cll
-int32[:] view;
-```
-
----
-
-## 16. Raw Strings
-
-### 16.1 Delimiter form
-
-```cll
-string banner = raw<until "END">
-###########
-# Hello   #
-###########
-END
-```
-
-### 16.2 Line-count form
-
-```cll
-puts(raw<3>
-Line one \n is literal
-Line two \t is literal
-Line three
-);
-```
-
----
-
 ## 17. Imports and C-ABI Interop
 
-### 17.1 Module Import
-
+### Module import
 ```cll
 import std;
 import io::file;
 ```
 
-### 17.2 File Import
-
+### File import
 ```cll
 import "path/to/module.cll";
 ```
 
-### 17.3 C-Header Import
-
+### C-header import (via libclang)
 ```cll
-import <raylib.h>;
-import "mylib.h";
+import "raylib.h";
+import <stdio.h>;
 ```
 
-Uses libclang to parse the header and import all visible function declarations. Pass `-I<path>` to the compiler to add header search directories.
+Pass `-I<path>` to the compiler to add include search directories.
 
-### 17.4 C-Function Import
+**Struct-by-value parameters** are automatically expanded: `Color{r,g,b,a}` becomes four separate `i8` parameters in the IR. This is transparent — you just pass the four bytes:
 
+```cll
+DrawText("Hello!", 10, 10, 20, 255, 255, 255, 255);  // explicit RGBA
+DrawText("Hello!", 10, 10, 20, WHITE);                // named color constant
+```
+
+### Single C-function import
 ```cll
 import int32  printf(string fmt, ...);
 import voided free(voided* ptr);
-import voided* malloc(uint64 size);
 ```
 
 `voided` = C `void`. Variadic functions use `...`.
 
-### 17.5 `export def`
+### Named color constants
+
+When importing `raylib.h`, the following named constants are recognised anywhere a `Color` (flat `uint8,uint8,uint8,uint8`) is expected:
+
+`LIGHTGRAY` `GRAY` `DARKGRAY` `YELLOW` `GOLD` `ORANGE` `PINK` `RED` `MAROON`
+`GREEN` `LIME` `DARKGREEN` `SKYBLUE` `BLUE` `DARKBLUE` `PURPLE` `VIOLET`
+`DARKPURPLE` `BEIGE` `BROWN` `DARKBROWN` `WHITE` `BLACK` `BLANK` `MAGENTA` `RAYWHITE`
 
 ```cll
-export def my_fn(int32 x)
+ClearBackground(RAYWHITE);
+DrawText("Hello!", 50, 100, 30, RED);
+DrawCircle(200, 200, 50, SKYBLUE);
+```
+
+---
+
+## 18. Standard Library (`std`)
+
+`import std;` makes the following available. All functions are null-safe unless noted.
+
+### I/O
+```cll
+printf(string fmt, ...);
+puts(string s);
+putchar(int32 c);
+scanf(string fmt, ...);
+read_line_a(voided* arena)   -> string   // arena-tracked stdin line
+```
+
+### Safe strings
+```cll
+str_len(string s)                              -> int32
+str_char_at(string s, int32 idx)               -> char    // 0 if OOB
+str_eq(string a, string b)                     -> int32   // 1 if equal
+str_starts_with(string s, string prefix)       -> int32
+str_ends_with(string s, string suffix)         -> int32
+str_index_of(string s, string needle)          -> int32   // -1 if not found
+str_to_int(string s)                           -> int32
+str_to_float(string s)                         -> float64
+
+// Arena-tracked (freed with scope):
+str_concat_a(string a, string b, __arena)      -> string
+str_slice_a(string s, int32 start, int32 end, __arena) -> string
+str_replace_a(string s, string from, string to, __arena) -> string
+str_to_upper_a(string s, __arena)              -> string
+str_to_lower_a(string s, __arena)              -> string
+str_trim_a(string s, __arena)                  -> string
+int_to_str_a(int64 val, __arena)               -> string
+float_to_str_a(float64 val, int32 prec, __arena) -> string
+```
+
+Use `__arena` as the last argument to have the result tracked by the current scope's arena.
+
+### File I/O
+```cll
+read_file_s_a(string path, __arena)   -> string   // whole file, arena-tracked
+write_file_s(string path, string s)   -> int32    // 0 on success, -1 on error
+append_file_s(string path, string s)  -> int32
+file_exists(string path)              -> int32    // 1 if readable
+file_size_s(string path)              -> int64    // bytes, or -1
+```
+
+### Math
+```cll
+sin(float64 x) cos(float64 x) tan(float64 x)
+sqrt(float64 x) pow(float64 x, float64 y)
+fabs(float64 x) floor(float64 x) ceil(float64 x)
+abs(int32 x)  fmin(float64 a, float64 b) fmax(float64 a, float64 b)
+rand() -> int32      // random integer
+srand(int32 seed)    // seed random
+```
+
+### Memory (internal — normally not needed)
+The arena handles all allocation. Direct `malloc`/`free` are intentionally not exported. Use the arena-tracked container types.
+
+---
+
+## 19. Raylib Integration
+
+### Build
+```bash
+cshift game.cll -I/path/to/raylib/src -c -o game.o
+gcc game.o frt.o libraylib.a -lm -ldl -lpthread -lGL -lX11 \
+    -lXrandr -lXinerama -lXcursor -lXi -o game
+```
+
+### Color constants
+
+All 26 raylib named colors work directly in any function that takes a `Color` parameter. No struct literal needed.
+
+```cll
+import "raylib.h";
+
+entry
 {
-    tunnel x * 2 -> int32 result;
+    InitWindow(800, 450, "My Game");
+    SetTargetFPS(60);
+
+    while (WindowShouldClose() == false)
+    {
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
+        DrawText("Hello World!", 190, 200, 20, DARKGRAY);
+        DrawCircle(400, 225, 50, RED);
+        DrawRectangle(10, 10, 100, 40, BLUE);
+        EndDrawing();
+    }
+
+    CloseWindow();
 }
 ```
 
-Gives the function external C-ABI linkage so it can be called from C or linked into a shared library. Plain `def` gets internal linkage.
+### Struct-by-value parameters
 
----
-
-## 18. Arena Model and VOP Rules
-
-C<< uses **Vertical Ownership Programming (VOP)** with a scope-arena memory model. The core rules:
-
-### 18.1 Arena = Scope
-
-Every `{…}` block that is a control-flow body creates a **scope arena**. When the block exits, **all** heap allocations registered with that arena are freed in one operation (`cshift_arena_free_all`). This is not RAII — there are no individual destructors, no drop order concerns. It is a single bulk free at the end of the scope.
-
-The arena is **lazy**: if no heap allocations occur in a scope, no arena struct is allocated and the scope exit has zero overhead.
-
-### 18.2 What Goes Into an Arena
-
-- `T[]` arena-bound arrays (each `realloc` is tracked)
-- `Vector<T>`, `HashMap<K,V>`, and all other generic container types (the heap pointer from `vec_new` etc. is tracked)
-
-### 18.3 `reset`
-
-`reset;` frees all currently tracked heap data in the current scope's arena but does not exit the scope. Variables are still declared and may receive new values. The arena struct is kept alive for re-use.
+Functions like `ClearBackground(Color)` accept flat RGBA bytes directly:
 
 ```cll
-int32[] buf;
-buf << 1;
-buf << 2;
-reset;          // buf data freed, len reset to 0
-buf << 99;      // safe to reuse
+ClearBackground(30, 30, 46, 255);    // explicit r,g,b,a
+ClearBackground(DARKBLUE);           // named constant
+DrawCircle(200, 200, 30, 0, 200, 0, 255); // explicit green
+DrawCircle(200, 200, 30, GREEN);     // named constant
 ```
-
-### 18.4 No Raw Returns (Tunnel Law)
-
-Functions output values via `tunnel`, not return statements. A tunnel may not transfer pointers into arenas that will be destroyed before the call site. The checker emits a warning when a pointer type is tunneled out.
-
-### 18.5 Depth Law
-
-A pointer must only point to a variable at arena depth ≤ the pointer's own depth. Depth is the nesting level of scope blocks at the point of declaration.
-
-### 18.6 Voided-State Law
-
-A `move`d variable is voided. Accessing it without a `switch(var) { case valid: … case voided: … }` guard is a compile-time error.
-
-When the compiler cannot determine statically whether a variable is voided (e.g. `move` inside an `if` branch), it inserts a hidden runtime `__track_validity_<name>` boolean. This flag starts `true`, is set to `false` by `move`, and is tested by the switch guard. The flag name uses the `__track_validity_` prefix to avoid collisions with user-defined names.
 
 ---
 
-## 19. Compile-Time Constants
+## 20. Export
 
 ```cll
-const int32 SCREEN_WIDTH  = 1920;
-const int32 SCREEN_HEIGHT = 1080;
-const float64 TAU = 6.28318530717958;
+export def add(int32 a, int32 b)
+{
+    tunnel a + b -> int32 result;
+}
 ```
 
-Immutable after declaration. Type mismatches in the initializer are a checker error:
+`export def` gives the function **external linkage** (visible to the C linker). Plain `def` gets **internal linkage** (dead-code eligible, invisible outside the module).
+
+---
+
+## 21. Raw Strings
 
 ```cll
-const int32 x = "hello";   // error: string literal assigned to int32
-const int32 y = 3.14;      // error: float literal assigned to integer const
+// Delimiter form
+string banner = raw<until "END">
+###########
+# Hello!  #
+###########
+END
+
+// Line-count form
+puts(raw<3>
+Line 1 — no escape processing
+Line 2 — \n is literal
+Line 3
+);
 ```
 
 ---
 
-## 20. Reserved Words
+## 22. Reserved Words
 
 ```
-bool       break      case       char       const      continue
-default    def        else       enum       entry      export
-false      float32    float64    for        foreach    if
-import     int8       int16      int32      int64      move
-namespace  raw        reserve    reset      string     struct
-switch     template   true       tunnel     typename   uint8
-uint16     uint32     uint64     valid      voided     while
+bool       break      case       char       class      const
+continue   dec        default    def        else       enum
+entry      export     false      float32    float64    for
+foreach    if         import     int8       int16      int32
+int64      move       namespace  raw        reserve    reset
+string     struct     switch     template   true       tunnel
+typename   uint8      uint16     uint32     uint64     valid
+voided     while
+```
+
+Built-in identifiers (not keywords, but reserved by the compiler):
+```
+__arena    __arena_null    __track_validity_*
 ```
 
 ---
 
-## 21. Complete Operator Table
+## 23. Operator Table
 
-| Operator | Category               |
-|----------|------------------------|
-| `<<=`    | Compound assignment    |
-| `>>=`    | Compound assignment    |
-| `**=`    | Compound assignment    |
-| `[:]`    | Slice type sigil       |
-| `...`    | Variadic parameter     |
-| `->`     | Tunnel target          |
-| `::`     | Namespace resolution   |
-| `==`     | Equality               |
-| `!=`     | Inequality             |
-| `<=`     | Less-or-equal          |
-| `>=`     | Greater-or-equal       |
-| `&&`     | Logical AND            |
-| `\|\|`   | Logical OR             |
-| `+=`     | Compound assignment    |
-| `-=`     | Compound assignment    |
-| `*=`     | Compound assignment    |
-| `/=`     | Compound assignment    |
-| `%=`     | Compound assignment    |
-| `<<`     | Array append / shift   |
-| `>>`     | Right shift            |
-| `{` `}`  | Block delimiters       |
-| `(` `)`  | Paren delimiters       |
-| `[` `]`  | Bracket delimiters     |
-| `+`      | Addition               |
-| `-`      | Subtraction / negation |
-| `*`      | Multiplication / deref |
-| `/`      | Division               |
-| `%`      | Modulo                 |
-| `=`      | Assignment             |
-| `<`      | Less than              |
-| `>`      | Greater than           |
-| `;`      | Statement terminator   |
-| `:`      | Case label / type sep  |
-| `&`      | Address-of / bitwise   |
-| `!`      | Logical NOT            |
-| `,`      | Separator              |
-| `.`      | Field access           |
+| Op | Category | Notes |
+|----|----------|-------|
+| `->` | Tunnel arrow | |
+| `::` | Namespace resolution | |
+| `==` `!=` `<` `>` `<=` `>=` | Comparison | |
+| `&&` `\|\|` `!` | Logical | |
+| `+` `-` `*` `/` `%` | Arithmetic | auto-coerce numeric types |
+| `+=` `-=` `*=` `/=` `%=` | Compound assign | |
+| `<<=` `>>=` | Shift-assign | |
+| `<<` | Array append / left-shift | |
+| `>>` | Right shift | |
+| `&` | Address-of | For managed types: returns heap ptr |
+| `*` | Dereference | |
+| `.` | Field / method access | |
+| `[i]` | Subscript | |
+| `[[:]]` | Length-of | arena arrays |
 
-Lexer uses **maximal munch**.
+Lexer uses **maximal munch** (longest match wins).
 
 ---
 
-## 22. Grammar Summary (EBNF)
+## 24. Grammar (EBNF)
 
 ```ebnf
-program          ::= top_level_item*
+program          ::= top_level*
+top_level        ::= import_stmt | struct_def | enum_def | namespace_def
+                   | function_def | func_decl | class_def
+                   | entry_def | const_decl | template_def
 
-top_level_item   ::= import_stmt
-                   | struct_def
-                   | enum_def
-                   | namespace_def
-                   | function_def
-                   | entry_def
-                   | const_decl
-                   | template_def
-                   | declaration
+import_stmt      ::= 'import' ( string_literal | '<' header '>'
+                              | ns_path
+                              | type ident '(' c_params ')' ) ';'
+ns_path          ::= ident ( '::' ident )*
 
-(* Imports *)
-import_stmt      ::= 'import' string_literal ';'
-                   | 'import' '<' identifier '.' identifier '>' ';'
-                   | 'import' ns_path ';'
-                   | 'import' type_expr identifier '(' c_param_list ')' ';'
-
-ns_path          ::= identifier ( '::' identifier )*
-
-c_param_list     ::= c_param ( ',' c_param )* ( ',' '...' )?
-                   | 'voided'
-                   |
-c_param          ::= type_expr identifier?
-
-(* Struct *)
-struct_def       ::= 'struct' identifier '{' field* '}'
-field            ::= type_expr identifier ';'
-
-(* Enum *)
-enum_def         ::= 'enum' identifier ( ':' type_expr )? '{' enum_body '}'
-enum_body        ::= enum_value ( ',' enum_value )* ','?
-enum_value       ::= identifier ( '=' expression )?
-
-(* Namespace *)
-namespace_def    ::= 'namespace' ns_path block
-
-(* Functions *)
-function_def     ::= ( 'export' )? 'def' identifier '(' param_list ')' block
-param_list       ::= ( param ( ',' param )* )?
-param            ::= type_expr identifier
-
+function_def     ::= ['export'] 'def' ident '(' params ')' block
+params           ::= ( type ident ( ',' type ident )* )?
 entry_def        ::= 'entry' block
 
-(* Templates *)
-template_def     ::= 'template' '<' typename_param ( ',' typename_param )* '>'
-                     ( struct_def | function_def )
-typename_param   ::= 'typename' identifier
+// Forward declaration — registers the signature (incl. tunnel outputs)
+// without a body. A later `def` with the same name supplies the body.
+func_decl        ::= 'dec' ident '(' params ')' [ '->' tunnel_sig_list ] ';'
+tunnel_sig_list  ::= type ident ( ',' type ident )*
 
-(* Types *)
-type_expr        ::= base_type '*'* ( '[' expr? ':' ']' | '[' expr? ']' )?
-base_type        ::= 'int8' | 'int16' | 'int32' | 'int64'
-                   | 'uint8' | 'uint16' | 'uint32' | 'uint64'
-                   | 'float32' | 'float64'
-                   | 'bool' | 'char' | 'string' | 'voided'
-                   | identifier
-                   | identifier '<' type_args '>'
-type_args        ::= type_expr ( ',' type_expr )*
+// Zero-cost class — desugars to a struct + free functions taking
+// `ClassName* self` as the first parameter.
+class_def        ::= 'class' ident '{' ( field_decl | method_def )* '}'
+field_decl       ::= type ident ';'
+method_def       ::= 'def' ident '(' params ')' [ '->' tunnel_sig_list ] block
 
-(* Statements *)
-block            ::= '{' statement* '}'
-statement        ::= declaration
-                   | const_decl
-                   | reserve_stmt
-                   | tunnel_stmt
-                   | move_stmt
-                   | reset_stmt
-                   | assignment
-                   | call_stmt
-                   | if_stmt
-                   | while_stmt
-                   | for_stmt
-                   | foreach_stmt
-                   | switch_stmt
-                   | block
-                   | expression ';'
+template_def     ::= 'template' '<' 'typename' ident '>' ( struct_def | function_def )
 
-declaration      ::= type_expr identifier ( '=' expression )? ';'
-const_decl       ::= 'const' type_expr identifier '=' expression ';'
-reserve_stmt     ::= 'reserve' ( '<' 'shared' '>' )? type_expr identifier
-                     ( '=' expression )? ';'
-tunnel_stmt      ::= 'tunnel' expression '->' type_expr identifier ';'
-move_stmt        ::= 'move' identifier ';'
+struct_def       ::= 'struct' ident '{' ( type ident ';' )* '}'
+enum_def         ::= 'enum' ident [':' type] '{' ident ['=' expr] (',' ident ['=' expr])* '}'
+namespace_def    ::= 'namespace' ns_path block
+
+type             ::= base_type '*'* ( '[]' | '[:]' | '[' expr ']' )?
+base_type        ::= primitive | ident | ident '<' type (',' type)* '>'
+primitive        ::= 'int8'|'int16'|'int32'|'int64'|'uint8'|'uint16'|'uint32'|'uint64'
+                   | 'float32'|'float64'|'bool'|'char'|'string'|'voided'
+
+block            ::= '{' stmt* '}'
+stmt             ::= declaration | const_decl | reserve_stmt | tunnel_stmt
+                   | move_stmt | reset_stmt | assignment | index_assignment
+                   | call_stmt | method_call_stmt | if_stmt | while_stmt
+                   | for_stmt | foreach_stmt | switch_stmt | block | expr ';'
+
+declaration      ::= type ident ['=' expr] ';'
+const_decl       ::= 'const' type ident '=' expr ';'
+
+// reserve [<shared>] [type] name [<< tunnel_name] ['=' expr] ';'
+// - type omitted          → inferred from the callee's single tunnel
+//                            (or from the `<< tunnel_name`-bound tunnel)
+// - '<< tunnel_name'       → explicitly bind this slot to the named
+//                            tunnel output of the upcoming call
+reserve_stmt     ::= 'reserve' ['<' 'shared' '>'] [type] ident
+                     [ '<<' ident ] ['=' expr] ';'
+
+tunnel_stmt      ::= 'tunnel' expr '->' type ident ';'
+move_stmt        ::= 'move' ident ';'
 reset_stmt       ::= 'reset' ';'
-call_stmt        ::= identifier '(' arg_list ')' ';'
-arg_list         ::= ( expression ( ',' expression )* )?
-assignment       ::= lvalue assign_op expression ';'
-lvalue           ::= identifier ( '.' identifier )*
-assign_op        ::= '=' | '+=' | '-=' | '*=' | '/='
+assignment       ::= lvalue assign_op expr ';'
+index_assignment ::= ident '[' expr ']' assign_op expr ';'
+call_stmt        ::= ident '(' args ')' ';'
+method_call_stmt ::= ident '.' ident '(' args ')' ';'
+lvalue           ::= ident ('.' ident)*
+assign_op        ::= '=' | '+=' | '-=' | '*=' | '/=' | '%='
+args             ::= (expr (',' expr)*)?
 
-if_stmt          ::= 'if' '(' expression ')' block
-                     ( 'else' ( if_stmt | block ) )?
-while_stmt       ::= 'while' '(' expression ')' block
-for_stmt         ::= 'for' '(' declaration expression ';' ')' block
-foreach_stmt     ::= 'foreach' '(' type_expr identifier ':' expression ')' block
-break_stmt       ::= 'break' ';'
-continue_stmt    ::= 'continue' ';'
-switch_stmt      ::= 'switch' '(' expression ')' '{' switch_arm* '}'
-switch_arm       ::= 'case' identifier ':' statement*
-                   | 'default' ':' statement*
-
-expression       ::= token+   (* full precedence handled by codegen *)
-
-raw_string       ::= 'raw<until "' identifier '">' newline ... identifier
-                   | 'raw<' integer '>' newline N_lines
+if_stmt          ::= 'if' '(' expr ')' block ['else' (if_stmt | block)]
+while_stmt       ::= 'while' '(' expr ')' block
+for_stmt         ::= 'for' '(' declaration expr ';' ')' block
+foreach_stmt     ::= 'foreach' '(' type ident ':' expr ')' block
+switch_stmt      ::= 'switch' '(' expr ')' '{' switch_arm* '}'
+switch_arm       ::= ('case' ident | 'default') ':' stmt*
 ```
 
 ---
 
-## Appendix A: Annotated Examples
+## 25. Annotated Examples
 
 ### Hello World
 
@@ -949,6 +1190,105 @@ import std;
 entry
 {
     puts("Hello, C<< world!");
+}
+```
+
+### Forward declarations, classes, and tunnel binding
+
+```cll
+import std;
+
+// Forward-declare a mutually recursive helper
+dec is_odd(int32 n) -> int32 result;
+
+def is_even(int32 n)
+{
+    if (n == 0)
+    {
+        tunnel 1 -> int32 result;
+    }
+    else
+    {
+        reserve int32 r = is_odd(n - 1);
+        tunnel r -> int32 result;
+    }
+}
+
+def is_odd(int32 n)
+{
+    if (n == 0)
+    {
+        tunnel 0 -> int32 result;
+    }
+    else
+    {
+        reserve int32 r = is_even(n - 1);
+        tunnel r -> int32 result;
+    }
+}
+
+// Zero-cost class
+class Player
+{
+    float32 x;
+    float32 y;
+    int32 health;
+
+    def move_by(float32 dx, float32 dy)
+    {
+        self.x += dx;
+        self.y += dy;
+    }
+
+    def take_damage(int32 amount)
+    {
+        self.health -= amount;
+    }
+
+    def is_alive() -> int32 alive
+    {
+        if (self.health > 0)
+        {
+            tunnel 1 -> int32 alive;
+        }
+        else
+        {
+            tunnel 0 -> int32 alive;
+        }
+    }
+}
+
+// Multi-tunnel function for the reserve << binding example
+def compute(int32 x)
+{
+    tunnel x * 2 -> int32 doubled;
+    tunnel x * 3 -> int32 tripled;
+}
+
+entry
+{
+    reserve int32 e = is_even(10);
+    printf("is_even(10) = %d\n", e);
+
+    Player p;
+    p.x = 0.0;
+    p.y = 0.0;
+    p.health = 100;
+
+    p.move_by(5.0, 3.0);
+    p.take_damage(30);
+
+    reserve int32 alive = p.is_alive();
+    printf("pos=(%.1f,%.1f) health=%d alive=%d\n", p.x, p.y, p.health, alive);
+
+    // Explicit tunnel binding — pick "tripled" regardless of compute()'s
+    // first/positional tunnel
+    reserve int32 t << tripled = compute(10);
+    printf("tripled = %d\n", t);   // 30
+
+    // Type-inferred + explicit binding
+    reserve r << doubled = compute(5);
+    printf("doubled = %d\n", r);   // 10
 }
 ```
 
@@ -962,32 +1302,55 @@ def fib(int32 n)
     int32 a = 0;
     int32 b = 1;
     int32 i = 0;
-    int32 tmp = 0;
-
     while (i < n)
     {
-        tmp = b;
+        int32 tmp = b;
         b = a + b;
         a = tmp;
-        i = i + 1;
+        i += 1;
     }
-
     tunnel a -> int32 result;
 }
 
 entry
 {
     int32 i = 0;
-    while (i < 16)
+    while (i < 10)
     {
-        reserve int32 result = fib(i);
-        printf("fib(%2d) = %d\n", i, result);
-        i = i + 1;
+        reserve int32 r = fib(i);
+        printf("fib(%d) = %d\n", i, r);
+        i += 1;
     }
 }
 ```
 
-### Arena-Managed Vector
+### Arena arrays
+
+```cll
+import std;
+
+entry
+{
+    int32[] nums;
+    nums << 10;
+    nums << 20;
+    nums << 30;
+
+    printf("len=%llu\n", nums.len());
+
+    int32 i = 0;
+    while (i < 3)
+    {
+        printf("nums[%d] = %d\n", i, nums[i]);
+        i += 1;
+    }
+
+    nums[1] = 99;
+    printf("nums[1] after assign = %d\n", nums[1]);
+}
+```
+
+### Vector with method syntax
 
 ```cll
 import std;
@@ -995,69 +1358,62 @@ import std;
 entry
 {
     Vector<int32> v = vec_new(16);
-    vec_push(&v, 10);
-    vec_push(&v, 20);
-    vec_push(&v, 30);
+    v.push(10);
+    v.push(20);
+    v.push(30);
 
-    uint64 len = vec_len(&v);
-    printf("len=%llu\n", len);
+    printf("len=%llu first=%d last=%d\n",
+           v.len(), v.get(0), v.get(v.len() - 1));
 
-    int32 i = 0;
-    while (i < 3)
     {
-        printf("v[%d]=%d\n", i, vec_get(&v, i));
-        i += 1;
+        Vector<int32> tmp = vec_new(4);
+        tmp.push(99);
+        printf("inner=%d\n", tmp.get(0));
+        // tmp freed automatically here
     }
 
-    // v freed automatically at scope exit — no vec_free needed
+    // v freed when entry scope exits
 }
 ```
 
-### Sub-Arena and `reset`
+### Safe strings
 
 ```cll
 import std;
 
 entry
 {
-    int32[] buf;
+    string s = "Hello, World!";
+    printf("len=%d\n", str_len(s));
+    printf("eq=%d\n", str_eq(s, "Hello, World!"));
+    printf("upper=%s\n", str_to_upper_a(s, __arena));
 
-    int32 pass = 0;
-    while (pass < 3)
-    {
-        buf << pass * 10;
-        buf << pass * 10 + 1;
-        printf("pass %d: len=%llu\n", pass, buf[[:]] );
-        reset;          // free buf data, keep scope
-        pass += 1;
-    }
+    string joined = str_concat_a("foo", "bar", __arena);
+    printf("%s\n", joined);
 }
 ```
 
-### Voided-State — Static (Zero Cost)
+### File I/O
 
 ```cll
 import std;
 
 entry
 {
-    int32 x = 99;
-    int32* p = &x;
-
-    move x;   // x is definitely voided here
-
-    // Compiler emits only the case voided body — no runtime branch
-    switch (p)
+    int32 ok = write_file_s("/tmp/test.txt", "hello from C<<\n");
+    if (ok == 0)
     {
-        case valid:
-            printf("value: %d\n", *p);
-        case voided:
-            puts("x was moved");
+        string content = read_file_s_a("/tmp/test.txt", __arena);
+        printf("read: %s", content);
     }
+
+    printf("exists=%d size=%lld\n",
+           file_exists("/tmp/test.txt"),
+           file_size_s("/tmp/test.txt"));
 }
 ```
 
-### Voided-State — Runtime (Conditional Move)
+### Voided-state guard — static (zero cost)
 
 ```cll
 import std;
@@ -1065,39 +1421,58 @@ import std;
 entry
 {
     int32 x = 42;
-    int32 cond = 1;
+    move x;
 
-    if (cond > 0)
-    {
-        move x;   // only on one path
-    }
-
-    // Compiler inserts __track_validity_x bool; switch does runtime cond_br
+    // Compiler knows x is definitely voided — emits only the voided branch
     switch (x)
     {
-        case valid:
-            printf("x is still valid: %d\n", x);
-        case voided:
-            printf("x was moved\n");
+        case valid:   printf("valid: %d\n", x);
+        case voided:  puts("x was moved");
     }
 }
 ```
 
-### C-ABI Interop with Raylib
+### Voided-state guard — runtime (conditional move)
 
 ```cll
-import "raylib.h";
-import "raylib_wrap.h";  // flat wrappers for struct-arg functions
+import std;
 
 entry
 {
-    InitWindow(800, 450, "Hello from C<<!");
+    int32 x = 42;
+    int32 coin = rand() % 2;
+
+    if (coin == 0)
+    {
+        move x;   // only on one path
+    }
+
+    // Compiler inserts __track_validity_x bool; runtime cond_br
+    switch (x)
+    {
+        case valid:  printf("x = %d\n", x);
+        case voided: puts("x was moved");
+    }
+}
+```
+
+### Raylib window with named colors
+
+```cll
+import "raylib.h";
+
+entry
+{
+    InitWindow(800, 450, "C<< + Raylib");
+    SetTargetFPS(60);
 
     while (WindowShouldClose() == false)
     {
         BeginDrawing();
-        ClearBg(30, 30, 46, 255);
-        DrawTxt("Hello from C<<!", 220, 190, 30, 205, 214, 244, 255);
+        ClearBackground(RAYWHITE);
+        DrawText("Hello World!", 190, 200, 20, DARKGRAY);
+        DrawCircle(400, 225, 50, RED);
+        DrawRectangle(10, 10, 100, 40, BLUE);
         EndDrawing();
     }
 
@@ -1105,13 +1480,20 @@ entry
 }
 ```
 
-### Export for C Interop
+### Build: `import std;` program
 
-```cll
-export def add(int32 a, int32 b)
-{
-    tunnel a + b -> int32 result;
-}
-
-// Callable from C as: extern void add(int32 a, int32 b, int32* result);
+```bash
+cshift myprog.cll -c -o myprog.o
+gcc myprog.o frt_native.o -o myprog
 ```
+
+### Build: raylib program
+
+```bash
+cshift game.cll -I/path/to/raylib/src -c -o game.o
+gcc game.o frt_native.o libraylib.a \
+    -lm -ldl -lpthread -lGL -lX11 -lXrandr -lXinerama -lXcursor -lXi \
+    -o game
+```
+
+`frt_native.o` is found in the build output directory after running `cmake + make`.

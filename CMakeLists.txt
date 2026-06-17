@@ -165,7 +165,7 @@ include(GNUInstallDirs)
 install(TARGETS cshift RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/std.cll"
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/std.cll"
     "${CMAKE_CURRENT_SOURCE_DIR}/frt.c"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/cshift"
 )

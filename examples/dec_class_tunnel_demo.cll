@@ -1,0 +1,88 @@
+import std;
+
+dec is_odd(int32 n) -> int32 result;
+
+def is_even(int32 n)
+{
+    if (n == 0)
+    {
+        tunnel 1 -> int32 result;
+    }
+    else
+    {
+        reserve int32 r = is_odd(n - 1);
+        tunnel r -> int32 result;
+    }
+}
+
+def is_odd(int32 n)
+{
+    if (n == 0)
+    {
+        tunnel 0 -> int32 result;
+    }
+    else
+    {
+        reserve int32 r = is_even(n - 1);
+        tunnel r -> int32 result;
+    }
+}
+
+class Player
+{
+    float32 x;
+    float32 y;
+    int32 health;
+
+    def move_by(float32 dx, float32 dy)
+    {
+        self.x += dx;
+        self.y += dy;
+    }
+
+    def take_damage(int32 amount)
+    {
+        self.health -= amount;
+    }
+
+    def is_alive() -> int32 alive
+    {
+        if (self.health > 0)
+        {
+            tunnel 1 -> int32 alive;
+        }
+        else
+        {
+            tunnel 0 -> int32 alive;
+        }
+    }
+}
+
+def compute(int32 x)
+{
+    tunnel x * 2 -> int32 doubled;
+    tunnel x * 3 -> int32 tripled;
+}
+
+entry
+{
+    reserve int32 e = is_even(10);
+    printf("is_even(10) = %d\n", e);
+
+    Player p;
+    p.x = 0.0;
+    p.y = 0.0;
+    p.health = 100;
+
+    p.move_by(5.0, 3.0);
+    p.take_damage(30);
+
+    reserve int32 alive = p.is_alive();
+    printf("pos=(%.1f,%.1f) health=%d alive=%d\n", p.x, p.y, p.health, alive);
+
+    reserve int32 t << tripled = compute(10);
+    printf("tripled = %d\n", t);
+
+    reserve r << doubled = compute(5);
+    printf("doubled = %d\n", r);
+}
