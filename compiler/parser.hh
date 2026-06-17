@@ -162,8 +162,10 @@ private:
         int tpl_depth = 1;
         while (tpl_depth > 0 && peek_token(la).type != Lexer::TokenType::END_OF_FILE)
         {
-          if (peek_token(la).value == "<") tpl_depth++;
-          else if (peek_token(la).value == ">") tpl_depth--;
+          if (peek_token(la).value == "<")
+            tpl_depth++;
+          else if (peek_token(la).value == ">")
+            tpl_depth--;
           la++;
         }
       }
@@ -258,7 +260,8 @@ private:
       {
         std::string ttype = parse_type_string();
         std::string tname = match_token(Lexer::TokenType::IDENTIFIER).value;
-        tunnels->children.push_back(new ASTNode("DeclTunnel", ttype + " " + tname, ln, current_depth));
+        tunnels->children.push_back(
+            new ASTNode("DeclTunnel", ttype + " " + tname, ln, current_depth));
         if (peek_token().value == ",")
         {
           advance_token();
@@ -282,7 +285,7 @@ private:
     match_token(Lexer::TokenType::OPERATOR, "{");
 
     ASTNode *node = new ASTNode("Class", name, ln, current_depth);
-    ASTNode *fields  = new ASTNode("Fields", "", ln, current_depth);
+    ASTNode *fields = new ASTNode("Fields", "", ln, current_depth);
     ASTNode *methods = new ASTNode("Methods", "", ln, current_depth);
 
     while (peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
@@ -305,8 +308,13 @@ private:
           {
             std::string ttype = parse_type_string();
             std::string tname = match_token(Lexer::TokenType::IDENTIFIER).value;
-            tunnels->children.push_back(new ASTNode("DeclTunnel", ttype + " " + tname, current_line(), current_depth));
-            if (peek_token().value == ",") { advance_token(); continue; }
+            tunnels->children.push_back(
+                new ASTNode("DeclTunnel", ttype + " " + tname, current_line(), current_depth));
+            if (peek_token().value == ",")
+            {
+              advance_token();
+              continue;
+            }
             break;
           }
           method->children.push_back(tunnels);
@@ -321,7 +329,8 @@ private:
         std::string ftype = parse_type_string();
         std::string fname = match_token(Lexer::TokenType::IDENTIFIER).value;
         match_token(Lexer::TokenType::OPERATOR, ";");
-        fields->children.push_back(new ASTNode("Field", ftype + " " + fname, current_line(), current_depth));
+        fields->children.push_back(
+            new ASTNode("Field", ftype + " " + fname, current_line(), current_depth));
       }
     }
     match_token(Lexer::TokenType::OPERATOR, "}");
@@ -514,15 +523,13 @@ private:
     size_t ln = current_line();
     // Consume base name and optional .method chain: "v.push" or "v.x.y"
     std::string name = advance_token().value; // first IDENT
-    while (peek_token().value == "." &&
-           peek_token(1).type == Lexer::TokenType::IDENTIFIER &&
+    while (peek_token().value == "." && peek_token(1).type == Lexer::TokenType::IDENTIFIER &&
            (peek_token(2).value == "(" ||
-            (peek_token(2).value == "." &&
-             peek_token(3).type == Lexer::TokenType::IDENTIFIER &&
+            (peek_token(2).value == "." && peek_token(3).type == Lexer::TokenType::IDENTIFIER &&
              peek_token(4).value == "(")))
     {
-      advance_token();                          // consume '.'
-      name += "." + advance_token().value;      // consume next IDENT
+      advance_token();                     // consume '.'
+      name += "." + advance_token().value; // consume next IDENT
     }
     ASTNode *node = new ASTNode("CallStatement", name, ln, current_depth);
     match_token(Lexer::TokenType::OPERATOR, "(");
