@@ -1483,17 +1483,13 @@ entry
 ### Build: `import std;` program
 
 ```bash
-cshift myprog.cll -c -o myprog.o
-gcc myprog.o frt_native.o -o myprog
+cshift myprog.cll -o myprog
 ```
 
 ### Build: raylib program
 
 ```bash
-cshift game.cll -I/path/to/raylib/src -c -o game.o
-gcc game.o frt_native.o libraylib.a \
-    -lm -ldl -lpthread -lGL -lX11 -lXrandr -lXinerama -lXcursor -lXi \
-    -o game
+cshift game.cll -lraylib -lm -ldl -lpthread -lGL -lX11 -lXrandr -lXinerama -lXcursor -lXi -o game
 ```
 
 `frt_native.o` is found in the build output directory after running `cmake + make`.
