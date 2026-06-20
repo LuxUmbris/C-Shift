@@ -1,12 +1,12 @@
 #pragma once
 #include "checker.hh" // pulls in parser.hh → lexer.hh
 #include "ezllvm.h"
+#include <array>
 #include <cassert>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
-#include <array>
-#include <cstdint>
 #include <vector>
 
 // ============================================================
@@ -112,12 +112,16 @@ class Codegen
   // cshift_arena_free_all() releases everything.  `reset;` calls
   // cshift_arena_reset() which frees data but keeps the arena alive.
 
-  struct ArenaScope { EzVal arena_slot; /* alloca ptr, or nullptr if no allocs yet */ };
+  struct ArenaScope
+  {
+    EzVal arena_slot; /* alloca ptr, or nullptr if no allocs yet */
+  };
   std::vector<ArenaScope> arena_stack;
 
   EzVal get_or_create_scope_arena()
   {
-    if (arena_stack.empty()) return nullptr;
+    if (arena_stack.empty())
+      return nullptr;
     return get_or_create_arena_at_depth(arena_stack.size() - 1);
   }
 
@@ -133,9 +137,11 @@ class Codegen
   // arena of the scope where the array itself lives.
   EzVal get_or_create_arena_at_depth(size_t depth)
   {
-    if (depth >= arena_stack.size()) return nullptr;
+    if (depth >= arena_stack.size())
+      return nullptr;
     ArenaScope &as = arena_stack[depth];
-    if (as.arena_slot) return as.arena_slot;
+    if (as.arena_slot)
+      return as.arena_slot;
     // Represent cshift_arena_t as [3 x i64] — opaque, passed by pointer.
     EzType arena_ty = LLVMArrayType(ez_i64(), 3);
     as.arena_slot = alloca_in_entry(current_func, arena_ty, "__arena");
@@ -148,9 +154,11 @@ class Codegen
   // Wrap a heap pointer with the arena tracker; returns the same pointer.
   EzVal arena_track(EzVal ptr)
   {
-    if (!ptr) return ptr;
+    if (!ptr)
+      return ptr;
     EzVal arena = get_or_create_scope_arena();
-    if (!arena) return ptr;
+    if (!arena)
+      return ptr;
     ensure_arena_fns();
     EzVal push_args[] = {arena, ptr};
     return ez_call(mod, func_map["__cshift_arena_push"], push_args, 2, "tracked");
@@ -162,9 +170,11 @@ class Codegen
   // stale pointer that realloc() already invalidated/moved.
   EzVal arena_realloc_track(EzVal old_ptr, EzVal new_ptr)
   {
-    if (!new_ptr) return new_ptr;
+    if (!new_ptr)
+      return new_ptr;
     EzVal arena = get_or_create_scope_arena();
-    if (!arena) return new_ptr;
+    if (!arena)
+      return new_ptr;
     ensure_arena_fns();
     EzVal args[] = {arena, old_ptr, new_ptr};
     return ez_call(mod, func_map["__cshift_arena_realloc_track"], args, 3, "retracked");
@@ -176,9 +186,11 @@ class Codegen
   // doesn't register the allocation with its own (per-iteration) arena.
   EzVal arena_realloc_track_at_depth(size_t depth, EzVal old_ptr, EzVal new_ptr)
   {
-    if (!new_ptr) return new_ptr;
+    if (!new_ptr)
+      return new_ptr;
     EzVal arena = get_or_create_arena_at_depth(depth);
-    if (!arena) return new_ptr;
+    if (!arena)
+      return new_ptr;
     ensure_arena_fns();
     EzVal args[] = {arena, old_ptr, new_ptr};
     return ez_call(mod, func_map["__cshift_arena_realloc_track"], args, 3, "retracked");
@@ -186,9 +198,11 @@ class Codegen
 
   void emit_arena_free()
   {
-    if (arena_stack.empty()) return;
+    if (arena_stack.empty())
+      return;
     EzVal slot = arena_stack.back().arena_slot;
-    if (!slot) return;
+    if (!slot)
+      return;
     ensure_arena_fns();
     EzVal args[] = {slot};
     ez_call(mod, func_map["__cshift_arena_free_all"], args, 1, "");
@@ -197,7 +211,8 @@ class Codegen
   void emit_arena_reset_stmt()
   {
     EzVal arena = get_or_create_scope_arena();
-    if (!arena) return;
+    if (!arena)
+      return;
     ensure_arena_fns();
     EzVal args[] = {arena};
     ez_call(mod, func_map["__cshift_arena_reset"], args, 1, "");
@@ -205,39 +220,39 @@ class Codegen
 
   void ensure_arena_fns()
   {
-    auto ensure = [&](const char *name, EzType ret,
-                      std::initializer_list<EzType> params)
+    auto ensure = [&](const char *name, EzType ret, std::initializer_list<EzType> params)
     {
-      if (func_map.count(name)) return;
+      if (func_map.count(name))
+        return;
       std::vector<EzType> pv(params);
       func_map[name] = ez_extern(mod, name, ret, pv.data(), (unsigned)pv.size(), 0);
     };
-    ensure("__cshift_arena_init",     ez_void(), {ez_ptr()});
-    ensure("__cshift_arena_push",     ez_ptr(),  {ez_ptr(), ez_ptr()});
+    ensure("__cshift_arena_init", ez_void(), {ez_ptr()});
+    ensure("__cshift_arena_push", ez_ptr(), {ez_ptr(), ez_ptr()});
     ensure("__cshift_arena_realloc_track", ez_ptr(), {ez_ptr(), ez_ptr(), ez_ptr()});
     ensure("__cshift_arena_free_all", ez_void(), {ez_ptr()});
-    ensure("__cshift_arena_reset",    ez_void(), {ez_ptr()});
+    ensure("__cshift_arena_reset", ez_void(), {ez_ptr()});
   }
 
   // ── Named color constants (raylib + general) ────────────────────────────
   // These expand to flat {r,g,b,a} i8 values when passed as Color arguments.
   static const std::unordered_map<std::string, std::array<uint8_t, 4>> &color_constants()
   {
-    using A4 = std::array<uint8_t,4>;
+    using A4 = std::array<uint8_t, 4>;
     static const std::unordered_map<std::string, std::array<uint8_t, 4>> m = {
-      {"LIGHTGRAY",  A4{200,200,200,255}}, {"GRAY",       A4{130,130,130,255}},
-      {"DARKGRAY",   A4{80, 80, 80, 255}}, {"YELLOW",     A4{253,249,0,  255}},
-      {"GOLD",       A4{255,203,0,  255}}, {"ORANGE",     A4{255,161,0,  255}},
-      {"PINK",       A4{255,109,194,255}}, {"RED",        A4{230,41, 55, 255}},
-      {"MAROON",     A4{190,33, 55, 255}}, {"GREEN",      A4{0,  228,48, 255}},
-      {"LIME",       A4{0,  158,47, 255}}, {"DARKGREEN",  A4{0,  117,44, 255}},
-      {"SKYBLUE",    A4{102,191,255,255}}, {"BLUE",       A4{0,  121,241,255}},
-      {"DARKBLUE",   A4{0,  82, 172,255}}, {"PURPLE",     A4{200,122,255,255}},
-      {"VIOLET",     A4{135,60, 190,255}}, {"DARKPURPLE", A4{112,31, 126,255}},
-      {"BEIGE",      A4{211,176,131,255}}, {"BROWN",      A4{127,106,79, 255}},
-      {"DARKBROWN",  A4{76, 63, 47, 255}}, {"WHITE",      A4{255,255,255,255}},
-      {"BLACK",      A4{0,  0,  0,  255}}, {"BLANK",      A4{0,  0,  0,  0}},
-      {"MAGENTA",    A4{255,0,  255,255}}, {"RAYWHITE",   A4{245,245,245,255}},
+        {"LIGHTGRAY", A4{200, 200, 200, 255}}, {"GRAY", A4{130, 130, 130, 255}},
+        {"DARKGRAY", A4{80, 80, 80, 255}},     {"YELLOW", A4{253, 249, 0, 255}},
+        {"GOLD", A4{255, 203, 0, 255}},        {"ORANGE", A4{255, 161, 0, 255}},
+        {"PINK", A4{255, 109, 194, 255}},      {"RED", A4{230, 41, 55, 255}},
+        {"MAROON", A4{190, 33, 55, 255}},      {"GREEN", A4{0, 228, 48, 255}},
+        {"LIME", A4{0, 158, 47, 255}},         {"DARKGREEN", A4{0, 117, 44, 255}},
+        {"SKYBLUE", A4{102, 191, 255, 255}},   {"BLUE", A4{0, 121, 241, 255}},
+        {"DARKBLUE", A4{0, 82, 172, 255}},     {"PURPLE", A4{200, 122, 255, 255}},
+        {"VIOLET", A4{135, 60, 190, 255}},     {"DARKPURPLE", A4{112, 31, 126, 255}},
+        {"BEIGE", A4{211, 176, 131, 255}},     {"BROWN", A4{127, 106, 79, 255}},
+        {"DARKBROWN", A4{76, 63, 47, 255}},    {"WHITE", A4{255, 255, 255, 255}},
+        {"BLACK", A4{0, 0, 0, 255}},           {"BLANK", A4{0, 0, 0, 0}},
+        {"MAGENTA", A4{255, 0, 255, 255}},     {"RAYWHITE", A4{245, 245, 245, 255}},
     };
     return m;
   }
@@ -255,23 +270,20 @@ class Codegen
     if (it == color_constants().end())
       return {nullptr, nullptr, nullptr, nullptr};
     auto &clr = it->second;
-    return std::array<EzVal,4>{
-      LLVMConstInt(ez_i8(), clr[0], 0),
-      LLVMConstInt(ez_i8(), clr[1], 0),
-      LLVMConstInt(ez_i8(), clr[2], 0),
-      LLVMConstInt(ez_i8(), clr[3], 0),
+    return std::array<EzVal, 4>{
+        LLVMConstInt(ez_i8(), clr[0], 0),
+        LLVMConstInt(ez_i8(), clr[1], 0),
+        LLVMConstInt(ez_i8(), clr[2], 0),
+        LLVMConstInt(ez_i8(), clr[3], 0),
     };
   }
 
   // Build arg list for a call, expanding flat: struct params and color constants.
   // `param_types` is the declared LLVM param type array (may be longer than user args
   // because flat structs count as multiple params).
-  void collect_call_args(
-      const std::vector<std::vector<Parser::ASTNode *>> &arg_groups,
-      const std::vector<LLVMTypeRef> &param_types,
-      unsigned regular_params,
-      bool is_vararg,
-      std::vector<EzVal> &out_args)
+  void collect_call_args(const std::vector<std::vector<Parser::ASTNode *>> &arg_groups,
+                         const std::vector<LLVMTypeRef> &param_types, unsigned regular_params,
+                         bool is_vararg, std::vector<EzVal> &out_args)
   {
     unsigned param_idx = 0; // tracks position in declared param list
 
@@ -279,8 +291,7 @@ class Codegen
     {
       // Single-token color constant: WHITE, RED, ...
       if (grp.size() == 1 && grp[0]->type == "Token" &&
-          grp[0]->token_type == Lexer::TokenType::IDENTIFIER &&
-          is_color_constant(grp[0]->value))
+          grp[0]->token_type == Lexer::TokenType::IDENTIFIER && is_color_constant(grp[0]->value))
       {
         // How many i8 params does the function expect starting at param_idx?
         unsigned n_bytes = 0;
@@ -305,9 +316,8 @@ class Codegen
       }
 
       // Normal arg
-      std::string hint = (param_idx < regular_params)
-                           ? hint_from_llvm_type(param_types[param_idx])
-                           : "";
+      std::string hint =
+          (param_idx < regular_params) ? hint_from_llvm_type(param_types[param_idx]) : "";
       EzVal v = eval_expr_children(grp, hint);
       if (v)
       {
@@ -329,19 +339,23 @@ class Codegen
   static const std::unordered_map<std::string, std::string> &managed_free_fns()
   {
     static const std::unordered_map<std::string, std::string> m = {
-        {"Vector","vec_free"},{"HashMap","map_free"},{"LinkedList","list_free"},
-        {"Set","set_free"},{"Deque","deque_free"},{"RingBuffer","ring_free"},
-        {"Pool","pool_free"},{"SortedVec","svec_free"},
-        {"StringBuilder","sb_free"},{"BitSet","bitset_free"},
+        {"Vector", "vec_free"},    {"HashMap", "map_free"},    {"LinkedList", "list_free"},
+        {"Set", "set_free"},       {"Deque", "deque_free"},    {"RingBuffer", "ring_free"},
+        {"Pool", "pool_free"},     {"SortedVec", "svec_free"}, {"StringBuilder", "sb_free"},
+        {"BitSet", "bitset_free"},
     };
     return m;
   }
 
-  void push_scope() { var_scopes.push_back({}); arena_stack.push_back({nullptr}); }
+  void push_scope()
+  {
+    var_scopes.push_back({});
+    arena_stack.push_back({nullptr});
+  }
 
   void pop_scope()
   {
-    emit_arena_free();   // one call frees all managed allocs in this scope
+    emit_arena_free(); // one call frees all managed allocs in this scope
     var_scopes.pop_back();
     arena_stack.pop_back();
   }
@@ -586,12 +600,14 @@ private:
   void forward_class(Parser::ASTNode *n)
   {
     const std::string &cls_name = n->value;
-    Parser::ASTNode *fields_node  = nullptr;
+    Parser::ASTNode *fields_node = nullptr;
     Parser::ASTNode *methods_node = nullptr;
     for (auto *c : n->children)
     {
-      if (c->type == "Fields")  fields_node  = c;
-      if (c->type == "Methods") methods_node = c;
+      if (c->type == "Fields")
+        fields_node = c;
+      if (c->type == "Methods")
+        methods_node = c;
     }
 
     // 1. Forward-declare the struct from Fields
@@ -617,8 +633,10 @@ private:
         Parser::ASTNode *body = nullptr;
         for (auto *c : m->children)
         {
-          if (c->type == "Parameters")     orig_params = c;
-          else if (c->type == "Block")     body = c; // last Block wins (the real body)
+          if (c->type == "Parameters")
+            orig_params = c;
+          else if (c->type == "Block")
+            body = c; // last Block wins (the real body)
           // DeclTunnels (-> type tname) is documentary only — actual tunnel
           // statements live inside Block and are found by collect_tunnels.
         }
@@ -630,7 +648,8 @@ private:
             new_params->children.push_back(p);
 
         fn_node->children.push_back(new_params);
-        fn_node->children.push_back(body ? body : new Parser::ASTNode("Block", "", m->line, m->depth));
+        fn_node->children.push_back(body ? body
+                                         : new Parser::ASTNode("Block", "", m->line, m->depth));
 
         forward_function(fn_node);
         class_method_nodes[fn_name] = fn_node;
@@ -699,7 +718,8 @@ private:
                 cur.clear();
               }
             }
-            else cur += ch;
+            else
+              cur += ch;
           }
           continue;
         }
@@ -880,7 +900,7 @@ private:
             {
               const std::string &ftype = layout.field_types[fi];
               const std::string &fname = layout.field_names[fi];
-              if (ftype.size() >= 2 && ftype.substr(ftype.size()-2) == "[]")
+              if (ftype.size() >= 2 && ftype.substr(ftype.size() - 2) == "[]")
               {
                 // Compute GEP to the array-metadata struct in self
                 // self is stored in slot (alloca ptr to ptr)
@@ -890,17 +910,17 @@ private:
                 EzVal zero = LLVMConstInt(LLVMInt32Type(), 0, 0);
                 EzVal fidx = LLVMConstInt(LLVMInt32Type(), (unsigned)fi, 0);
                 EzVal gep_args[] = {zero, fidx};
-                EzVal field_gep = LLVMBuildGEP2(mod->builder, struct_ty, self_ptr,
-                                                gep_args, 2, (fname + "_gep").c_str());
+                EzVal field_gep = LLVMBuildGEP2(mod->builder, struct_ty, self_ptr, gep_args, 2,
+                                                (fname + "_gep").c_str());
                 // Register under "self.fname" AND under fname alone (for local use)
                 std::string alias = "self." + fname;
                 declare_var(alias, field_gep, ftype);
-                declare_var(fname,  field_gep, ftype);
+                declare_var(fname, field_gep, ftype);
 
                 // Register in arena_array_elem_type so subscript/len work
                 std::string elem_type = ftype.substr(0, ftype.size() - 2);
                 arena_array_elem_type[alias] = elem_type;
-                arena_array_elem_type[fname]  = elem_type;
+                arena_array_elem_type[fname] = elem_type;
               }
             }
           }
@@ -1128,8 +1148,8 @@ private:
     // causing realloc() to operate on an already-freed pointer.
     auto depth_it = arena_array_decl_depth.find(arr);
     size_t decl_depth = (depth_it != arena_array_decl_depth.end())
-                          ? depth_it->second
-                          : (arena_stack.empty() ? 0 : arena_stack.size() - 1);
+                            ? depth_it->second
+                            : (arena_stack.empty() ? 0 : arena_stack.size() - 1);
     EzVal tracked_data = arena_realloc_track_at_depth(decl_depth, old_data, new_data);
     ez_store(mod, tracked_data, data_ptr);
     ez_br(mod, store_b);
@@ -1229,8 +1249,8 @@ private:
           LLVMTypeKind dest_kind = LLVMGetTypeKind(ty);
           bool init_int = (init_kind == LLVMIntegerTypeKind);
           bool dest_int = (dest_kind == LLVMIntegerTypeKind);
-          bool init_fp  = (init_kind == LLVMDoubleTypeKind || init_kind == LLVMFloatTypeKind);
-          bool dest_fp  = (dest_kind == LLVMDoubleTypeKind || dest_kind == LLVMFloatTypeKind);
+          bool init_fp = (init_kind == LLVMDoubleTypeKind || init_kind == LLVMFloatTypeKind);
+          bool dest_fp = (dest_kind == LLVMDoubleTypeKind || dest_kind == LLVMFloatTypeKind);
 
           if (init_int && dest_int)
           {
@@ -1309,7 +1329,8 @@ private:
           auto vit = var_type_map.find(obj_name);
           std::string base_type = vit != var_type_map.end() ? vit->second : "";
           auto lt = base_type.find('<');
-          if (lt != std::string::npos) base_type = base_type.substr(0, lt);
+          if (lt != std::string::npos)
+            base_type = base_type.substr(0, lt);
           call_fname = base_type + "_" + method_name;
         }
 
@@ -1320,7 +1341,12 @@ private:
           {
             bool found = false;
             for (auto &tp : tit->second)
-              if (tp.name == tunnel_bind_name) { type_s = tp.type; found = true; break; }
+              if (tp.name == tunnel_bind_name)
+              {
+                type_s = tp.type;
+                found = true;
+                break;
+              }
             if (!found)
             {
               fprintf(stderr, "[ERROR] reserve: '%s' has no tunnel output named '%s'.\n",
@@ -1405,7 +1431,8 @@ private:
         auto vit = var_type_map.find(obj_name);
         std::string base_type = vit != var_type_map.end() ? vit->second : "";
         auto lt = base_type.find('<');
-        if (lt != std::string::npos) base_type = base_type.substr(0, lt);
+        if (lt != std::string::npos)
+          base_type = base_type.substr(0, lt);
         std::string class_fn = base_type + "_" + method_name;
 
         auto tit = func_tunnels.find(class_fn);
@@ -1452,11 +1479,14 @@ private:
             // Bind only to the named tunnel output — verify it exists
             bool found = false;
             for (auto &tp : tit->second)
-              if (tp.name == explicit_tunnel_name) { found = true; break; }
+              if (tp.name == explicit_tunnel_name)
+              {
+                found = true;
+                break;
+              }
             if (!found)
             {
-              fprintf(stderr,
-                      "[ERROR] reserve: '%s' has no tunnel output named '%s'.\n",
+              fprintf(stderr, "[ERROR] reserve: '%s' has no tunnel output named '%s'.\n",
                       call_fname.c_str(), explicit_tunnel_name.c_str());
             }
             declare_var(explicit_tunnel_name, slot, type_s);
@@ -1503,40 +1533,53 @@ private:
     // value = "arrname op"  children[0] = idx_expr, children[1] = rhs_expr
     auto sp = n->value.rfind(' ');
     std::string arr = n->value.substr(0, sp);
-    std::string op  = n->value.substr(sp + 1);
+    std::string op = n->value.substr(sp + 1);
 
-    if (n->children.size() < 2) return;
+    if (n->children.size() < 2)
+      return;
 
     auto eit = arena_array_elem_type.find(arr);
     if (eit == arena_array_elem_type.end())
     {
       // Not an arena array — could be a pointer subscript
       EzVal base = lookup_var(arr);
-      if (!base) return;
+      if (!base)
+        return;
       auto vit = var_type_map.find(arr);
       std::string elem_type = vit != var_type_map.end() ? vit->second : "int32";
       // strip one pointer level
       if (!elem_type.empty() && elem_type.back() == '*')
-        elem_type = elem_type.substr(0, elem_type.size()-1);
+        elem_type = elem_type.substr(0, elem_type.size() - 1);
       EzType ty = cshift_type(elem_type);
       EzVal ptr_val = ez_load(mod, ez_ptr(), base, "base_ptr");
       EzVal idx = eval_expr_children(n->children[0]->children, "int64");
-      if (!idx) return;
+      if (!idx)
+        return;
       if (LLVMGetIntTypeWidth(LLVMTypeOf(idx)) < 64)
         idx = LLVMBuildSExt(mod->builder, idx, ez_i64(), "idx64");
       EzVal gep_args[] = {idx};
       EzVal elem_ptr = ez_gep(mod, ty, ptr_val, gep_args, 1, "elem_ptr");
       EzVal rhs = eval_expr_children(n->children[1]->children, elem_type);
-      if (!rhs) return;
+      if (!rhs)
+        return;
       rhs = coerce_to_param(rhs, ty);
-      if (op == "=") { ez_store(mod, rhs, elem_ptr); return; }
+      if (op == "=")
+      {
+        ez_store(mod, rhs, elem_ptr);
+        return;
+      }
       EzVal lhs = ez_load(mod, ty, elem_ptr, "lhs");
       EzVal res = nullptr;
-      if (op == "+=") res = LLVMBuildAdd(mod->builder, lhs, rhs, "add");
-      else if (op == "-=") res = LLVMBuildSub(mod->builder, lhs, rhs, "sub");
-      else if (op == "*=") res = LLVMBuildMul(mod->builder, lhs, rhs, "mul");
-      else if (op == "/=") res = LLVMBuildSDiv(mod->builder, lhs, rhs, "div");
-      if (res) ez_store(mod, res, elem_ptr);
+      if (op == "+=")
+        res = LLVMBuildAdd(mod->builder, lhs, rhs, "add");
+      else if (op == "-=")
+        res = LLVMBuildSub(mod->builder, lhs, rhs, "sub");
+      else if (op == "*=")
+        res = LLVMBuildMul(mod->builder, lhs, rhs, "mul");
+      else if (op == "/=")
+        res = LLVMBuildSDiv(mod->builder, lhs, rhs, "div");
+      if (res)
+        ez_store(mod, res, elem_ptr);
       return;
     }
 
@@ -1545,29 +1588,42 @@ private:
     EzType elem_ty = cshift_type(elem_type);
 
     EzVal data_ptr = get_arena_data_ptr(arr);
-    if (!data_ptr) return;
+    if (!data_ptr)
+      return;
     EzVal data = ez_load(mod, ez_ptr(), data_ptr, "data");
 
     EzVal idx = eval_expr_children(n->children[0]->children, "int64");
-    if (!idx) return;
+    if (!idx)
+      return;
     if (LLVMGetIntTypeWidth(LLVMTypeOf(idx)) < 64)
       idx = LLVMBuildSExt(mod->builder, idx, ez_i64(), "idx64");
     EzVal gep_args[] = {idx};
     EzVal elem_ptr = ez_gep(mod, elem_ty, data, gep_args, 1, "elem_ptr");
 
     EzVal rhs = eval_expr_children(n->children[1]->children, elem_type);
-    if (!rhs) return;
+    if (!rhs)
+      return;
     rhs = coerce_to_param(rhs, elem_ty);
 
-    if (op == "=") { ez_store(mod, rhs, elem_ptr); return; }
+    if (op == "=")
+    {
+      ez_store(mod, rhs, elem_ptr);
+      return;
+    }
     EzVal lhs = ez_load(mod, elem_ty, elem_ptr, "lhs");
     EzVal res = nullptr;
-    if (op == "+=") res = LLVMBuildAdd(mod->builder, lhs, rhs, "add");
-    else if (op == "-=") res = LLVMBuildSub(mod->builder, lhs, rhs, "sub");
-    else if (op == "*=") res = LLVMBuildMul(mod->builder, lhs, rhs, "mul");
-    else if (op == "/=") res = LLVMBuildSDiv(mod->builder, lhs, rhs, "div");
-    else if (op == "%=") res = LLVMBuildSRem(mod->builder, lhs, rhs, "rem");
-    if (res) ez_store(mod, res, elem_ptr);
+    if (op == "+=")
+      res = LLVMBuildAdd(mod->builder, lhs, rhs, "add");
+    else if (op == "-=")
+      res = LLVMBuildSub(mod->builder, lhs, rhs, "sub");
+    else if (op == "*=")
+      res = LLVMBuildMul(mod->builder, lhs, rhs, "mul");
+    else if (op == "/=")
+      res = LLVMBuildSDiv(mod->builder, lhs, rhs, "div");
+    else if (op == "%=")
+      res = LLVMBuildSRem(mod->builder, lhs, rhs, "rem");
+    if (res)
+      ez_store(mod, res, elem_ptr);
   }
 
   void emit_assignment(Parser::ASTNode *n)
@@ -1654,28 +1710,33 @@ private:
   void emit_call_stmt(Parser::ASTNode *n) { emit_call_val(n, /*result_name=*/""); }
 
   // Split a flat token vector on top-level commas (used by method-call dispatch)
-  static std::vector<std::vector<Parser::ASTNode *>> split_args_by_comma_vec(
-      const std::vector<Parser::ASTNode *> &tokens)
+  static std::vector<std::vector<Parser::ASTNode *>>
+  split_args_by_comma_vec(const std::vector<Parser::ASTNode *> &tokens)
   {
     std::vector<std::vector<Parser::ASTNode *>> groups;
     std::vector<Parser::ASTNode *> cur;
     int depth = 0;
     for (auto *tok : tokens)
     {
-      if (tok->value == "(" || tok->value == "[") depth++;
-      else if (tok->value == ")" || tok->value == "]") depth--;
+      if (tok->value == "(" || tok->value == "[")
+        depth++;
+      else if (tok->value == ")" || tok->value == "]")
+        depth--;
       if (tok->value == "," && depth == 0)
       {
-        if (!cur.empty()) groups.push_back(cur);
+        if (!cur.empty())
+          groups.push_back(cur);
         cur.clear();
       }
-      else cur.push_back(tok);
+      else
+        cur.push_back(tok);
     }
-    if (!cur.empty()) groups.push_back(cur);
+    if (!cur.empty())
+      groups.push_back(cur);
     return groups;
   }
 
-    static std::vector<std::vector<Parser::ASTNode *>> split_args_by_comma(Parser::ASTNode *args_node)
+  static std::vector<std::vector<Parser::ASTNode *>> split_args_by_comma(Parser::ASTNode *args_node)
   {
     std::vector<std::vector<Parser::ASTNode *>> groups;
     if (!args_node)
@@ -1820,9 +1881,14 @@ private:
         // Split into parts: "self.data.push" → ["self","data","push"]
         std::vector<std::string> parts;
         std::string tmp = fname;
-        while (true) {
+        while (true)
+        {
           auto d = tmp.find('.');
-          if (d == std::string::npos) { parts.push_back(tmp); break; }
+          if (d == std::string::npos)
+          {
+            parts.push_back(tmp);
+            break;
+          }
           parts.push_back(tmp.substr(0, d));
           tmp = tmp.substr(d + 1);
         }
@@ -1849,13 +1915,13 @@ private:
         else if (parts.size() == 3)
         {
           // "self.field.method" — look up the field on self
-          std::string self_var  = parts[0];  // "self"
-          std::string field_var = parts[1];  // "data"
+          std::string self_var = parts[0];  // "self"
+          std::string field_var = parts[1]; // "data"
           // Find type of self
           auto vit2 = var_type_map.find(self_var);
           std::string self_type = vit2 != var_type_map.end() ? vit2->second : "";
           if (!self_type.empty() && self_type.back() == '*')
-            self_type = self_type.substr(0, self_type.size()-1);
+            self_type = self_type.substr(0, self_type.size() - 1);
           auto sit = struct_map.find(self_type);
           if (sit != struct_map.end())
           {
@@ -1867,14 +1933,15 @@ private:
                 resolved_type = layout.field_types[fi];
                 // GEP to the field slot within self
                 EzVal self_slot = lookup_var(self_var);
-                EzVal self_ptr  = self_slot ? ez_load(mod, ez_ptr(), self_slot, "self_ptr") : nullptr;
+                EzVal self_ptr =
+                    self_slot ? ez_load(mod, ez_ptr(), self_slot, "self_ptr") : nullptr;
                 if (self_ptr)
                 {
                   EzVal zero = LLVMConstInt(LLVMInt32Type(), 0, 0);
                   EzVal fidx = LLVMConstInt(LLVMInt32Type(), (unsigned)fi, 0);
                   EzVal gep_args[] = {zero, fidx};
-                  resolved_obj_slot = LLVMBuildGEP2(mod->builder, layout.llvm_type,
-                                                    self_ptr, gep_args, 2, "field_slot");
+                  resolved_obj_slot = LLVMBuildGEP2(mod->builder, layout.llvm_type, self_ptr,
+                                                    gep_args, 2, "field_slot");
                 }
                 break;
               }
@@ -1887,45 +1954,74 @@ private:
             if (resolved_obj_slot)
             {
               auto vit3 = var_type_map.find(self_var + "." + field_var);
-              if (vit3 != var_type_map.end()) resolved_type = vit3->second;
+              if (vit3 != var_type_map.end())
+                resolved_type = vit3->second;
             }
           }
         }
 
-        if (!resolved_obj_slot) goto skip_method_desugar;
+        if (!resolved_obj_slot)
+          goto skip_method_desugar;
 
         {
           // Strip template args from type
           std::string base_type = resolved_type;
           {
             auto lt = base_type.find('<');
-            if (lt != std::string::npos) base_type = base_type.substr(0, lt);
+            if (lt != std::string::npos)
+              base_type = base_type.substr(0, lt);
           }
           // Strip trailing *
           while (!base_type.empty() && base_type.back() == '*')
             base_type.pop_back();
 
-          static const std::unordered_map<std::string,
-            std::unordered_map<std::string, std::string>> method_map = {
-            {"Vector",        {{"push","vec_push"},{"get","vec_get"},{"len","vec_len"},
-                               {"pop","vec_pop"},{"clear","vec_clear"},{"set","vec_set"},
-                               {"contains","vec_contains"},{"remove","vec_remove"}}},
-            {"HashMap",       {{"set","map_set"},{"get","map_get"},{"has","map_has"},
-                               {"insert","map_insert"},{"remove","map_remove"},
-                               {"len","map_len"},{"clear","map_clear"},
-                               {"contains","map_contains"}}},
-            {"SortedVec",     {{"push","svec_push"},{"get","svec_get"},{"len","svec_len"},
-                               {"find","svec_find"},{"remove","svec_remove"}}},
-            {"StringBuilder", {{"append","sb_append"},{"append_char","sb_append_char"},
-                               {"append_int","sb_append_int"},{"append_float","sb_append_float"},
-                               {"build","sb_build"},{"clear","sb_clear"},{"len","sb_len"}}},
-            {"LinkedList",    {{"push","list_push"},{"pop","list_pop"},{"len","list_len"},
-                               {"get","list_get"}}},
-            {"Set",           {{"insert","set_insert"},{"contains","set_contains"},
-                               {"remove","set_remove"},{"len","set_len"}}},
-            {"BitSet",        {{"set","bitset_set"},{"get","bitset_get"},
-                               {"clear","bitset_clear"}}},
-          };
+          static const std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+              method_map = {
+                  {"Vector",
+                   {{"push", "vec_push"},
+                    {"get", "vec_get"},
+                    {"len", "vec_len"},
+                    {"pop", "vec_pop"},
+                    {"clear", "vec_clear"},
+                    {"set", "vec_set"},
+                    {"contains", "vec_contains"},
+                    {"remove", "vec_remove"}}},
+                  {"HashMap",
+                   {{"set", "map_set"},
+                    {"get", "map_get"},
+                    {"has", "map_has"},
+                    {"insert", "map_insert"},
+                    {"remove", "map_remove"},
+                    {"len", "map_len"},
+                    {"clear", "map_clear"},
+                    {"contains", "map_contains"}}},
+                  {"SortedVec",
+                   {{"push", "svec_push"},
+                    {"get", "svec_get"},
+                    {"len", "svec_len"},
+                    {"find", "svec_find"},
+                    {"remove", "svec_remove"}}},
+                  {"StringBuilder",
+                   {{"append", "sb_append"},
+                    {"append_char", "sb_append_char"},
+                    {"append_int", "sb_append_int"},
+                    {"append_float", "sb_append_float"},
+                    {"build", "sb_build"},
+                    {"clear", "sb_clear"},
+                    {"len", "sb_len"}}},
+                  {"LinkedList",
+                   {{"push", "list_push"},
+                    {"pop", "list_pop"},
+                    {"len", "list_len"},
+                    {"get", "list_get"}}},
+                  {"Set",
+                   {{"insert", "set_insert"},
+                    {"contains", "set_contains"},
+                    {"remove", "set_remove"},
+                    {"len", "set_len"}}},
+                  {"BitSet",
+                   {{"set", "bitset_set"}, {"get", "bitset_get"}, {"clear", "bitset_clear"}}},
+              };
 
           auto cit = method_map.find(base_type);
           if (cit != method_map.end())
@@ -1937,7 +2033,8 @@ private:
               auto fit3 = func_map.find(fname);
               if (fit3 == func_map.end())
               {
-                fprintf(stderr, "[CODEGEN ERROR] method '%s' on '%s' not declared"
+                fprintf(stderr,
+                        "[CODEGEN ERROR] method '%s' on '%s' not declared"
                         " — add 'import ... %s(...)' to your imports\n",
                         method.c_str(), base_type.c_str(), fname.c_str());
                 goto skip_method_desugar;
@@ -1947,13 +2044,14 @@ private:
               EzType fn_ty = LLVMGlobalGetValueType(f->fn);
               unsigned np = LLVMCountParamTypes(fn_ty);
               std::vector<LLVMTypeRef> ptypes(np);
-              if (np > 0) LLVMGetParamTypes(fn_ty, ptypes.data());
+              if (np > 0)
+                LLVMGetParamTypes(fn_ty, ptypes.data());
               bool va = LLVMIsFunctionVarArg(fn_ty) != 0;
 
               std::vector<EzVal> call_args;
               // First arg: the managed heap ptr from the slot
-              EzVal heap_ptr = ez_load(mod, ez_ptr(), resolved_obj_slot,
-                                       (method + "_objptr").c_str());
+              EzVal heap_ptr =
+                  ez_load(mod, ez_ptr(), resolved_obj_slot, (method + "_objptr").c_str());
               call_args.push_back(heap_ptr);
 
               if (!n->children.empty() && n->children[0]->type == "Args")
@@ -1966,7 +2064,8 @@ private:
                   EzVal v2 = eval_expr_children(grp, ah);
                   if (v2)
                   {
-                    if (!va && idx < np) v2 = coerce_to_param(v2, ptypes[idx]);
+                    if (!va && idx < np)
+                      v2 = coerce_to_param(v2, ptypes[idx]);
                     call_args.push_back(v2);
                   }
                   else if (!va && idx < np)
@@ -1992,7 +2091,7 @@ private:
               }
 
               EzType ret_ty = LLVMGetReturnType(fn_ty);
-              bool is_void  = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
+              bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
               return ez_call(mod, f, call_args.data(), (unsigned)call_args.size(),
                              is_void ? "" : result_name.c_str());
             }
@@ -2011,7 +2110,8 @@ private:
                 EzType fn_ty = LLVMGlobalGetValueType(f->fn);
                 unsigned np = LLVMCountParamTypes(fn_ty);
                 std::vector<LLVMTypeRef> ptypes(np);
-                if (np > 0) LLVMGetParamTypes(fn_ty, ptypes.data());
+                if (np > 0)
+                  LLVMGetParamTypes(fn_ty, ptypes.data());
                 bool va = LLVMIsFunctionVarArg(fn_ty) != 0;
 
                 std::vector<EzVal> call_args;
@@ -2025,33 +2125,43 @@ private:
                     unsigned idx = (unsigned)call_args.size();
                     std::string ah = (idx < np) ? hint_from_llvm_type(ptypes[idx]) : "";
                     EzVal v3 = eval_expr_children(grp, ah);
-                    if (v3) { if (!va && idx < np) v3 = coerce_to_param(v3, ptypes[idx]); call_args.push_back(v3); }
-                    else if (!va && idx < np) call_args.push_back(LLVMConstNull(ptypes[idx]));
+                    if (v3)
+                    {
+                      if (!va && idx < np)
+                        v3 = coerce_to_param(v3, ptypes[idx]);
+                      call_args.push_back(v3);
+                    }
+                    else if (!va && idx < np)
+                      call_args.push_back(LLVMConstNull(ptypes[idx]));
                   }
                 }
 
                 {
                   auto tit = func_tunnels.find(class_fn);
                   if (tit != func_tunnels.end())
-                    for (auto &tp : tit->second) {
+                    for (auto &tp : tit->second)
+                    {
                       EzVal ts = lookup_var(tp.name);
-                      if (!ts) { ts = alloca_in_entry(current_func, cshift_type(tp.type), tp.name.c_str()); declare_var(tp.name, ts, tp.type); }
+                      if (!ts)
+                      {
+                        ts = alloca_in_entry(current_func, cshift_type(tp.type), tp.name.c_str());
+                        declare_var(tp.name, ts, tp.type);
+                      }
                       call_args.push_back(ts);
                     }
                 }
 
                 EzType ret_ty = LLVMGetReturnType(fn_ty);
-                bool is_void  = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
+                bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
                 return ez_call(mod, f, call_args.data(), (unsigned)call_args.size(),
                                is_void ? "" : result_name.c_str());
               }
             }
           }
         }
-        skip_method_desugar:;
+      skip_method_desugar:;
       }
     }
-
 
     auto it = func_map.find(fname);
     if (it == func_map.end())
@@ -2126,9 +2236,8 @@ private:
       {
         // args = [user_args... , tunnel_args...]
         // The tunnel args were just appended, so user_args_count = args.size() - n_tunnels2
-        unsigned user_args_count = (unsigned)args.size() > n_tunnels2
-                                       ? (unsigned)args.size() - n_tunnels2
-                                       : 0;
+        unsigned user_args_count =
+            (unsigned)args.size() > n_tunnels2 ? (unsigned)args.size() - n_tunnels2 : 0;
         if (user_args_count < regular2)
         {
           std::vector<LLVMTypeRef> all_ptypes(total_params2);
@@ -2188,13 +2297,15 @@ private:
         if (rk == LLVMIntegerTypeKind && tk == LLVMIntegerTypeKind)
         {
           unsigned rw = LLVMGetIntTypeWidth(rhs_ty), tw = LLVMGetIntTypeWidth(ty);
-          if (rw > tw) rhs = LLVMBuildTrunc(mod->builder, rhs, ty, "tunnel_trunc");
-          else if (rw < tw) rhs = LLVMBuildSExt(mod->builder, rhs, ty, "tunnel_sext");
+          if (rw > tw)
+            rhs = LLVMBuildTrunc(mod->builder, rhs, ty, "tunnel_trunc");
+          else if (rw < tw)
+            rhs = LLVMBuildSExt(mod->builder, rhs, ty, "tunnel_sext");
         }
         else if (r_fp && t_fp)
           rhs = (rk == LLVMDoubleTypeKind && tk == LLVMFloatTypeKind)
-                  ? LLVMBuildFPTrunc(mod->builder, rhs, ty, "tunnel_fptrunc")
-                  : LLVMBuildFPExt(mod->builder, rhs, ty, "tunnel_fpext");
+                    ? LLVMBuildFPTrunc(mod->builder, rhs, ty, "tunnel_fptrunc")
+                    : LLVMBuildFPExt(mod->builder, rhs, ty, "tunnel_fpext");
         else if (rk == LLVMIntegerTypeKind && t_fp)
           rhs = LLVMBuildSIToFP(mod->builder, rhs, ty, "tunnel_itof");
         else if (r_fp && tk == LLVMIntegerTypeKind)
@@ -2272,7 +2383,8 @@ private:
     if (n->meta == "always_true")
     {
       push_scope();
-      if (n->children.size() > 1) emit_block_body(n->children[1]);
+      if (n->children.size() > 1)
+        emit_block_body(n->children[1]);
       pop_scope();
       return;
     }
@@ -2282,8 +2394,10 @@ private:
       {
         push_scope();
         auto *el = n->children[2];
-        if (el->type == "If") emit_if(el);
-        else emit_block_body(el);
+        if (el->type == "If")
+          emit_if(el);
+        else
+          emit_block_body(el);
         pop_scope();
       }
       return;
@@ -2293,15 +2407,17 @@ private:
 
     EzBlock *then_b = ez_block(current_func, "if.then");
     EzBlock *else_b = ez_block(current_func, "if.else");
-    EzBlock *end_b  = ez_block(current_func, "if.end");
+    EzBlock *end_b = ez_block(current_func, "if.end");
 
     ez_cond_br(mod, cond, then_b, else_b);
 
     // then
     current_block = then_b;
     ez_use(then_b);
-    if (n->children.size() > 1) emit_block_body(n->children[1]);
-    if (!current_block_has_terminator()) ez_br(mod, end_b);
+    if (n->children.size() > 1)
+      emit_block_body(n->children[1]);
+    if (!current_block_has_terminator())
+      ez_br(mod, end_b);
 
     // else
     current_block = else_b;
@@ -2309,10 +2425,13 @@ private:
     if (n->children.size() > 2)
     {
       auto *el = n->children[2];
-      if (el->type == "If") emit_if(el);
-      else emit_block_body(el);
+      if (el->type == "If")
+        emit_if(el);
+      else
+        emit_block_body(el);
     }
-    if (!current_block_has_terminator()) ez_br(mod, end_b);
+    if (!current_block_has_terminator())
+      ez_br(mod, end_b);
 
     current_block = end_b;
     ez_use(end_b);
@@ -2467,22 +2586,23 @@ private:
           switched_var = n->children[0]->children[0]->value;
 
         // Load the runtime validity flag
-        EzVal vflag_slot = switched_var.empty() ? nullptr
-                         : lookup_var("__track_validity_" + switched_var);
-        EzVal is_valid = vflag_slot
-            ? ez_load(mod, ez_i1(), vflag_slot, "is_valid")
-            : LLVMConstInt(ez_i1(), 1, 0); // no flag → assume valid
+        EzVal vflag_slot =
+            switched_var.empty() ? nullptr : lookup_var("__track_validity_" + switched_var);
+        EzVal is_valid = vflag_slot ? ez_load(mod, ez_i1(), vflag_slot, "is_valid")
+                                    : LLVMConstInt(ez_i1(), 1, 0); // no flag → assume valid
 
         Parser::ASTNode *valid_case = nullptr, *voided_case = nullptr;
         for (size_t i = 1; i < n->children.size(); ++i)
         {
           auto *c = n->children[i];
-          if (c->type == "Case" && c->value == "valid")  valid_case  = c;
-          if (c->type == "Case" && c->value == "voided") voided_case = c;
+          if (c->type == "Case" && c->value == "valid")
+            valid_case = c;
+          if (c->type == "Case" && c->value == "voided")
+            voided_case = c;
         }
 
-        EzBlock *end_b    = ez_block(current_func, "sw.end");
-        EzBlock *valid_b  = valid_case  ? ez_block(current_func, "sw.valid")  : end_b;
+        EzBlock *end_b = ez_block(current_func, "sw.end");
+        EzBlock *valid_b = valid_case ? ez_block(current_func, "sw.valid") : end_b;
         EzBlock *voided_b = voided_case ? ez_block(current_func, "sw.voided") : end_b;
 
         // i1 true → valid, false → voided
@@ -2492,7 +2612,8 @@ private:
 
         auto emit_arm = [&](EzBlock *blk, Parser::ASTNode *arm)
         {
-          if (!arm) return;
+          if (!arm)
+            return;
           current_block = blk;
           ez_use(blk);
           for (auto *stmt : arm->children)
@@ -2500,7 +2621,7 @@ private:
           if (!current_block_has_terminator())
             ez_br(mod, end_b);
         };
-        emit_arm(valid_b,  valid_case);
+        emit_arm(valid_b, valid_case);
         emit_arm(voided_b, voided_case);
 
         loop_stack.pop_back();
@@ -2557,7 +2678,7 @@ private:
         default_node = c;
     }
 
-    EzBlock *end_b    = ez_block(current_func, "sw.end");
+    EzBlock *end_b = ez_block(current_func, "sw.end");
     std::vector<EzBlock *> case_blocks;
     for (auto *c : cases)
       case_blocks.push_back(ez_block(current_func, ("sw.case." + c->value).c_str()));
@@ -2569,7 +2690,13 @@ private:
     {
       const std::string &val_s = cases[i]->value;
       long long ival = 0;
-      try { ival = std::stoll(val_s); } catch (...) {}
+      try
+      {
+        ival = std::stoll(val_s);
+      }
+      catch (...)
+      {
+      }
       LLVMAddCase(sw, LLVMConstInt(ez_i32(), (unsigned long long)ival, 1), case_blocks[i]->bb);
     }
 
@@ -2704,7 +2831,8 @@ private:
           {
             std::string btype = vit->second;
             auto lt = btype.find('<');
-            if (lt != std::string::npos) btype = btype.substr(0, lt);
+            if (lt != std::string::npos)
+              btype = btype.substr(0, lt);
             if (managed_free_fns().count(btype))
               return ez_load(mod, ez_ptr(), slot, (vname + "_ptr").c_str());
           }
@@ -2749,19 +2877,19 @@ private:
       // e.g. float32 * int32 → double internally, but if hint=="float32", truncate.
       if (binop_result && !hint.empty())
       {
-        LLVMTypeRef res_ty  = LLVMTypeOf(binop_result);
+        LLVMTypeRef res_ty = LLVMTypeOf(binop_result);
         LLVMTypeRef hint_ty = cshift_type(hint);
         if (hint_ty && res_ty != hint_ty)
         {
           LLVMTypeKind rk = LLVMGetTypeKind(res_ty);
           LLVMTypeKind hk = LLVMGetTypeKind(hint_ty);
-          bool r_fp = (rk==LLVMFloatTypeKind||rk==LLVMDoubleTypeKind);
-          bool h_fp = (hk==LLVMFloatTypeKind||hk==LLVMDoubleTypeKind);
-          if (r_fp && h_fp && rk==LLVMDoubleTypeKind && hk==LLVMFloatTypeKind)
+          bool r_fp = (rk == LLVMFloatTypeKind || rk == LLVMDoubleTypeKind);
+          bool h_fp = (hk == LLVMFloatTypeKind || hk == LLVMDoubleTypeKind);
+          if (r_fp && h_fp && rk == LLVMDoubleTypeKind && hk == LLVMFloatTypeKind)
             binop_result = LLVMBuildFPTrunc(mod->builder, binop_result, hint_ty, "res_f32");
-          else if (r_fp && h_fp && rk==LLVMFloatTypeKind && hk==LLVMDoubleTypeKind)
+          else if (r_fp && h_fp && rk == LLVMFloatTypeKind && hk == LLVMDoubleTypeKind)
             binop_result = LLVMBuildFPExt(mod->builder, binop_result, hint_ty, "res_f64");
-          else if (rk==LLVMIntegerTypeKind && h_fp)
+          else if (rk == LLVMIntegerTypeKind && h_fp)
             binop_result = LLVMBuildSIToFP(mod->builder, binop_result, hint_ty, "itof");
         }
       }
@@ -2827,9 +2955,9 @@ private:
     if (tokens.size() >= 7 && tokens[1]->value == "." && tokens[3]->value == "." &&
         tokens[5]->value == "(")
     {
-      std::string self_var  = tokens[0]->value;  // e.g. "self"
-      std::string field_var = tokens[2]->value;  // e.g. "data"
-      std::string method    = tokens[4]->value;  // e.g. "len", "get", "push"
+      std::string self_var = tokens[0]->value;  // e.g. "self"
+      std::string field_var = tokens[2]->value; // e.g. "data"
+      std::string method = tokens[4]->value;    // e.g. "len", "get", "push"
 
       auto vit = var_type_map.find(self_var);
       std::string self_type = vit != var_type_map.end() ? vit->second : "";
@@ -2842,22 +2970,24 @@ private:
         auto &layout = sit->second;
         for (size_t fi = 0; fi < layout.field_names.size(); fi++)
         {
-          if (layout.field_names[fi] != field_var) continue;
+          if (layout.field_names[fi] != field_var)
+            continue;
 
           std::string field_type = layout.field_types[fi];
           EzVal self_slot = lookup_var(self_var);
-          if (!self_slot) break;
-          EzVal self_ptr  = ez_load(mod, ez_ptr(), self_slot, "self_ptr");
+          if (!self_slot)
+            break;
+          EzVal self_ptr = ez_load(mod, ez_ptr(), self_slot, "self_ptr");
           EzVal zero = LLVMConstInt(LLVMInt32Type(), 0, 0);
           EzVal fidx = LLVMConstInt(LLVMInt32Type(), (unsigned)fi, 0);
           EzVal gep_args[] = {zero, fidx};
-          EzVal field_slot = LLVMBuildGEP2(mod->builder, layout.llvm_type, self_ptr,
-                                           gep_args, 2, "field_slot");
+          EzVal field_slot =
+              LLVMBuildGEP2(mod->builder, layout.llvm_type, self_ptr, gep_args, 2, "field_slot");
 
           // T[] arena array field — only .len() is supported (raw T[] fields
           // don't carry length metadata when embedded in a struct; prefer
           // Vector<T> for class/struct fields that need length-aware access).
-          if (field_type.size() >= 2 && field_type.substr(field_type.size()-2) == "[]")
+          if (field_type.size() >= 2 && field_type.substr(field_type.size() - 2) == "[]")
           {
             if (method == "len")
             {
@@ -2876,41 +3006,75 @@ private:
 
           // Strip template args / pointer suffix to get the container type
           std::string base_type = field_type;
-          { auto lt = base_type.find('<'); if (lt != std::string::npos) base_type = base_type.substr(0, lt); }
-          while (!base_type.empty() && base_type.back() == '*') base_type.pop_back();
+          {
+            auto lt = base_type.find('<');
+            if (lt != std::string::npos)
+              base_type = base_type.substr(0, lt);
+          }
+          while (!base_type.empty() && base_type.back() == '*')
+            base_type.pop_back();
 
-          static const std::unordered_map<std::string,
-            std::unordered_map<std::string, std::string>> method_map = {
-            {"Vector",        {{"push","vec_push"},{"get","vec_get"},{"len","vec_len"},
-                               {"pop","vec_pop"},{"clear","vec_clear"},{"set","vec_set"},
-                               {"contains","vec_contains"},{"remove","vec_remove"}}},
-            {"HashMap",       {{"set","map_set"},{"get","map_get"},{"has","map_has"},
-                               {"insert","map_insert"},{"remove","map_remove"},
-                               {"len","map_len"},{"clear","map_clear"},
-                               {"contains","map_contains"}}},
-            {"SortedVec",     {{"push","svec_push"},{"get","svec_get"},{"len","svec_len"},
-                               {"find","svec_find"},{"remove","svec_remove"}}},
-            {"StringBuilder", {{"append","sb_append"},{"append_char","sb_append_char"},
-                               {"append_int","sb_append_int"},{"append_float","sb_append_float"},
-                               {"build","sb_build"},{"clear","sb_clear"},{"len","sb_len"}}},
-            {"LinkedList",    {{"push","list_push"},{"pop","list_pop"},{"len","list_len"},
-                               {"get","list_get"}}},
-            {"Set",           {{"insert","set_insert"},{"contains","set_contains"},
-                               {"remove","set_remove"},{"len","set_len"}}},
-            {"BitSet",        {{"set","bitset_set"},{"get","bitset_get"},
-                               {"clear","bitset_clear"}}},
-          };
+          static const std::unordered_map<std::string, std::unordered_map<std::string, std::string>>
+              method_map = {
+                  {"Vector",
+                   {{"push", "vec_push"},
+                    {"get", "vec_get"},
+                    {"len", "vec_len"},
+                    {"pop", "vec_pop"},
+                    {"clear", "vec_clear"},
+                    {"set", "vec_set"},
+                    {"contains", "vec_contains"},
+                    {"remove", "vec_remove"}}},
+                  {"HashMap",
+                   {{"set", "map_set"},
+                    {"get", "map_get"},
+                    {"has", "map_has"},
+                    {"insert", "map_insert"},
+                    {"remove", "map_remove"},
+                    {"len", "map_len"},
+                    {"clear", "map_clear"},
+                    {"contains", "map_contains"}}},
+                  {"SortedVec",
+                   {{"push", "svec_push"},
+                    {"get", "svec_get"},
+                    {"len", "svec_len"},
+                    {"find", "svec_find"},
+                    {"remove", "svec_remove"}}},
+                  {"StringBuilder",
+                   {{"append", "sb_append"},
+                    {"append_char", "sb_append_char"},
+                    {"append_int", "sb_append_int"},
+                    {"append_float", "sb_append_float"},
+                    {"build", "sb_build"},
+                    {"clear", "sb_clear"},
+                    {"len", "sb_len"}}},
+                  {"LinkedList",
+                   {{"push", "list_push"},
+                    {"pop", "list_pop"},
+                    {"len", "list_len"},
+                    {"get", "list_get"}}},
+                  {"Set",
+                   {{"insert", "set_insert"},
+                    {"contains", "set_contains"},
+                    {"remove", "set_remove"},
+                    {"len", "set_len"}}},
+                  {"BitSet",
+                   {{"set", "bitset_set"}, {"get", "bitset_get"}, {"clear", "bitset_clear"}}},
+              };
 
           auto cit = method_map.find(base_type);
-          if (cit == method_map.end()) break;
+          if (cit == method_map.end())
+            break;
           auto fit2 = cit->second.find(method);
-          if (fit2 == cit->second.end()) break;
+          if (fit2 == cit->second.end())
+            break;
 
           std::string fn_name = fit2->second;
           auto fit3 = func_map.find(fn_name);
           if (fit3 == func_map.end())
           {
-            fprintf(stderr, "[CODEGEN ERROR] method '%s' on '%s' not declared"
+            fprintf(stderr,
+                    "[CODEGEN ERROR] method '%s' on '%s' not declared"
                     " — add 'import ... %s(...)' to your imports\n",
                     method.c_str(), base_type.c_str(), fn_name.c_str());
             break;
@@ -2920,7 +3084,8 @@ private:
           EzType fn_ty = LLVMGlobalGetValueType(f->fn);
           unsigned np = LLVMCountParamTypes(fn_ty);
           std::vector<LLVMTypeRef> ptypes(np);
-          if (np > 0) LLVMGetParamTypes(fn_ty, ptypes.data());
+          if (np > 0)
+            LLVMGetParamTypes(fn_ty, ptypes.data());
           bool va = LLVMIsFunctionVarArg(fn_ty) != 0;
 
           std::vector<EzVal> call_args;
@@ -2934,8 +3099,14 @@ private:
             unsigned idx = (unsigned)call_args.size();
             std::string ah = (idx < np) ? hint_from_llvm_type(ptypes[idx]) : "";
             EzVal v5 = eval_expr_children(grp, ah);
-            if (v5) { if (!va && idx < np) v5 = coerce_to_param(v5, ptypes[idx]); call_args.push_back(v5); }
-            else if (!va && idx < np) call_args.push_back(LLVMConstNull(ptypes[idx]));
+            if (v5)
+            {
+              if (!va && idx < np)
+                v5 = coerce_to_param(v5, ptypes[idx]);
+              call_args.push_back(v5);
+            }
+            else if (!va && idx < np)
+              call_args.push_back(LLVMConstNull(ptypes[idx]));
           }
 
           EzType ret_ty = LLVMGetReturnType(fn_ty);
@@ -2963,58 +3134,65 @@ private:
         std::string base_stripped = base_type;
         {
           auto lt = base_stripped.find('<');
-          if (lt != std::string::npos) base_stripped = base_stripped.substr(0, lt);
+          if (lt != std::string::npos)
+            base_stripped = base_stripped.substr(0, lt);
         }
 
         // Method → C function name mapping
         // Managed types: Vector, HashMap, SortedVec, StringBuilder, LinkedList, ...
         // Arena arrays (T[]): .len(), .push(x)
-        struct MethodEntry { std::string type_prefix; std::string method; std::string fn; bool needs_addr; };
+        struct MethodEntry
+        {
+          std::string type_prefix;
+          std::string method;
+          std::string fn;
+          bool needs_addr;
+        };
         static const std::vector<MethodEntry> methods = {
-          // Vector<T>
-          {"Vector",        "push",         "vec_push",         true},
-          {"Vector",        "get",          "vec_get",          true},
-          {"Vector",        "len",          "vec_len",          true},
-          {"Vector",        "pop",          "vec_pop",          true},
-          {"Vector",        "clear",        "vec_clear",        true},
-          {"Vector",        "set",          "vec_set",          true},
-          {"Vector",        "contains",     "vec_contains",     true},
-          {"Vector",        "remove",       "vec_remove",       true},
-          // HashMap<K,V>
-          {"HashMap",       "set",          "map_set",          true},
-          {"HashMap",       "get",          "map_get",          true},
-          {"HashMap",       "has",          "map_has",          true},
-          {"HashMap",       "remove",       "map_remove",       true},
-          {"HashMap",       "len",          "map_len",          true},
-          {"HashMap",       "clear",        "map_clear",        true},
-          // SortedVec<T>
-          {"SortedVec",     "push",         "svec_push",        true},
-          {"SortedVec",     "get",          "svec_get",         true},
-          {"SortedVec",     "len",          "svec_len",         true},
-          {"SortedVec",     "find",         "svec_find",        true},
-          {"SortedVec",     "remove",       "svec_remove",      true},
-          // StringBuilder
-          {"StringBuilder", "append",       "sb_append",        true},
-          {"StringBuilder", "append_char",  "sb_append_char",   true},
-          {"StringBuilder", "append_int",   "sb_append_int",    true},
-          {"StringBuilder", "append_float", "sb_append_float",  true},
-          {"StringBuilder", "build",        "sb_build",         true},
-          {"StringBuilder", "clear",        "sb_clear",         true},
-          {"StringBuilder", "len",          "sb_len",           true},
-          // LinkedList<T>
-          {"LinkedList",    "push",         "list_push",        true},
-          {"LinkedList",    "pop",          "list_pop",         true},
-          {"LinkedList",    "len",          "list_len",         true},
-          {"LinkedList",    "get",          "list_get",         true},
-          // Set<T>
-          {"Set",           "insert",       "set_insert",       true},
-          {"Set",           "contains",     "set_contains",     true},
-          {"Set",           "remove",       "set_remove",       true},
-          {"Set",           "len",          "set_len",          true},
-          // BitSet
-          {"BitSet",        "set",          "bitset_set",       true},
-          {"BitSet",        "get",          "bitset_get",       true},
-          {"BitSet",        "clear",        "bitset_clear",     true},
+            // Vector<T>
+            {"Vector", "push", "vec_push", true},
+            {"Vector", "get", "vec_get", true},
+            {"Vector", "len", "vec_len", true},
+            {"Vector", "pop", "vec_pop", true},
+            {"Vector", "clear", "vec_clear", true},
+            {"Vector", "set", "vec_set", true},
+            {"Vector", "contains", "vec_contains", true},
+            {"Vector", "remove", "vec_remove", true},
+            // HashMap<K,V>
+            {"HashMap", "set", "map_set", true},
+            {"HashMap", "get", "map_get", true},
+            {"HashMap", "has", "map_has", true},
+            {"HashMap", "remove", "map_remove", true},
+            {"HashMap", "len", "map_len", true},
+            {"HashMap", "clear", "map_clear", true},
+            // SortedVec<T>
+            {"SortedVec", "push", "svec_push", true},
+            {"SortedVec", "get", "svec_get", true},
+            {"SortedVec", "len", "svec_len", true},
+            {"SortedVec", "find", "svec_find", true},
+            {"SortedVec", "remove", "svec_remove", true},
+            // StringBuilder
+            {"StringBuilder", "append", "sb_append", true},
+            {"StringBuilder", "append_char", "sb_append_char", true},
+            {"StringBuilder", "append_int", "sb_append_int", true},
+            {"StringBuilder", "append_float", "sb_append_float", true},
+            {"StringBuilder", "build", "sb_build", true},
+            {"StringBuilder", "clear", "sb_clear", true},
+            {"StringBuilder", "len", "sb_len", true},
+            // LinkedList<T>
+            {"LinkedList", "push", "list_push", true},
+            {"LinkedList", "pop", "list_pop", true},
+            {"LinkedList", "len", "list_len", true},
+            {"LinkedList", "get", "list_get", true},
+            // Set<T>
+            {"Set", "insert", "set_insert", true},
+            {"Set", "contains", "set_contains", true},
+            {"Set", "remove", "set_remove", true},
+            {"Set", "len", "set_len", true},
+            // BitSet
+            {"BitSet", "set", "bitset_set", true},
+            {"BitSet", "get", "bitset_get", true},
+            {"BitSet", "clear", "bitset_clear", true},
         };
 
         // Check arena arrays (T[]): base has entry in arena_array_elem_type
@@ -3024,7 +3202,8 @@ private:
           if (member == "len")
           {
             EzVal len_ptr = get_arena_len_ptr(base);
-            if (len_ptr) return ez_load(mod, ez_i64(), len_ptr, "arr_len");
+            if (len_ptr)
+              return ez_load(mod, ez_i64(), len_ptr, "arr_len");
           }
           // .push(x) — same as <<; collect single arg and do array append
           // (complex: for now fall through to struct field handler)
@@ -3046,7 +3225,8 @@ private:
                 EzType fn_ty = LLVMGlobalGetValueType(f->fn);
                 unsigned np = LLVMCountParamTypes(fn_ty);
                 std::vector<LLVMTypeRef> ptypes(np);
-                if (np > 0) LLVMGetParamTypes(fn_ty, ptypes.data());
+                if (np > 0)
+                  LLVMGetParamTypes(fn_ty, ptypes.data());
                 bool va = LLVMIsFunctionVarArg(fn_ty) != 0;
 
                 std::vector<EzVal> call_args;
@@ -3063,7 +3243,8 @@ private:
                     EzVal v4 = eval_expr_children(grp, ah);
                     if (v4)
                     {
-                      if (!va && idx < np) v4 = coerce_to_param(v4, ptypes[idx]);
+                      if (!va && idx < np)
+                        v4 = coerce_to_param(v4, ptypes[idx]);
                       call_args.push_back(v4);
                     }
                     else if (!va && idx < np)
@@ -3103,7 +3284,11 @@ private:
         // Look up method in table
         const MethodEntry *entry = nullptr;
         for (auto &m : methods)
-          if (m.type_prefix == base_stripped && m.method == member) { entry = &m; break; }
+          if (m.type_prefix == base_stripped && m.method == member)
+          {
+            entry = &m;
+            break;
+          }
 
         if (entry)
         {
@@ -3118,7 +3303,8 @@ private:
 
             // For managed types, &v = the stored heap pointer (not alloca addr)
             EzVal base_slot = lookup_var(base);
-            if (!base_slot) goto skip_method;
+            if (!base_slot)
+              goto skip_method;
 
             if (entry->needs_addr)
             {
@@ -3136,7 +3322,8 @@ private:
               EzType fn_ty = LLVMGlobalGetValueType(fit->second->fn);
               unsigned np = LLVMCountParamTypes(fn_ty);
               std::vector<LLVMTypeRef> ptypes(np);
-              if (np > 0) LLVMGetParamTypes(fn_ty, ptypes.data());
+              if (np > 0)
+                LLVMGetParamTypes(fn_ty, ptypes.data());
               bool va = LLVMIsFunctionVarArg(fn_ty) != 0;
 
               for (auto &grp : arg_groups)
@@ -3146,7 +3333,8 @@ private:
                 EzVal v = eval_expr_children(grp, ahint);
                 if (v)
                 {
-                  if (!va && idx < np) v = coerce_to_param(v, ptypes[idx]);
+                  if (!va && idx < np)
+                    v = coerce_to_param(v, ptypes[idx]);
                   args.push_back(v);
                 }
                 else if (!va && idx < np)
@@ -3156,13 +3344,13 @@ private:
 
             {
               EzType ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(fit->second->fn));
-              bool is_void  = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
+              bool is_void = (LLVMGetTypeKind(ret_ty) == LLVMVoidTypeKind);
               return ez_call(mod, fit->second, args.data(), (unsigned)args.size(),
                              is_void ? "" : (member + "_result").c_str());
             }
           }
         }
-        skip_method:;
+      skip_method:;
       }
 
       // ── Field/property access: v.field ───────────────────────────────────
@@ -3250,12 +3438,14 @@ private:
           LLVMTypeRef target = ez_f64();
           if (l_fp && r_fp)
             target = (lk == LLVMDoubleTypeKind || rk == LLVMDoubleTypeKind) ? ez_f64() : ez_f32();
-          if (l_int) lhs = LLVMBuildSIToFP(mod->builder, lhs, target, "itof");
+          if (l_int)
+            lhs = LLVMBuildSIToFP(mod->builder, lhs, target, "itof");
           else if (lk == LLVMFloatTypeKind && target == ez_f64())
             lhs = LLVMBuildFPExt(mod->builder, lhs, target, "fpext");
           else if (lk == LLVMDoubleTypeKind && target == ez_f32())
             lhs = LLVMBuildFPTrunc(mod->builder, lhs, target, "fptrunc");
-          if (r_int) rhs = LLVMBuildSIToFP(mod->builder, rhs, target, "itof");
+          if (r_int)
+            rhs = LLVMBuildSIToFP(mod->builder, rhs, target, "itof");
           else if (rk == LLVMFloatTypeKind && target == ez_f64())
             rhs = LLVMBuildFPExt(mod->builder, rhs, target, "fpext");
           else if (rk == LLVMDoubleTypeKind && target == ez_f32())
@@ -3266,8 +3456,10 @@ private:
           // Promote both to the wider integer
           unsigned lw = LLVMGetIntTypeWidth(lt);
           unsigned rw = LLVMGetIntTypeWidth(rt);
-          if (lw < rw) lhs = LLVMBuildSExt(mod->builder, lhs, rt, "widen");
-          else         rhs = LLVMBuildSExt(mod->builder, rhs, lt, "widen");
+          if (lw < rw)
+            lhs = LLVMBuildSExt(mod->builder, lhs, rt, "widen");
+          else
+            rhs = LLVMBuildSExt(mod->builder, rhs, lt, "widen");
         }
         // ptr vs ptr: leave as-is (LLVM opaque ptrs are all the same)
       }
