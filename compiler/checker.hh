@@ -1527,16 +1527,25 @@ private:
       if (c->type == "Case")
       {
         push_scope();
-        if (c->value == "valid" && was_voided)
+        if (c->value == "valid" && (was_voided || was_voided_maybe))
         {
           // Inside the 'valid' branch: the variable is accessible
           Symbol *sym = lookup(switched_var);
+          bool saved_voided = false, saved_maybe = false;
           if (sym)
+          {
+            saved_voided = sym->is_voided;
+            saved_maybe = sym->is_voided_maybe;
             sym->is_voided = false;
+            sym->is_voided_maybe = false;
+          }
           for (auto *stmt : c->children)
             check_node(stmt);
           if (sym)
-            sym->is_voided = true; // restore after branch
+          {
+            sym->is_voided = saved_voided;
+            sym->is_voided_maybe = saved_maybe;
+          }
         }
         else if (c->value == "voided")
         {

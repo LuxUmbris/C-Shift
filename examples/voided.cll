@@ -1,0 +1,23 @@
+import std;
+
+entry
+{
+    int32 x = 5;
+    int32* p = &x;
+
+    printf("%i\n", *p);
+
+    if (x == 5)
+    {
+        move p;
+    }
+
+    switch(p)
+    {
+        case valid:
+        printf("p = %i\n", p);
+
+        case voided:
+        printf("p is voided!\n");
+    }
+}

@@ -12,23 +12,33 @@
 //     [-lclang-18]   # optional - enables C header import
 //     -o cshift
 //
-// Options:
-//   -o <output>        Output file name.  Default: source stem + appropriate
-//   ext.
-//   --emit-llvm        Write LLVM IR (.ll) and exit; skip linking.
-//   --emit-asm         Write native assembly (.s) and exit; skip linking.
-//   -c                 Compile to object file (.o) only; skip linking.
-//   --target <triple>  Cross-compile. Accepted aliases:
-//                        x86_64-linux, aarch64-linux, arm32-linux,
-//                        riscv64-linux, x86_64-macos, aarch64-macos,
-//                        x86_64-windows  (or any raw LLVM triple)
-//   --no-frt           Skip automatic frt.o linking (advanced use).
-//   --check-only       Run lexer + parser + checker only; no codegen.
-//   --verbose / -v     Print internal resolution steps to stderr.
-//   -O0/-O1/-O2/-O3    Optimization level (default: -O0).
-//   -Os/-Oz            Optimize for size / aggressively for size.
-//   --mcpu <cpu>       Target CPU (e.g. "skylake", "cortex-a72").
-//   --mattr <feat>     Target CPU features (e.g. "+avx2,+bmi2").
+// "Options:\n"
+//              -o <output>        Output file (default: source stem + ext)
+//              --emit-llvm        Emit LLVM IR (.ll); skip link
+//              --emit-asm         Emit assembly (.s); skip link
+//              -c                 Compile to object (.o); skip link
+//              --target <triple>  Cross-compile target (alias or LLVM triple)
+//              --no-frt           Skip frt.o linking
+//              --check-only       Lex + parse + type-check only; no codegen
+//              --verbose / -v     Verbose output
+//              -O0/-O1/-O2/-O3    Optimization level (default: -O0)
+//              -Os / -Oz          Optimize for size / aggressively for size
+//              --mcpu <cpu>       Target CPU (e.g. skylake, cortex-a72)
+//              --mattr <feat>     CPU features (e.g. +avx2,+bmi2)
+//              -l<lib>            Link with library (e.g. -lm)
+//              -Wl,<flag>         Pass flag to linker
+//              --link-flag <f>    Pass raw linker flag
+//              --version / -V     Print compiler version and exit
+//              --keywords         List all C<< keywords and exit
+//              --operators        List all C<< operators and exit
+//
+//            Target aliases:
+//              x86_64-linux, aarch64-linux, arm32-linux, riscv64-linux, riscv32
+//              x86_64-macos, aarch64-macos
+//              x86_64-windows (MinGW), x86_64-windows-msvc
+//              wasm32, wasm32-emscripten, wasm64
+//              aarch64-android, x86_64-android, aarch64-ios
+//              thumbv7em (ARM Cortex-M4), or any raw LLVM triple
 
 #include "compiler/codegen.hh"
 #include "compiler/module.hh" // must come before codegen.hh
@@ -401,7 +411,7 @@ static void usage(const char *argv0)
 }
 
 // ── Compiler version ──────────────────────────────────────────────────────
-#define CSHIFT_VERSION "0.9.0"
+#define CSHIFT_VERSION "0.10.2"
 #define CSHIFT_VERSION_DATE "2026"
 
 static void print_version()
