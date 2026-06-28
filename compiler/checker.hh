@@ -1446,11 +1446,11 @@ private:
     // Get the switched variable name (first token of the switch expression)
     std::string switched_var;
     {
-        auto *expr = n->children[0];
-        if (expr->type == "Token")
-            switched_var = expr->value;
-        else if (!expr->children.empty() && expr->children[0]->type == "Token")
-            switched_var = expr->children[0]->value;
+      auto *expr = n->children[0];
+      if (expr->type == "Token")
+        switched_var = expr->value;
+      else if (!expr->children.empty() && expr->children[0]->type == "Token")
+        switched_var = expr->children[0]->value;
     }
 
     // For a valid/voided guard, accessing a voided/maybe-voided variable in the switch
