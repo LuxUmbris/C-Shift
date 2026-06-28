@@ -201,14 +201,13 @@ static std::string compile_frt_to_cache(const std::string &frt_c, const std::str
     compilers.push_back(cc_env);
 
   // Determine if this is a cross-compile scenario
-  bool is_windows = !triple.empty() && triple != "native" &&
-    (triple.find("windows") != std::string::npos ||
-     triple.find("mingw") != std::string::npos ||
-     triple.find("w64") != std::string::npos ||
-     triple.find("msvc") != std::string::npos);
-  bool is_wasm = !triple.empty() && triple != "native" &&
-    (triple.find("wasm") != std::string::npos ||
-     triple.find("emscripten") != std::string::npos);
+  bool is_windows =
+      !triple.empty() && triple != "native" &&
+      (triple.find("windows") != std::string::npos || triple.find("mingw") != std::string::npos ||
+       triple.find("w64") != std::string::npos || triple.find("msvc") != std::string::npos);
+  bool is_wasm =
+      !triple.empty() && triple != "native" &&
+      (triple.find("wasm") != std::string::npos || triple.find("emscripten") != std::string::npos);
 
   if (!triple.empty() && triple != "native")
   {
@@ -345,8 +344,8 @@ static EzTarget *make_target(const std::string &triple)
     return ez_target_x86_64_windows();
   if (triple == "x86_64-windows-msvc" || triple == "x86_64-pc-windows-msvc")
     return ez_target_x86_64_windows_msvc();
-  if (triple == "wasm32" || triple == "wasm" || triple == "wasi" ||
-      triple == "wasm32-wasi" || triple == "wasm32-unknown-wasi")
+  if (triple == "wasm32" || triple == "wasm" || triple == "wasi" || triple == "wasm32-wasi" ||
+      triple == "wasm32-unknown-wasi")
     return ez_target_wasm32(0);
   if (triple == "wasm32-emscripten" || triple == "wasm32-unknown-emscripten")
     return ez_target_wasm32(1);
@@ -358,11 +357,9 @@ static EzTarget *make_target(const std::string &triple)
   if (triple == "x86_64-android" || triple == "x86_64-linux-android" ||
       triple == "x86_64-linux-android21")
     return ez_target_x86_64_android();
-  if (triple == "aarch64-ios" || triple == "aarch64-apple-ios" ||
-      triple == "aarch64-apple-ios14.0")
+  if (triple == "aarch64-ios" || triple == "aarch64-apple-ios" || triple == "aarch64-apple-ios14.0")
     return ez_target_aarch64_ios();
-  if (triple == "thumbv7em" || triple == "cortex-m4" ||
-      triple == "thumbv7em-none-eabi")
+  if (triple == "thumbv7em" || triple == "cortex-m4" || triple == "thumbv7em-none-eabi")
     return ez_target_thumbv7em();
 
   // Raw triple: use bare-metal preset (no sysroot assumed)
@@ -419,32 +416,24 @@ static void print_version()
 static void print_keywords()
 {
   // Canonical list of all C<< keywords (from lexer.hh keyword_lookup)
-  const char *kws[] = {
-    // Control flow
-    "if", "else", "switch", "case", "default",
-    "for", "foreach", "while", "break", "continue",
-    // Functions / declarations
-    "def", "dec", "import", "export", "entry", "extern",
-    // Types — canonical
-    "int8", "int16", "int32", "int64",
-    "uint8", "uint16", "uint32", "uint64",
-    "float32", "float64",
-    "bool", "char", "string", "voided",
-    // Types — short aliases
-    "i8", "i16", "i32", "i64",
-    "u8", "u16", "u32", "u64",
-    "f32", "f64", "byte",
-    // VOP / arena
-    "tunnel", "reserve", "reset", "move",
-    "valid",
-    // Structure
-    "struct", "class", "enum", "namespace", "template", "typename",
-    // Using / aliases
-    "using",
-    // Misc
-    "const", "raw",
-    nullptr
-  };
+  const char *kws[] = {// Control flow
+                       "if", "else", "switch", "case", "default", "for", "foreach", "while",
+                       "break", "continue",
+                       // Functions / declarations
+                       "def", "dec", "import", "export", "entry", "extern",
+                       // Types — canonical
+                       "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
+                       "float32", "float64", "bool", "char", "string", "voided",
+                       // Types — short aliases
+                       "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "byte",
+                       // VOP / arena
+                       "tunnel", "reserve", "reset", "move", "valid",
+                       // Structure
+                       "struct", "class", "enum", "namespace", "template", "typename",
+                       // Using / aliases
+                       "using",
+                       // Misc
+                       "const", "raw", nullptr};
   std::cout << "C<< keywords:\n";
   for (int i = 0; kws[i]; ++i)
     std::cout << "  " << kws[i] << "\n";
@@ -454,17 +443,17 @@ static void print_keywords()
 static void print_operators()
 {
   std::cout << "C<< operators:\n"
-    << "  Arithmetic     :  +  -  *  /  %  **\n"
-    << "  Comparison     :  ==  !=  <  >  <=  >=\n"
-    << "  Logical        :  &&  ||  !\n"
-    << "  Bitwise        :  &  |  ^  ~  <<  >>\n"
-    << "  Assignment     :  =  +=  -=  *=  /=  %=  **=  <<=  >>=\n"
-    << "  Tunnel arrow   :  ->\n"
-    << "  Scope / NS     :  ::\n"
-    << "  Array append   :  <<\n"
-    << "  Address / deref:  &  *\n"
-    << "  Pointer field  :  .\n"
-    << "  Array length   :  [[:]]\n";
+            << "  Arithmetic     :  +  -  *  /  %  **\n"
+            << "  Comparison     :  ==  !=  <  >  <=  >=\n"
+            << "  Logical        :  &&  ||  !\n"
+            << "  Bitwise        :  &  |  ^  ~  <<  >>\n"
+            << "  Assignment     :  =  +=  -=  *=  /=  %=  **=  <<=  >>=\n"
+            << "  Tunnel arrow   :  ->\n"
+            << "  Scope / NS     :  ::\n"
+            << "  Array append   :  <<\n"
+            << "  Address / deref:  &  *\n"
+            << "  Pointer field  :  .\n"
+            << "  Array length   :  [[:]]\n";
   std::exit(0);
 }
 
@@ -638,14 +627,14 @@ int main(int argc, char **argv)
     else
     {
       // Executable: add platform-appropriate extension
-      bool is_windows_target = (!target_triple.empty() &&
-        (target_triple.find("windows") != std::string::npos ||
-         target_triple.find("mingw")   != std::string::npos ||
-         target_triple.find("w64")     != std::string::npos ||
-         target_triple.find("msvc")    != std::string::npos));
-      bool is_wasm_target = (!target_triple.empty() &&
-        (target_triple.find("wasm") != std::string::npos ||
-         target_triple.find("emscripten") != std::string::npos));
+      bool is_windows_target =
+          (!target_triple.empty() && (target_triple.find("windows") != std::string::npos ||
+                                      target_triple.find("mingw") != std::string::npos ||
+                                      target_triple.find("w64") != std::string::npos ||
+                                      target_triple.find("msvc") != std::string::npos));
+      bool is_wasm_target =
+          (!target_triple.empty() && (target_triple.find("wasm") != std::string::npos ||
+                                      target_triple.find("emscripten") != std::string::npos));
       if (is_windows_target)
         out_path += ".exe";
       else if (is_wasm_target)
