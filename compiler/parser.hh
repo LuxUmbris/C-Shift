@@ -133,6 +133,8 @@ private:
         return parse_move();
       if (kw == "namespace")
         return parse_namespace();
+      if (kw == "using")
+        return parse_using();
       if (kw == "const")
         return parse_const();
       if (kw == "reset")
@@ -162,10 +164,8 @@ private:
         int tpl_depth = 1;
         while (tpl_depth > 0 && peek_token(la).type != Lexer::TokenType::END_OF_FILE)
         {
-          if (peek_token(la).value == "<")
-            tpl_depth++;
-          else if (peek_token(la).value == ">")
-            tpl_depth--;
+          if (peek_token(la).value == "<") tpl_depth++;
+          else if (peek_token(la).value == ">") tpl_depth--;
           la++;
         }
       }
@@ -186,7 +186,9 @@ private:
         return parse_call_statement();
       if (peek_token(la).value == "=" || peek_token(la).value == "+=" ||
           peek_token(la).value == "-=" || peek_token(la).value == "*=" ||
-          peek_token(la).value == "/=")
+          peek_token(la).value == "/=" || peek_token(la).value == "%=" ||
+          peek_token(la).value == "<<=" || peek_token(la).value == ">>=" ||
+          peek_token(la).value == "**=")
         return parse_assignment();
       // Array append: IDENT << expr ;
       if (peek_token(la).value == "<<")
@@ -204,8 +206,13 @@ private:
   bool is_type_keyword(const std::string &kw)
   {
     static const std::vector<std::string> type_kws = {
-        "int8",   "int16",   "int32",   "int64", "uint8", "uint16", "uint32",
-        "uint64", "float32", "float64", "char",  "bool",  "string"};
+        // Canonical names
+        "int8",   "int16",   "int32",   "int64",
+        "uint8",  "uint16",  "uint32",  "uint64",
+        "float32", "float64", "char",   "bool",  "string",
+        // Short aliases (now also keywords in lexer)
+        "i8",  "u8",  "i16", "u16", "i32", "u32", "i64", "u64",
+        "f32", "f64", "byte"};
     for (auto &t : type_kws)
       if (t == kw)
         return true;
@@ -260,8 +267,7 @@ private:
       {
         std::string ttype = parse_type_string();
         std::string tname = match_token(Lexer::TokenType::IDENTIFIER).value;
-        tunnels->children.push_back(
-            new ASTNode("DeclTunnel", ttype + " " + tname, ln, current_depth));
+        tunnels->children.push_back(new ASTNode("DeclTunnel", ttype + " " + tname, ln, current_depth));
         if (peek_token().value == ",")
         {
           advance_token();
@@ -285,7 +291,7 @@ private:
     match_token(Lexer::TokenType::OPERATOR, "{");
 
     ASTNode *node = new ASTNode("Class", name, ln, current_depth);
-    ASTNode *fields = new ASTNode("Fields", "", ln, current_depth);
+    ASTNode *fields  = new ASTNode("Fields", "", ln, current_depth);
     ASTNode *methods = new ASTNode("Methods", "", ln, current_depth);
 
     while (peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
@@ -308,13 +314,8 @@ private:
           {
             std::string ttype = parse_type_string();
             std::string tname = match_token(Lexer::TokenType::IDENTIFIER).value;
-            tunnels->children.push_back(
-                new ASTNode("DeclTunnel", ttype + " " + tname, current_line(), current_depth));
-            if (peek_token().value == ",")
-            {
-              advance_token();
-              continue;
-            }
+            tunnels->children.push_back(new ASTNode("DeclTunnel", ttype + " " + tname, current_line(), current_depth));
+            if (peek_token().value == ",") { advance_token(); continue; }
             break;
           }
           method->children.push_back(tunnels);
@@ -329,8 +330,7 @@ private:
         std::string ftype = parse_type_string();
         std::string fname = match_token(Lexer::TokenType::IDENTIFIER).value;
         match_token(Lexer::TokenType::OPERATOR, ";");
-        fields->children.push_back(
-            new ASTNode("Field", ftype + " " + fname, current_line(), current_depth));
+        fields->children.push_back(new ASTNode("Field", ftype + " " + fname, current_line(), current_depth));
       }
     }
     match_token(Lexer::TokenType::OPERATOR, "}");
@@ -523,13 +523,15 @@ private:
     size_t ln = current_line();
     // Consume base name and optional .method chain: "v.push" or "v.x.y"
     std::string name = advance_token().value; // first IDENT
-    while (peek_token().value == "." && peek_token(1).type == Lexer::TokenType::IDENTIFIER &&
+    while (peek_token().value == "." &&
+           peek_token(1).type == Lexer::TokenType::IDENTIFIER &&
            (peek_token(2).value == "(" ||
-            (peek_token(2).value == "." && peek_token(3).type == Lexer::TokenType::IDENTIFIER &&
+            (peek_token(2).value == "." &&
+             peek_token(3).type == Lexer::TokenType::IDENTIFIER &&
              peek_token(4).value == "(")))
     {
-      advance_token();                     // consume '.'
-      name += "." + advance_token().value; // consume next IDENT
+      advance_token();                          // consume '.'
+      name += "." + advance_token().value;      // consume next IDENT
     }
     ASTNode *node = new ASTNode("CallStatement", name, ln, current_depth);
     match_token(Lexer::TokenType::OPERATOR, "(");
@@ -777,7 +779,6 @@ private:
     size_t ln = current_line();
     match_token(Lexer::TokenType::KEYWORD, "namespace");
     std::string name = match_token(Lexer::TokenType::IDENTIFIER).value;
-    // support A::B namespace paths
     while (peek_token().value == "::")
     {
       advance_token();
@@ -786,6 +787,45 @@ private:
     ASTNode *ns_node = new ASTNode("Namespace", name, ln, current_depth);
     ns_node->children.push_back(parse_block());
     return ns_node;
+  }
+
+  // using Alias = type;             (type alias)
+  // using namespace Foo;            (namespace import)
+  // using Alias = namespace Foo;    (namespace alias)
+  ASTNode *parse_using()
+  {
+    size_t ln = current_line();
+    match_token(Lexer::TokenType::KEYWORD, "using");
+
+    if (peek_token().value == "namespace")
+    {
+      advance_token();
+      std::string ns = match_token(Lexer::TokenType::IDENTIFIER).value;
+      while (peek_token().value == "::") { advance_token(); ns += "::" + match_token(Lexer::TokenType::IDENTIFIER).value; }
+      match_token(Lexer::TokenType::OPERATOR, ";");
+      return new ASTNode("UsingNamespace", ns, ln, current_depth);
+    }
+
+    std::string alias = match_token(Lexer::TokenType::IDENTIFIER).value;
+    match_token(Lexer::TokenType::OPERATOR, "=");
+
+    if (peek_token().value == "namespace")
+    {
+      advance_token();
+      std::string ns = match_token(Lexer::TokenType::IDENTIFIER).value;
+      while (peek_token().value == "::") { advance_token(); ns += "::" + match_token(Lexer::TokenType::IDENTIFIER).value; }
+      match_token(Lexer::TokenType::OPERATOR, ";");
+      ASTNode *node = new ASTNode("UsingNsAlias", alias, ln, current_depth);
+      node->children.push_back(new ASTNode("Target", ns, ln, current_depth));
+      return node;
+    }
+
+    // type alias
+    std::string target = parse_type_string();
+    match_token(Lexer::TokenType::OPERATOR, ";");
+    ASTNode *node = new ASTNode("UsingAlias", alias, ln, current_depth);
+    node->children.push_back(new ASTNode("Target", target, ln, current_depth));
+    return node;
   }
 
   ASTNode *parse_struct()
@@ -865,14 +905,12 @@ private:
     // Detected when an identifier is followed immediately by '=' or '<<' (no type kw).
     std::string type;
     std::string name;
-    bool type_inferred = false;
     if ((peek_token().type == Lexer::TokenType::IDENTIFIER) &&
         (peek_token(1).value == "=" || peek_token(1).value == "<<"))
     {
       // No explicit type — will be inferred from the tunnel in codegen
       type = "__infer__";
       name = advance_token().value;
-      type_inferred = true;
     }
     else
     {

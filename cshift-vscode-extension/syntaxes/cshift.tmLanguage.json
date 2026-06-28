@@ -11,12 +11,15 @@
     { "include": "#keywords_control" },
     { "include": "#keywords_decl" },
     { "include": "#keywords_vop" },
+    { "include": "#keywords_using" },
+    { "include": "#types_short_alias" },
+    { "include": "#types_canonical" },
     { "include": "#types_generic" },
-    { "include": "#types_primitive" },
     { "include": "#functions" },
     { "include": "#operators" },
     { "include": "#arena_ops" },
-    { "include": "#constants" }
+    { "include": "#constants" },
+    { "include": "#namespace_access" }
   ],
   "repository": {
     "comments": {
@@ -57,19 +60,28 @@
       "begin": "\"",
       "end": "\"",
       "patterns": [
-        { "name": "constant.character.escape.cshift", "match": "\\\\[nrt0\\\\\"']" }
+        { "name": "constant.character.escape.cshift", "match": "\\\\[nrt0\\\\\"']" },
+        { "name": "invalid.illegal.escape.cshift",   "match": "\\\\[^nrt0\\\\\"']" }
       ]
     },
 
     "numbers": {
       "patterns": [
         {
+          "name": "constant.numeric.hex.cshift",
+          "match": "\\b0[xX][0-9a-fA-F]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.cshift",
+          "match": "\\b0[bB][01]+\\b"
+        },
+        {
           "name": "constant.numeric.float.cshift",
           "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
         },
         {
-          "name": "constant.numeric.hex.cshift",
-          "match": "\\b0[xX][0-9a-fA-F]+\\b"
+          "name": "constant.numeric.exponent.cshift",
+          "match": "\\b[0-9]+[eE][+-]?[0-9]+\\b"
         },
         {
           "name": "constant.numeric.integer.cshift",
@@ -79,14 +91,18 @@
     },
 
     "voided_guard": {
-      "comment": "switch(var) { case valid: … case voided: … } — special colouring",
+      "comment": "valid/voided/move — ownership state keywords",
       "patterns": [
         {
-          "name": "keyword.control.voided-guard.cshift",
-          "match": "\\b(valid|voided)\\b"
+          "name": "keyword.control.ownership.valid.cshift",
+          "match": "\\bvalid\\b"
         },
         {
-          "name": "keyword.control.move.cshift",
+          "name": "keyword.control.ownership.voided.cshift",
+          "match": "\\bvoided\\b"
+        },
+        {
+          "name": "keyword.control.ownership.move.cshift",
           "match": "\\bmove\\b"
         }
       ]
@@ -94,7 +110,7 @@
 
     "keywords_control": {
       "name": "keyword.control.cshift",
-      "match": "\\b(if|else|while|for|foreach|switch|case|default|break|continue|return)\\b"
+      "match": "\\b(if|else|while|for|foreach|switch|case|default|break|continue)\\b"
     },
 
     "keywords_decl": {
@@ -107,65 +123,73 @@
             "2": { "name": "storage.type.function.cshift" }
           }
         },
-        {
-          "name": "storage.type.function.cshift",
-          "match": "\\bdef\\b"
-        },
-        {
-          "name": "storage.type.struct.cshift",
-          "match": "\\bstruct\\b"
-        },
-        {
-          "name": "storage.type.enum.cshift",
-          "match": "\\benum\\b"
-        },
-        {
-          "name": "storage.type.namespace.cshift",
-          "match": "\\bnamespace\\b"
-        },
-        {
-          "name": "storage.type.template.cshift",
-          "match": "\\btemplate\\b"
-        },
-        {
-          "name": "storage.modifier.const.cshift",
-          "match": "\\bconst\\b"
-        },
-        {
-          "name": "keyword.other.entry.cshift",
-          "match": "\\bentry\\b"
-        },
-        {
-          "name": "keyword.other.import.cshift",
-          "match": "\\bimport\\b"
-        },
-        {
-          "name": "keyword.other.typename.cshift",
-          "match": "\\btypename\\b"
-        }
+        { "name": "storage.type.function.cshift",   "match": "\\bdef\\b" },
+        { "name": "keyword.other.dec.cshift",        "match": "\\bdec\\b" },
+        { "name": "storage.type.struct.cshift",      "match": "\\b(struct|class)\\b" },
+        { "name": "storage.type.enum.cshift",        "match": "\\benum\\b" },
+        { "name": "storage.type.namespace.cshift",   "match": "\\bnamespace\\b" },
+        { "name": "storage.type.template.cshift",    "match": "\\btemplate\\b" },
+        { "name": "storage.modifier.const.cshift",   "match": "\\bconst\\b" },
+        { "name": "keyword.other.entry.cshift",      "match": "\\bentry\\b" },
+        { "name": "keyword.other.import.cshift",     "match": "\\bimport\\b" },
+        { "name": "keyword.other.typename.cshift",   "match": "\\btypename\\b" }
       ]
     },
 
     "keywords_vop": {
-      "comment": "VOP / arena keywords",
+      "comment": "VOP / arena / ownership keywords",
+      "patterns": [
+        { "name": "keyword.other.tunnel.cshift",     "match": "\\btunnel\\b" },
+        { "name": "keyword.other.reserve.cshift",    "match": "\\breserve\\b" },
+        { "name": "keyword.other.reset.cshift",      "match": "\\breset\\b" }
+      ]
+    },
+
+    "keywords_using": {
       "patterns": [
         {
-          "name": "keyword.other.tunnel.cshift",
-          "match": "\\btunnel\\b"
+          "comment": "using namespace Foo",
+          "match": "\\b(using)\\s+(namespace)\\b",
+          "captures": {
+            "1": { "name": "keyword.other.using.cshift" },
+            "2": { "name": "storage.type.namespace.cshift" }
+          }
         },
         {
-          "name": "keyword.other.reserve.cshift",
-          "match": "\\breserve\\b"
+          "comment": "using Alias = namespace Foo",
+          "match": "\\b(using)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)\\s*(namespace)\\b",
+          "captures": {
+            "1": { "name": "keyword.other.using.cshift" },
+            "2": { "name": "entity.name.type.alias.cshift" },
+            "3": { "name": "keyword.operator.assignment.cshift" },
+            "4": { "name": "storage.type.namespace.cshift" }
+          }
         },
         {
-          "name": "keyword.other.reset.cshift",
-          "match": "\\breset\\b"
+          "comment": "using Alias = type",
+          "match": "\\b(using)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)",
+          "captures": {
+            "1": { "name": "keyword.other.using.cshift" },
+            "2": { "name": "entity.name.type.alias.cshift" },
+            "3": { "name": "keyword.operator.assignment.cshift" }
+          }
         }
       ]
     },
 
+    "types_short_alias": {
+      "comment": "Short type aliases: i8/u8/i32/f32 etc — highlighted same as canonical types",
+      "name": "support.type.primitive.cshift",
+      "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|byte)\\b"
+    },
+
+    "types_canonical": {
+      "name": "support.type.primitive.cshift",
+      "match": "\\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float32|float64|bool|char|string)\\b"
+    },
+
     "types_generic": {
-      "comment": "Generic container types like Vector<int32>",
+      "comment": "Generic container types like Vector<i32>",
       "patterns": [
         {
           "match": "\\b(Vector|HashMap|LinkedList|Set|Deque|RingBuffer|Pool|Pair|Lazy|BitSet|Guard|StringBuilder|Buffer|SortedVec|VecIter)\\s*(<[^>]*>)?",
@@ -177,19 +201,27 @@
       ]
     },
 
-    "types_primitive": {
-      "name": "support.type.primitive.cshift",
-      "match": "\\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float32|float64|bool|char|string|voided)\\b"
-    },
-
     "functions": {
-      "comment": "Function calls and definitions",
       "patterns": [
         {
-          "comment": "def / export def — highlight function name",
+          "comment": "dec with tunnel output: dec foo(i32 n) -> i32 result",
+          "match": "\\bdec\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(",
+          "captures": {
+            "1": { "name": "entity.name.function.declaration.cshift" }
+          }
+        },
+        {
+          "comment": "def / export def — function name",
           "match": "\\b(?:export\\s+)?def\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(",
           "captures": {
             "1": { "name": "entity.name.function.cshift" }
+          }
+        },
+        {
+          "comment": "Method calls: obj.method(",
+          "match": "\\.([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(",
+          "captures": {
+            "1": { "name": "entity.name.function.method.cshift" }
           }
         },
         {
@@ -202,73 +234,43 @@
       ]
     },
 
+    "namespace_access": {
+      "comment": "Namespace::Member access",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(::)\\s*([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "entity.name.namespace.cshift" },
+        "2": { "name": "keyword.operator.scope.cshift" },
+        "3": { "name": "variable.other.member.cshift" }
+      }
+    },
+
     "operators": {
       "patterns": [
-        {
-          "name": "keyword.operator.tunnel-arrow.cshift",
-          "match": "->"
-        },
-        {
-          "name": "keyword.operator.scope.cshift",
-          "match": "::"
-        },
-        {
-          "name": "keyword.operator.comparison.cshift",
-          "match": "==|!=|<=|>=|<(?!<)|(?<!>)>"
-        },
-        {
-          "name": "keyword.operator.logical.cshift",
-          "match": "&&|\\|\\||!"
-        },
-        {
-          "name": "keyword.operator.assignment.cshift",
-          "match": "\\+=|-=|\\*=|/=|%=|<<=|>>=|\\*\\*=|="
-        },
-        {
-          "name": "keyword.operator.bitshift.cshift",
-          "match": "<<|>>"
-        },
-        {
-          "name": "keyword.operator.arithmetic.cshift",
-          "match": "[+\\-*/%]"
-        },
-        {
-          "name": "keyword.operator.address.cshift",
-          "match": "&(?![&])"
-        },
-        {
-          "name": "keyword.operator.deref.cshift",
-          "match": "\\*(?![=*])"
-        }
+        { "name": "keyword.operator.tunnel-arrow.cshift",  "match": "->" },
+        { "name": "keyword.operator.comparison.cshift",    "match": "==|!=|<=|>=|<(?![<=])|(?<![=>])>" },
+        { "name": "keyword.operator.logical.cshift",       "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.assignment.cshift",    "match": "\\*\\*=|<<=|>>=|\\+=|-=|\\*=|/=|%=|(?<![=!<>])=(?![=])" },
+        { "name": "keyword.operator.power.cshift",         "match": "\\*\\*" },
+        { "name": "keyword.operator.bitshift.cshift",      "match": "<<|>>" },
+        { "name": "keyword.operator.arithmetic.cshift",    "match": "[+\\-*/%]" },
+        { "name": "keyword.operator.bitwise.cshift",       "match": "&(?![&])|\\|(?![|])|\\^|~" },
+        { "name": "keyword.operator.address.cshift",       "match": "&(?![&])" },
+        { "name": "keyword.operator.deref.cshift",         "match": "\\*(?![=*])" }
       ]
     },
 
     "arena_ops": {
-      "comment": "Array append operator and len operator",
       "patterns": [
-        {
-          "name": "keyword.operator.append.cshift",
-          "match": "<<"
-        },
-        {
-          "name": "keyword.operator.len.cshift",
-          "match": "\\[\\[:\\]\\]"
-        }
+        { "name": "keyword.operator.len.cshift",           "match": "\\[\\[:\\]\\]" }
       ]
     },
 
     "constants": {
       "patterns": [
+        { "name": "constant.language.boolean.cshift",      "match": "\\b(true|false)\\b" },
+        { "name": "constant.language.null.cshift",         "match": "\\b(__arena_null)\\b" },
         {
-          "name": "constant.language.boolean.cshift",
-          "match": "\\b(true|false)\\b"
-        },
-        {
-          "name": "constant.language.null.cshift",
-          "match": "\\bnull\\b"
-        },
-        {
-          "comment": "SCREAMING_SNAKE_CASE identifiers are typically constants",
+          "comment": "SCREAMING_SNAKE_CASE — typically a constant",
           "name": "variable.other.constant.cshift",
           "match": "\\b[A-Z][A-Z0-9_]{2,}\\b"
         }

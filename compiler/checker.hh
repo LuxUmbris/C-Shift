@@ -20,11 +20,11 @@ public:
   struct Symbol
   {
     std::string name;
-    std::string type;     // C<< type string
-    size_t depth;         // arena depth where declared
-    bool is_voided;       // definitely moved at this point in all paths
-    bool is_voided_maybe; // moved on some paths but not others → needs runtime bool
-    bool is_pointer;      // contains pointer (matters for VOP)
+    std::string type; // C<< type string
+    size_t depth;     // arena depth where declared
+    bool is_voided;        // definitely moved at this point in all paths
+    bool is_voided_maybe;  // moved on some paths but not others → needs runtime bool
+    bool is_pointer;  // contains pointer (matters for VOP)
     bool is_const;
     bool is_shared;
   };
@@ -42,6 +42,7 @@ public:
     std::string name;
     std::vector<std::pair<std::string, std::string>> params; // {type, name}
     std::vector<TunnelInfo> tunnels;                         // all declared tunnels
+    bool is_variadic = false; // true for C-imported variadic functions (e.g. printf)
   };
 
   struct CheckError
@@ -62,34 +63,21 @@ private:
   // constant we can fold.  Handles literals, simple comparisons, and logical
   // operators on literals.  Conservative: returns known=false for anything
   // involving variables or function calls.
-  struct ConstVal
-  {
-    bool known;
-    long long value;
-  };
+  struct ConstVal { bool known; long long value; };
 
   ConstVal eval_const_expr(Parser::ASTNode *n) const
   {
-    if (!n)
-      return {false, 0};
+    if (!n) return {false, 0};
 
     // Single-token: numeric literal
     if (n->type == "Token")
     {
       if (n->token_type == Lexer::TokenType::NUMBER)
       {
-        try
-        {
-          return {true, (long long)std::stod(n->value)};
-        }
-        catch (...)
-        {
-        }
+        try { return {true, (long long)std::stod(n->value)}; } catch (...) {}
       }
-      if (n->value == "true")
-        return {true, 1};
-      if (n->value == "false")
-        return {true, 0};
+      if (n->value == "true")  return {true, 1};
+      if (n->value == "false") return {true, 0};
       // Variable — not a constant we know
       return {false, 0};
     }
@@ -99,8 +87,7 @@ private:
     {
       auto &ch = n->children;
       // Single child — recurse
-      if (ch.size() == 1)
-        return eval_const_expr(ch[0]);
+      if (ch.size() == 1) return eval_const_expr(ch[0]);
 
       // Binary operator pattern: [lhs_tokens...] [op] [rhs_tokens...]
       // We only handle simple 3-token case: lhs op rhs
@@ -108,47 +95,30 @@ private:
       {
         auto lv = eval_const_expr(ch[0]);
         auto rv = eval_const_expr(ch[2]);
-        if (!lv.known || !rv.known)
-          return {false, 0};
+        if (!lv.known || !rv.known) return {false, 0};
         const std::string &op = ch[1]->value;
         long long l = lv.value, r = rv.value;
-        if (op == "+")
-          return {true, l + r};
-        if (op == "-")
-          return {true, l - r};
-        if (op == "*")
-          return {true, l * r};
-        if (op == "/")
-          return {true, r != 0 ? l / r : 0};
-        if (op == "%")
-          return {true, r != 0 ? l % r : 0};
-        if (op == "==")
-          return {true, l == r ? 1 : 0};
-        if (op == "!=")
-          return {true, l != r ? 1 : 0};
-        if (op == "<")
-          return {true, l < r ? 1 : 0};
-        if (op == ">")
-          return {true, l > r ? 1 : 0};
-        if (op == "<=")
-          return {true, l <= r ? 1 : 0};
-        if (op == ">=")
-          return {true, l >= r ? 1 : 0};
-        if (op == "&&")
-          return {true, (l && r) ? 1 : 0};
-        if (op == "||")
-          return {true, (l || r) ? 1 : 0};
+        if (op == "+")  return {true, l + r};
+        if (op == "-")  return {true, l - r};
+        if (op == "*")  return {true, l * r};
+        if (op == "/")  return {true, r != 0 ? l / r : 0};
+        if (op == "%")  return {true, r != 0 ? l % r : 0};
+        if (op == "==") return {true, l == r ? 1 : 0};
+        if (op == "!=") return {true, l != r ? 1 : 0};
+        if (op == "<")  return {true, l <  r ? 1 : 0};
+        if (op == ">")  return {true, l >  r ? 1 : 0};
+        if (op == "<=") return {true, l <= r ? 1 : 0};
+        if (op == ">=") return {true, l >= r ? 1 : 0};
+        if (op == "&&") return {true, (l && r) ? 1 : 0};
+        if (op == "||") return {true, (l || r) ? 1 : 0};
       }
       // Prefix: op rhs
       if (ch.size() == 2 && ch[0]->type == "Token")
       {
         auto rv = eval_const_expr(ch[1]);
-        if (!rv.known)
-          return {false, 0};
-        if (ch[0]->value == "!")
-          return {true, rv.value ? 0 : 1};
-        if (ch[0]->value == "-")
-          return {true, -rv.value};
+        if (!rv.known) return {false, 0};
+        if (ch[0]->value == "!") return {true, rv.value ? 0 : 1};
+        if (ch[0]->value == "-") return {true, -rv.value};
       }
       // For multi-token expressions, try to find a binary op in the middle
       // by scanning for a known operator at the top level (depth 0)
@@ -156,73 +126,23 @@ private:
       ConstVal acc = eval_const_expr(ch[0]);
       for (size_t i = 1; i + 1 < ch.size(); i += 2)
       {
-        if (!acc.known)
-          return {false, 0};
+        if (!acc.known) return {false, 0};
         auto rv2 = eval_const_expr(ch[i + 1]);
-        if (!rv2.known)
-          return {false, 0};
+        if (!rv2.known) return {false, 0};
         const std::string &op = ch[i]->value;
         long long l = acc.value, r = rv2.value;
-        if (op == "+")
-        {
-          acc = {true, l + r};
-          continue;
-        }
-        if (op == "-")
-        {
-          acc = {true, l - r};
-          continue;
-        }
-        if (op == "*")
-        {
-          acc = {true, l * r};
-          continue;
-        }
-        if (op == "/")
-        {
-          acc = {true, r ? l / r : 0};
-          continue;
-        }
-        if (op == "==")
-        {
-          acc = {true, l == r ? 1 : 0};
-          continue;
-        }
-        if (op == "!=")
-        {
-          acc = {true, l != r ? 1 : 0};
-          continue;
-        }
-        if (op == "<")
-        {
-          acc = {true, l < r ? 1 : 0};
-          continue;
-        }
-        if (op == ">")
-        {
-          acc = {true, l > r ? 1 : 0};
-          continue;
-        }
-        if (op == "<=")
-        {
-          acc = {true, l <= r ? 1 : 0};
-          continue;
-        }
-        if (op == ">=")
-        {
-          acc = {true, l >= r ? 1 : 0};
-          continue;
-        }
-        if (op == "&&")
-        {
-          acc = {true, (l && r) ? 1 : 0};
-          continue;
-        }
-        if (op == "||")
-        {
-          acc = {true, (l || r) ? 1 : 0};
-          continue;
-        }
+        if (op == "+")  { acc = {true, l + r}; continue; }
+        if (op == "-")  { acc = {true, l - r}; continue; }
+        if (op == "*")  { acc = {true, l * r}; continue; }
+        if (op == "/")  { acc = {true, r ? l/r : 0}; continue; }
+        if (op == "==") { acc = {true, l==r?1:0}; continue; }
+        if (op == "!=") { acc = {true, l!=r?1:0}; continue; }
+        if (op == "<")  { acc = {true, l<r?1:0}; continue; }
+        if (op == ">")  { acc = {true, l>r?1:0}; continue; }
+        if (op == "<=") { acc = {true, l<=r?1:0}; continue; }
+        if (op == ">=") { acc = {true, l>=r?1:0}; continue; }
+        if (op == "&&") { acc = {true, (l&&r)?1:0}; continue; }
+        if (op == "||") { acc = {true, (l||r)?1:0}; continue; }
         return {false, 0};
       }
       return acc;
@@ -234,11 +154,9 @@ private:
   // Returns: -1 = definitely false, 1 = definitely true, 0 = unknown
   int eval_branch_condition(Parser::ASTNode *cond) const
   {
-    if (!cond)
-      return 0;
+    if (!cond) return 0;
     auto cv = eval_const_expr(cond);
-    if (!cv.known)
-      return 0;
+    if (!cv.known) return 0;
     return cv.value ? 1 : -1;
   }
 
@@ -247,6 +165,16 @@ private:
 
   // Function table
   std::unordered_map<std::string, FuncSig> func_table;
+  // Names registered via a `dec` node (as opposed to a plain `def`).
+  std::unordered_set<std::string> funcdecl_names;
+  // What each `dec` actually declared (tunnel list from the dec itself, not the def body).
+  std::unordered_map<std::string, FuncSig> dec_sig_table;
+  // using Alias = type;
+  std::unordered_map<std::string, std::string> type_aliases;
+  std::unordered_set<std::string> imported_namespaces;
+  std::unordered_map<std::string, std::string> ns_aliases;
+  // Struct fields for class methods: synth-node-address → field list
+  std::unordered_map<Parser::ASTNode*, std::vector<std::pair<std::string,std::string>>> class_method_fields;
 
   // Current function context (for tunnel validation)
   FuncSig *current_func = nullptr;
@@ -362,6 +290,8 @@ private:
           for (auto *t : n->children[1]->children)
             sig.tunnels.push_back({extract_base_type(t->value), extract_name(t->value)});
         func_table[sig.name] = sig;
+        funcdecl_names.insert(sig.name);
+        dec_sig_table[sig.name] = sig;  // preserve what the dec itself declared
       }
       if (n->type == "Class")
       {
@@ -371,10 +301,8 @@ private:
         Parser::ASTNode *fields_node = nullptr, *methods_node = nullptr;
         for (auto *c : n->children)
         {
-          if (c->type == "Fields")
-            fields_node = c;
-          if (c->type == "Methods")
-            methods_node = c;
+          if (c->type == "Fields")  fields_node  = c;
+          if (c->type == "Methods") methods_node = c;
         }
         // Register struct fields for field-access checking
         if (fields_node)
@@ -393,8 +321,7 @@ private:
             sig.params.push_back({n->value + "*", "self"});
             Parser::ASTNode *orig_params = nullptr;
             for (auto *c : m->children)
-              if (c->type == "Parameters")
-                orig_params = c;
+              if (c->type == "Parameters") orig_params = c;
             if (orig_params)
               for (auto *p : orig_params->children)
                 if (p->type == "Param")
@@ -434,7 +361,8 @@ private:
           {
             if (p->type == "CParam")
               sig.params.push_back({extract_base_type(p->value), extract_name(p->value)});
-            // Variadic: no param entry needed
+            else if (p->type == "Variadic")
+              sig.is_variadic = true; // no fixed param entry, but marks "..." present
           }
         }
         func_table[sig.name] = sig;
@@ -511,7 +439,17 @@ private:
     if (n->type == "Function")
       check_function(n);
     else if (n->type == "FuncDecl")
-    { /* signature already registered in collect_signatures — nothing to check */
+    {
+      // Validate: if the matching def has tunnel outputs, the dec MUST declare
+      // them with `-> type name` — otherwise codegen creates a wrong signature.
+      // We cross-check during collect_signatures pass by comparing what the
+      // dec declares vs what the def body will produce.  Since we can't run
+      // the def body here, we validate the other way: if dec declares tunnels,
+      // they must match the Function body that follows (checked in check_function).
+      // If dec has NO tunnel declarations at all, warn now — the user must add
+      // `-> type name` to make the forward declaration usable.
+      // We defer the actual mismatch check to check_function below.
+      (void)n; // collected in collect_signatures; cross-check done in check_function
     }
     else if (n->type == "Class")
       check_class(n);
@@ -524,6 +462,23 @@ private:
     }
     else if (n->type == "Namespace")
       check_namespace(n);
+    else if (n->type == "UsingAlias")
+    {
+      if (!n->children.empty())
+      {
+        const std::string &target = n->children[0]->value;
+        type_aliases[n->value] = target;
+        if (struct_types.count(target) || enum_types.count(target))
+          struct_types.insert(n->value);
+      }
+    }
+    else if (n->type == "UsingNamespace")
+      imported_namespaces.insert(n->value);
+    else if (n->type == "UsingNsAlias")
+    {
+      if (!n->children.empty())
+        ns_aliases[n->value] = n->children[0]->value;
+    }
     else if (n->type == "Declaration")
       check_declaration(n);
     else if (n->type == "Const")
@@ -600,12 +555,26 @@ private:
   // using the FuncSig already registered in collect_signatures.
   void check_class(Parser::ASTNode *n)
   {
+    // Collect field names and types for the class
+    std::vector<std::pair<std::string,std::string>> class_fields;
+    for (auto *c : n->children)
+    {
+      if (c->type == "Fields")
+        for (auto *f : c->children)
+        {
+          if (f->type == "Field")
+          {
+            auto sp = f->value.find(' ');
+            if (sp != std::string::npos)
+              class_fields.push_back({f->value.substr(0, sp), f->value.substr(sp+1)});
+          }
+        }
+    }
+
     Parser::ASTNode *methods_node = nullptr;
     for (auto *c : n->children)
-      if (c->type == "Methods")
-        methods_node = c;
-    if (!methods_node)
-      return;
+      if (c->type == "Methods") methods_node = c;
+    if (!methods_node) return;
 
     for (auto *m : methods_node->children)
     {
@@ -615,23 +584,26 @@ private:
       Parser::ASTNode *body = nullptr;
       for (auto *c : m->children)
       {
-        if (c->type == "Parameters")
-          orig_params = c;
-        else if (c->type == "Block")
-          body = c;
+        if (c->type == "Parameters") orig_params = c;
+        else if (c->type == "Block")  body = c;
       }
 
       auto *synth = new Parser::ASTNode("Function", fn_name, m->line, m->depth);
       auto *params = new Parser::ASTNode("Parameters", "", m->line, m->depth);
-      params->children.push_back(
-          new Parser::ASTNode("Param", n->value + "* self", m->line, m->depth));
+      params->children.push_back(new Parser::ASTNode("Param", n->value + "* self", m->line, m->depth));
       if (orig_params)
         for (auto *p : orig_params->children)
           params->children.push_back(p);
       synth->children.push_back(params);
       synth->children.push_back(body ? body : new Parser::ASTNode("Block", "", m->line, m->depth));
 
+      // Pass the struct field list so check_function can inject them into scope.
+      // We use a per-call map keyed on the synthetic node pointer.
+      synth->meta = "__class_method__";
+      class_method_fields[synth] = class_fields;
+
       check_function(synth);
+      class_method_fields.erase(synth);
     }
   }
 
@@ -647,11 +619,32 @@ private:
         add_warning(field->line, "Unknown field type '" + ftype + "' in struct '" + n->value + "'");
       if (ftype.size() >= 2 && ftype.substr(ftype.size() - 2) == "[]")
         add_warning(field->line,
-                    "'" + ftype +
-                        "' as a struct/class field only supports raw element "
-                        "access (no .len(), no subscript bounds tracking) — use Vector<" +
-                        ftype.substr(0, ftype.size() - 2) + "> instead for length-aware access.");
+                    "'" + ftype + "' as a struct/class field only supports raw element "
+                    "access (no .len(), no subscript bounds tracking) — use Vector<" +
+                    ftype.substr(0, ftype.size() - 2) + "> instead for length-aware access.");
     }
+  }
+
+  // Collect all unique tunnel names declared in a block (recursive).
+  void collect_body_tunnels(Parser::ASTNode *n, std::unordered_set<std::string> &out)
+  {
+    if (!n) return;
+    if (n->type == "Tunnel")
+    {
+      // Tunnel node: children[1] is a Target node with value "type name"
+      for (auto *c : n->children)
+      {
+        if (c->type == "Target")
+        {
+          auto sp = c->value.rfind(' ');
+          if (sp != std::string::npos)
+            out.insert(c->value.substr(sp + 1)); // name after type
+        }
+      }
+      return; // don't recurse into tunnel children further
+    }
+    for (auto *c : n->children)
+      collect_body_tunnels(c, out);
   }
 
   void check_function(Parser::ASTNode *n)
@@ -663,6 +656,35 @@ private:
     current_func = &sig;
     in_function = true;
 
+    // Cross-validate dec <-> def tunnel signatures.
+    if (funcdecl_names.count(n->value))
+    {
+      std::unordered_set<std::string> body_tunnels;
+      if (n->children.size() >= 2)
+        collect_body_tunnels(n->children[1], body_tunnels);
+
+      // dec_sig_table holds what the dec ITSELF declared (not overwritten by def)
+      std::unordered_set<std::string> dec_tunnels;
+      auto dit = dec_sig_table.find(n->value);
+      if (dit != dec_sig_table.end())
+        for (auto &t : dit->second.tunnels)
+          dec_tunnels.insert(t.name);
+
+      // dec declares tunnel not present in body
+      for (auto &dt : dec_tunnels)
+        if (body_tunnels.count(dt) == 0)
+          add_error(n->line, "dec '" + n->value + "' declares tunnel '" + dt +
+                             "' but def body has no matching 'tunnel ... -> ... " + dt + "'");
+
+      // body has tunnels but dec declares none → codegen will crash
+      if (!body_tunnels.empty() && dec_tunnels.empty())
+        add_error(n->line,
+          "def '" + n->value + "' has tunnel output(s) [" +
+          [&]{ std::string s; for (auto &t : body_tunnels) s += t + " "; return s; }() +
+          "] but its forward declaration is missing '-> type name' — "
+          "write:  dec " + n->value + "(params) -> " + *body_tunnels.begin() + ";");
+    }
+
     // Declare parameters in function scope
     if (!n->children.empty() && n->children[0]->type == "Parameters")
     {
@@ -673,6 +695,16 @@ private:
         declare({pname, ptype, arena_depth, false, false, is_pointer_type(ptype), false, false});
       }
     }
+
+    // If this is a class method, inject struct fields into scope
+    if (n->meta == "__class_method__")
+    {
+      auto fit = class_method_fields.find(n);
+      if (fit != class_method_fields.end())
+        for (auto &[ftype, fname] : fit->second)
+          declare({fname, ftype, arena_depth, false, false, is_pointer_type(ftype), false, false});
+    }
+
     // Check body
     if (n->children.size() >= 2)
       check_block(n->children[1]);
@@ -699,21 +731,28 @@ private:
     std::string type = extract_base_type(n->value);
     std::string name = extract_name(n->value);
     if (!is_known_type(type))
-      add_error(n->line, "Unknown type '" + type +
-                             "' — did you forget to import a header or define the struct?");
+      add_error(n->line, "Unknown type '" + type + "' — did you forget to import a header or define the struct?");
     declare({name, type, arena_depth, false, false, is_pointer_type(type), false, false});
     if (!n->children.empty())
     {
       auto *init = n->children[0];
+      // Resolve 'using' aliases before type checks
+      std::string resolved_type = type;
+      {
+        auto ait = type_aliases.find(type);
+        if (ait != type_aliases.end()) resolved_type = ait->second;
+      }
       // Type-mismatch check: string literal assigned to non-string type
       if (init->type == "Expression" && init->children.size() == 1)
       {
         auto *tok = init->children[0];
-        if (tok->token_type == Lexer::TokenType::STRING && type != "string" && type != "char*" &&
-            !is_pointer_type(type))
+        bool is_str_type = (resolved_type == "string" || resolved_type == "char*" ||
+                            resolved_type == "u8*"     || resolved_type == "i8*" ||
+                            is_pointer_type(resolved_type));
+        if (tok->token_type == Lexer::TokenType::STRING && !is_str_type)
           add_error(n->line,
                     "Type mismatch: string literal assigned to '" + type + " " + name + "'");
-        if ((tok->token_type == Lexer::TokenType::NUMBER) && (type == "string"))
+        if (tok->token_type == Lexer::TokenType::NUMBER && resolved_type == "string")
           add_error(n->line,
                     "Type mismatch: numeric literal assigned to '" + type + " " + name + "'");
       }
@@ -738,25 +777,24 @@ private:
       if (init->type == "Expression" && init->children.size() == 1)
       {
         auto *tok = init->children[0];
-        if (tok->token_type == Lexer::TokenType::STRING && type != "string" && type != "char*" &&
-            !is_pointer_type(type))
+        if (tok->token_type == Lexer::TokenType::STRING && type != "string" &&
+            type != "char*" && !is_pointer_type(type))
           add_error(n->line,
                     "Type mismatch: string literal assigned to const '" + type + " " + name + "'");
         if (tok->token_type == Lexer::TokenType::NUMBER && type == "string")
           add_error(n->line,
                     "Type mismatch: numeric literal assigned to const '" + type + " " + name + "'");
-        if (tok->token_type == Lexer::TokenType::NUMBER && (type == "bool") && tok->value != "0" &&
-            tok->value != "1")
-          add_warning(n->line, "Suspicious: non-boolean numeric literal assigned to const 'bool " +
-                                   name + "'");
-        // float literal to integer type
         if (tok->token_type == Lexer::TokenType::NUMBER &&
-            tok->value.find('.') != std::string::npos)
+            (type == "bool") && tok->value != "0" && tok->value != "1")
+          add_warning(n->line,
+                      "Suspicious: non-boolean numeric literal assigned to const 'bool " + name + "'");
+        // float literal to integer type
+        if (tok->token_type == Lexer::TokenType::NUMBER && tok->value.find('.') != std::string::npos)
         {
           if (type == "int8" || type == "int16" || type == "int32" || type == "int64" ||
               type == "uint8" || type == "uint16" || type == "uint32" || type == "uint64")
-            add_error(n->line, "Type mismatch: float literal assigned to integer const '" + type +
-                                   " " + name + "'");
+            add_error(n->line,
+                      "Type mismatch: float literal assigned to integer const '" + type + " " + name + "'");
         }
       }
       check_expression(init);
@@ -809,8 +847,7 @@ private:
           auto *sym = lookup(obj_name);
           std::string base_type = sym ? sym->type : "";
           auto lt = base_type.find('<');
-          if (lt != std::string::npos)
-            base_type = base_type.substr(0, lt);
+          if (lt != std::string::npos) base_type = base_type.substr(0, lt);
           lookup_name = base_type + "_" + method_name;
           func_name = lookup_name;
         }
@@ -819,14 +856,10 @@ private:
           auto &sig = func_table[lookup_name];
           bool found = false;
           for (auto &t : sig.tunnels)
-            if (t.name == explicit_tunnel_name)
-            {
-              found = true;
-              break;
-            }
+            if (t.name == explicit_tunnel_name) { found = true; break; }
           if (!found)
             add_error(n->line, "reserve: '" + func_name + "' has no tunnel output named '" +
-                                   explicit_tunnel_name + "'");
+                                  explicit_tunnel_name + "'");
         }
       }
     }
@@ -873,8 +906,7 @@ private:
           add_error(reserve_node->line,
                     "reserve without type: '" + func_name +
                         "' has multiple tunnels — specify the type explicitly or use "
-                        "'reserve name << tunnel_name = " +
-                        func_name + "();'.");
+                        "'reserve name << tunnel_name = " + func_name + "();'.");
         // single tunnel, or explicit binding to an existing tunnel: OK
         check_expression(expr);
         return;
@@ -1001,28 +1033,54 @@ private:
   void check_call_statement(Parser::ASTNode *n)
   {
     const std::string &fullname = n->value;
+
+    // Get arg spans up front (handles the parser's merged-args quirk)
+    Parser::ASTNode *args_node = n->children.empty() ? nullptr : n->children[0];
+    auto arg_spans = get_call_statement_arg_spans(args_node);
+
     auto dot = fullname.find('.');
     if (dot != std::string::npos)
     {
       // Method call: v.method(args) — check base var exists
       std::string obj = fullname.substr(0, dot);
-      if (!lookup(obj))
+      std::string method = fullname.substr(dot + 1);
+      Symbol *obj_sym = lookup(obj);
+      if (!obj_sym)
         add_error(n->line, "Undeclared variable '" + obj + "'");
-      // Check args
-      if (!n->children.empty())
-        for (auto *a : n->children[0]->children)
+
+      // Validate arity + undefined vars when object is known
+      if (obj_sym)
+      {
+        // Only validate count for class-defined methods (resolved name in func_table)
+        std::string base = strip_type_decorators(obj_sym->type);
+        std::string resolved = base + "_" + method;
+        std::string display = obj + "." + method;
+        validate_call_args(resolved, display, /*is_method=*/true, arg_spans, n->line);
+      }
+      else
+      {
+        // Object undeclared — args still validated via check_expression() below
+      }
+
+      // Still recurse into arg expressions for nested call detection
+      if (args_node)
+        for (auto *a : args_node->children)
           check_expression(a);
       return;
     }
+
+    // Free function call
     if (!func_table.count(fullname))
       add_error(n->line, "Call to undeclared function '" + fullname +
-                             "' — declare it with: import voided " + fullname + "(params);");
-    if (!n->children.empty())
-      for (auto *a : n->children[0]->children)
+                       "' — declare it with: import voided " + fullname + "(params);");
+    validate_call_args(fullname, fullname, /*is_method=*/false, arg_spans, n->line);
+
+    // Recurse into arg expressions for nested call detection + move handling
+    if (args_node)
+      for (auto *a : args_node->children)
       {
-        // Handle 'move VAR' inside call arguments
-        if (a->type == "Expression" && a->children.size() == 2 && a->children[0]->value == "move" &&
-            a->children[1]->type == "Token")
+        if (a->type == "Expression" && a->children.size() == 2 &&
+            a->children[0]->value == "move" && a->children[1]->type == "Token")
         {
           const std::string &mname = a->children[1]->value;
           Symbol *sym = lookup(mname);
@@ -1047,9 +1105,7 @@ private:
     std::string func_name = extract_name(n->value);
 
     // Validate return type
-    if (ret_type.rfind("flat:", 0) == 0)
-    { /* flat struct return — always valid */
-    }
+    if (ret_type.rfind("flat:", 0) == 0) { /* flat struct return — always valid */ }
     else if (!is_known_type(ret_type) && ret_type != "voided")
       add_warning(n->line, "CImport '" + func_name + "': unknown return type '" + ret_type + "'");
 
@@ -1062,8 +1118,7 @@ private:
           continue; // ... is always valid
         std::string ptype = extract_base_type(p->value);
         // flat: types are expanded struct args from cheader — always valid
-        if (ptype.rfind("flat:", 0) == 0)
-          continue;
+        if (ptype.rfind("flat:", 0) == 0) continue;
         if (!is_known_type(ptype) && ptype != "voided")
           add_warning(p->line, "CImport '" + func_name + "': unknown param type '" + ptype + "'");
       }
@@ -1088,20 +1143,17 @@ private:
       check_expression(child);
   }
 
-  void check_if(Parser::ASTNode *n)
+    void check_if(Parser::ASTNode *n)
   {
-    if (n->children.empty())
-      return;
+    if (n->children.empty()) return;
 
     // Try to evaluate the condition at compile time
     int cond_static = eval_branch_condition(n->children[0]);
     check_expression(n->children[0]);
 
     // Annotate the If node so codegen can skip dead branches entirely
-    if (cond_static == 1)
-      n->meta = "always_true";
-    if (cond_static == -1)
-      n->meta = "always_false";
+    if (cond_static == 1)  n->meta = "always_true";
+    if (cond_static == -1) n->meta = "always_false";
 
     // Snapshot voided state before branches
     std::unordered_map<std::string, bool> snap_before;
@@ -1114,8 +1166,7 @@ private:
     if (cond_static == 1)
     {
       // Condition is definitely TRUE — only then-branch is taken
-      if (n->children.size() > 1)
-        check_block(n->children[1]);
+      if (n->children.size() > 1) check_block(n->children[1]);
       // else-branch never executes — skip it entirely (no voided-state effect)
       // Voided state after = voided state after then-branch: already updated
       return;
@@ -1126,18 +1177,15 @@ private:
       if (has_else)
       {
         auto *el = n->children[2];
-        if (el->type == "If")
-          check_if(el);
-        else
-          check_block(el);
+        if (el->type == "If") check_if(el);
+        else check_block(el);
       }
       // then-branch never executes
       return;
     }
 
     // Condition unknown at compile time — check both branches and merge
-    if (n->children.size() > 1)
-      check_block(n->children[1]);
+    if (n->children.size() > 1) check_block(n->children[1]);
 
     std::unordered_map<std::string, bool> snap_after_then;
     for (auto &scope : scope_stack)
@@ -1147,16 +1195,13 @@ private:
     // Restore to before-state for the else branch
     for (auto &scope : scope_stack)
       for (auto &[nm, sym] : scope)
-        if (snap_before.count(nm))
-          sym.is_voided = snap_before[nm];
+        if (snap_before.count(nm)) sym.is_voided = snap_before[nm];
 
     if (has_else)
     {
       auto *el = n->children[2];
-      if (el->type == "If")
-        check_if(el);
-      else
-        check_block(el);
+      if (el->type == "If") check_if(el);
+      else check_block(el);
     }
 
     // Merge states
@@ -1164,17 +1209,16 @@ private:
     {
       for (auto &[nm, sym] : scope)
       {
-        bool v_then = snap_after_then.count(nm) ? snap_after_then[nm]
-                                                : (snap_before.count(nm) ? snap_before[nm] : false);
-        bool v_else = sym.is_voided;
+        bool v_then   = snap_after_then.count(nm) ? snap_after_then[nm] : (snap_before.count(nm) ? snap_before[nm] : false);
+        bool v_else   = sym.is_voided;
         bool v_before = snap_before.count(nm) ? snap_before[nm] : false;
 
         if (v_then && v_else && has_else)
-          sym.is_voided = true; // definitely voided in ALL paths
+          sym.is_voided = true;           // definitely voided in ALL paths
         else if ((v_then || v_else) && !v_before)
         {
           sym.is_voided = false;
-          sym.is_voided_maybe = true; // moved on SOME paths → needs runtime bool
+          sym.is_voided_maybe = true;     // moved on SOME paths → needs runtime bool
         }
       }
     }
@@ -1182,8 +1226,7 @@ private:
 
   void check_while(Parser::ASTNode *n)
   {
-    if (n->children.empty())
-      return;
+    if (n->children.empty()) return;
 
     // Snapshot before loop
     std::unordered_map<std::string, bool> snap_before;
@@ -1289,9 +1332,9 @@ private:
       Symbol *sym = lookup(switched_var);
       if (sym)
       {
-        was_voided = sym->is_voided;
+        was_voided       = sym->is_voided;
         was_voided_maybe = sym->is_voided_maybe;
-        sym->is_voided = false;
+        sym->is_voided       = false;
         sym->is_voided_maybe = false;
       }
     }
@@ -1302,7 +1345,7 @@ private:
       Symbol *sym = lookup(switched_var);
       if (sym)
       {
-        sym->is_voided = was_voided;
+        sym->is_voided       = was_voided;
         sym->is_voided_maybe = was_voided_maybe;
       }
     }
@@ -1340,7 +1383,7 @@ private:
         // Check if the variable is "maybe voided" — moved on some paths
         Symbol *sym2 = lookup(switched_var);
         if (sym2 && sym2->is_voided_maybe)
-          n->meta = "unknown"; // needs runtime bool __track_validity_<var>
+          n->meta = "unknown";   // needs runtime bool __track_validity_<var>
         else
           n->meta = "valid";
       }
@@ -1389,6 +1432,232 @@ private:
     switch_depth--;
   }
 
+  // ── Argument-validation helpers ───────────────────────────────────────────
+
+  // Find the index of the closing ')' that matches the '(' at open_idx.
+  size_t find_matching_close(const std::vector<Parser::ASTNode *> &toks, size_t open_idx)
+  {
+    int depth = 0;
+    for (size_t i = open_idx; i < toks.size(); ++i)
+    {
+      const std::string &v = toks[i]->value;
+      if (v == "(" || v == "[" || v == "{") ++depth;
+      else if (v == ")" || v == "]" || v == "}") { --depth; if (depth == 0) return i; }
+    }
+    return toks.size(); // unmatched — return end
+  }
+
+  // Split tokens in [start, end) into argument spans by top-level commas.
+  // Returns an empty vector for a zero-arg call (start >= end).
+  std::vector<std::vector<Parser::ASTNode *>> split_top_level_args(
+      const std::vector<Parser::ASTNode *> &toks, size_t start, size_t end)
+  {
+    std::vector<std::vector<Parser::ASTNode *>> result;
+    if (start >= end) return result;
+    int depth = 0;
+    size_t span_start = start;
+    for (size_t i = start; i < end; ++i)
+    {
+      const std::string &v = toks[i]->value;
+      if (v == "(" || v == "[" || v == "{") ++depth;
+      else if (v == ")" || v == "]" || v == "}") --depth;
+      else if (v == "," && depth == 0)
+      {
+        result.push_back({toks.begin() + span_start, toks.begin() + i});
+        span_start = i + 1;
+      }
+    }
+    result.push_back({toks.begin() + span_start, toks.begin() + end});
+    return result;
+  }
+
+  // Obtain arg spans for a CallStatement's Args node.
+  // The parser folds all comma-separated args into a single Expression child,
+  // so we must re-split on commas here.
+  std::vector<std::vector<Parser::ASTNode *>> get_call_statement_arg_spans(
+      Parser::ASTNode *args_node)
+  {
+    if (!args_node || args_node->children.empty())
+      return {};
+    // Common case: parser merged everything into one Expression
+    if (args_node->children.size() == 1 && args_node->children[0]->type == "Expression")
+    {
+      auto &toks = args_node->children[0]->children;
+      return split_top_level_args(toks, 0, toks.size());
+    }
+    // Fallback: each child is already its own argument
+    std::vector<std::vector<Parser::ASTNode *>> result;
+    for (auto *child : args_node->children)
+      result.push_back({child});
+    return result;
+  }
+
+  // Named color constants — also used by check_expression_tokens
+  static const std::unordered_set<std::string> &known_color_names()
+  {
+    static const std::unordered_set<std::string> s = {
+      "LIGHTGRAY","GRAY","DARKGRAY","YELLOW","GOLD","ORANGE","PINK","RED",
+      "MAROON","GREEN","LIME","DARKGREEN","SKYBLUE","BLUE","DARKBLUE","PURPLE",
+      "VIOLET","DARKPURPLE","BEIGE","BROWN","DARKBROWN","WHITE","BLACK",
+      "BLANK","MAGENTA","RAYWHITE"
+    };
+    return s;
+  }
+
+  // Check each token in a single argument span for undefined variables.
+  void check_undefined_vars_in_span(const std::vector<Parser::ASTNode *> &span,
+                                    const std::string &call_display)
+  {
+    for (size_t i = 0; i < span.size(); ++i)
+    {
+      auto *tok = span[i];
+      if (!tok || tok->token_type != Lexer::TokenType::IDENTIFIER) continue;
+      const std::string &nm = tok->value;
+      // Skip built-ins
+      if (nm == "__arena" || nm == "__arena_null") continue;
+      if (known_color_names().count(nm)) continue;
+      // Skip type names
+      if (struct_types.count(nm) || enum_types.count(nm) || template_types.count(nm) || type_aliases.count(nm)) continue;
+      // Skip if followed by '(' — it's a nested call head, validated separately
+      if (i + 1 < span.size() && span[i + 1]->value == "(") continue;
+      // Skip if followed by '{' — struct literal type name
+      if (i + 1 < span.size() && span[i + 1]->value == "{") continue;
+      // Skip field/method access target (preceded by '.')
+      if (i > 0 && span[i - 1]->value == ".") continue;
+      // Skip namespace/enum qualifiers (preceded or followed by '::')
+      if (i > 0 && span[i - 1]->value == "::") continue;
+      if (i + 1 < span.size() && span[i + 1]->value == "::") continue;
+      // Check if declared or a known function (bare function-pointer reference)
+      if (!lookup(nm) && !func_table.count(nm))
+        add_error(tok->line, "Undefined variable '" + nm +
+                             "' used as argument in call to '" + call_display + "'");
+    }
+  }
+
+  // Validate arity and undefined variables for one call site.
+  // resolved_name: key to look up in func_table.
+  // is_method: true when self is the hidden first param (subtract 1 from expected).
+  void validate_call_args(const std::string &resolved_name,
+                          const std::string &display_name,
+                          bool is_method,
+                          const std::vector<std::vector<Parser::ASTNode *>> &arg_spans,
+                          size_t line)
+  {
+    // Note: undefined-variable checking of argument tokens is handled by
+    // scan_undefined_vars() which runs on every Expression node — no need
+    // to duplicate it here.
+
+    // Arity check — only when we know the signature
+    auto it = func_table.find(resolved_name);
+    if (it == func_table.end()) return;
+    const FuncSig &sig = it->second;
+    size_t expected = sig.params.size();
+    if (is_method && expected > 0) --expected; // don't count implicit self
+    size_t actual = arg_spans.size();
+    if (sig.is_variadic)
+    {
+      if (actual < expected)
+        add_error(line, "Call to '" + display_name + "' expects at least " +
+                        std::to_string(expected) + " argument(s) but got " +
+                        std::to_string(actual));
+    }
+    else
+    {
+      if (actual != expected)
+        add_error(line, "Call to '" + display_name + "' expects " +
+                        std::to_string(expected) + " argument(s) but got " +
+                        std::to_string(actual));
+    }
+  }
+
+  // Strip generic parameters and pointer suffix from a type string.
+  // e.g. "Vec<i32>*" -> "Vec"
+  std::string strip_type_decorators(const std::string &t)
+  {
+    std::string s = t;
+    auto lt = s.find('<');
+    if (lt != std::string::npos) s = s.substr(0, lt);
+    while (!s.empty() && s.back() == '*') s.pop_back();
+    return s;
+  }
+
+  // General undefined-variable scanner for any flat token list.
+  // Catches uses of undeclared identifiers in conditions, RHS expressions, etc.
+  // Does NOT check call names (handled by scan_calls_in_token_list) or
+  // field names after '.'.
+  void scan_undefined_vars(const std::vector<Parser::ASTNode *> &toks)
+  {
+    for (size_t i = 0; i < toks.size(); ++i)
+    {
+      auto *tok = toks[i];
+      if (!tok || tok->token_type != Lexer::TokenType::IDENTIFIER) continue;
+      const std::string &nm = tok->value;
+      // Skip built-ins / arena sentinels
+      if (nm == "__arena" || nm == "__arena_null") continue;
+      // Skip raylib color names
+      if (known_color_names().count(nm)) continue;
+      // Skip known type names (struct/enum/template/using-alias)
+      if (struct_types.count(nm) || enum_types.count(nm) || template_types.count(nm) || type_aliases.count(nm)) continue;
+      if (type_aliases.count(nm)) continue;
+      // Skip function call names (followed by '(')
+      if (i + 1 < toks.size() && toks[i + 1]->value == "(") continue;
+      // Skip struct literal type names (followed by '{')
+      if (i + 1 < toks.size() && toks[i + 1]->value == "{") continue;
+      // Skip field/method names (preceded by '.')
+      if (i > 0 && toks[i - 1]->value == ".") continue;
+      // Skip namespace/enum qualifiers
+      if (i > 0 && toks[i - 1]->value == "::") continue;
+      if (i + 1 < toks.size() && toks[i + 1]->value == "::") continue;
+      // Skip bare function-pointer references (known function names)
+      if (func_table.count(nm)) continue;
+      // Check declaration
+      Symbol *sym = lookup(nm);
+      if (!sym)
+        add_error(tok->line, "Undefined variable '" + nm + "'");
+      else if (sym->is_voided)
+        add_error(tok->line, "Use of voided variable '" + nm + "'");
+    }
+  }
+
+  // Scan a flat token list for call sites and validate each one.
+  // This is the generic hook called from check_expression_tokens.
+  void scan_calls_in_token_list(const std::vector<Parser::ASTNode *> &toks)
+  {
+    for (size_t i = 0; i < toks.size(); ++i)
+    {
+      auto *tok = toks[i];
+      if (!tok || tok->token_type != Lexer::TokenType::IDENTIFIER) continue;
+      // Must be followed by '('
+      if (i + 1 >= toks.size() || toks[i + 1]->value != "(") continue;
+
+      const std::string &call_name = tok->value;
+      size_t close = find_matching_close(toks, i + 1);
+      auto arg_spans = split_top_level_args(toks, i + 2, close);
+      size_t call_line = tok->line;
+
+      // Check if this is a method call: preceded by  '.' IDENTIFIER
+      if (i >= 2 && toks[i - 1]->value == "." &&
+          toks[i - 2]->token_type == Lexer::TokenType::IDENTIFIER)
+      {
+        const std::string &obj_name = toks[i - 2]->value;
+        Symbol *obj_sym = lookup(obj_name);
+        if (!obj_sym) continue; // object undeclared — avoid cascading errors
+        std::string base = strip_type_decorators(obj_sym->type);
+        std::string resolved = base + "_" + call_name;
+        std::string display = obj_name + "." + call_name;
+        validate_call_args(resolved, display, /*is_method=*/true, arg_spans, call_line);
+      }
+      else if (i == 0 || toks[i - 1]->value != ".")
+      {
+        // Free function call (skip if immediately after '.' — e.g. chained call tail)
+        validate_call_args(call_name, call_name, /*is_method=*/false, arg_spans, call_line);
+      }
+
+      // Advance past the closing paren to avoid re-processing nested tokens
+      i = close;
+    }
+  }
+
   void check_expression(Parser::ASTNode *n)
   {
     if (!n)
@@ -1406,27 +1675,22 @@ private:
       auto *sym = lookup(n->value);
       if (sym && sym->is_voided)
       {
-        add_error(n->line, "Use of voided variable '" + n->value + "' — guard with switch(" +
-                               n->value + ") { case valid: … case voided: … }");
+        add_error(n->line, "Use of voided variable '" + n->value +
+                               "' — guard with switch(" + n->value +
+                               ") { case valid: … case voided: … }");
       }
       else if (sym && sym->is_voided_maybe)
       {
         add_error(n->line, "Variable '" + n->value +
                                "' may be voided (moved on some paths) — "
-                               "guard with switch(" +
-                               n->value + ") { case valid: … case voided: … }");
+                               "guard with switch(" + n->value +
+                               ") { case valid: … case voided: … }");
       }
       // __arena / __arena_null are compiler built-ins — always valid
       if (n->value == "__arena" || n->value == "__arena_null")
         return;
       // Named color constants (WHITE, RED, etc.) — always valid
-      static const std::unordered_set<std::string> color_names = {
-          "LIGHTGRAY", "GRAY",   "DARKGRAY", "YELLOW",     "GOLD",      "ORANGE",  "PINK",
-          "RED",       "MAROON", "GREEN",    "LIME",       "DARKGREEN", "SKYBLUE", "BLUE",
-          "DARKBLUE",  "PURPLE", "VIOLET",   "DARKPURPLE", "BEIGE",     "BROWN",   "DARKBROWN",
-          "WHITE",     "BLACK",  "BLANK",    "MAGENTA",    "RAYWHITE"};
-      if (color_names.count(n->value))
-        return;
+      if (known_color_names().count(n->value)) return;
       // VOP Lifetime Law: pointer access
       if (sym && sym->is_pointer)
       {
@@ -1474,6 +1738,10 @@ private:
           continue;
         }
       }
+      // Scan for call sites and validate arity / undefined variables
+      scan_calls_in_token_list(n->children);
+      // Check all identifiers for declaration (conditions, RHS, etc.)
+      scan_undefined_vars(n->children);
     }
     for (auto *c : n->children)
       check_expression_tokens(c);
@@ -1570,7 +1838,10 @@ private:
   {
     static const std::unordered_set<std::string> primitives = {
         "int8",   "int16",   "int32",   "int64", "uint8", "uint16", "uint32",
-        "uint64", "float32", "float64", "char",  "bool",  "string", "void"};
+        "uint64", "float32", "float64", "char",  "bool",  "string", "void",
+        // Short aliases
+        "i8",  "u8",  "i16", "u16", "i32", "u32", "i64", "u64",
+        "f32", "f64", "byte"};
     std::string base = t;
     // Strip pointer/array decorators
     while (!base.empty() &&
@@ -1598,20 +1869,20 @@ private:
       return true;
     if (template_types.count(base + "<...>"))
       return true;
+    if (type_aliases.count(base))
+      return true;
     // flat:<t0>,<t1> — expanded struct (from C header import)
     if (t.rfind("flat:", 0) == 0)
       return true;
     // Raw C type spellings that cheader may emit before canonicalization
     static const std::unordered_set<std::string> c_spellings = {
-        "int",           "unsigned",       "unsigned int",
-        "short",         "unsigned short", "long",
-        "unsigned long", "long long",      "unsigned long long",
-        "size_t",        "ssize_t",        "ptrdiff_t",
-        "intptr_t",      "uintptr_t",      "int8_t",
-        "int16_t",       "int32_t",        "int64_t",
-        "uint8_t",       "uint16_t",       "uint32_t",
-        "uint64_t",      "float",          "double",
-        "_Bool"};
+      "int","unsigned","unsigned int","short","unsigned short",
+      "long","unsigned long","long long","unsigned long long",
+      "size_t","ssize_t","ptrdiff_t","intptr_t","uintptr_t",
+      "int8_t","int16_t","int32_t","int64_t",
+      "uint8_t","uint16_t","uint32_t","uint64_t",
+      "float","double","_Bool"
+    };
     if (c_spellings.count(base))
       return true;
     // If any struct type is registered with matching prefix (templated struct)
@@ -1625,50 +1896,48 @@ private:
   // Returns "" if fine, a warning string if narrowing, an error string if incompatible.
   // "cannot cast 'from' to 'to'" is emitted when types are structurally incompatible.
   std::string check_type_coercion(const std::string &from_type, const std::string &to_type,
-                                  size_t line)
+                                   size_t line)
   {
-    if (from_type == to_type)
-      return "";
+    if (from_type == to_type) return "";
 
     // Integer types — widths
-    static const std::unordered_map<std::string, int> int_width = {
-        {"int8", 8},    {"int16", 16},  {"int32", 32},  {"int64", 64}, {"uint8", 8},
-        {"uint16", 16}, {"uint32", 32}, {"uint64", 64}, {"bool", 1},   {"char", 8}};
-    static const std::unordered_set<std::string> fp_types = {"float32", "float64"};
-    static const std::unordered_set<std::string> ptr_types = {"string", "voided*"};
+    static const std::unordered_map<std::string,int> int_width = {
+      {"int8",8},{"int16",16},{"int32",32},{"int64",64},
+      {"uint8",8},{"uint16",16},{"uint32",32},{"uint64",64},
+      {"bool",1},{"char",8}
+    };
+    static const std::unordered_set<std::string> fp_types = {"float32","float64"};
+    static const std::unordered_set<std::string> ptr_types = {"string","voided*"};
 
     bool from_int = int_width.count(from_type);
-    bool to_int = int_width.count(to_type);
-    bool from_fp = fp_types.count(from_type);
-    bool to_fp = fp_types.count(to_type);
+    bool to_int   = int_width.count(to_type);
+    bool from_fp  = fp_types.count(from_type);
+    bool to_fp    = fp_types.count(to_type);
     bool from_ptr = (from_type.find('*') != std::string::npos) || ptr_types.count(from_type);
-    bool to_ptr = (to_type.find('*') != std::string::npos) || ptr_types.count(to_type);
+    bool to_ptr   = (to_type.find('*')   != std::string::npos) || ptr_types.count(to_type);
 
     // int → int: ok but warn on narrowing
     if (from_int && to_int)
     {
       int fw = int_width.at(from_type), tw = int_width.at(to_type);
       if (fw > tw)
-        add_warning(line, "Implicit narrowing: '" + from_type + "' assigned to '" + to_type +
-                              "' — value may be truncated");
+        add_warning(line, "Implicit narrowing: '" + from_type + "' assigned to '" +
+                         to_type + "' — value may be truncated");
       return "";
     }
     // float → float: ok
-    if (from_fp && to_fp)
-      return "";
+    if (from_fp && to_fp) return "";
     // int → float or float → int: allowed with warning
     if ((from_int && to_fp) || (from_fp && to_int))
     {
-      add_warning(line,
-                  "Implicit numeric conversion: '" + from_type + "' assigned to '" + to_type + "'");
+      add_warning(line, "Implicit numeric conversion: '" + from_type +
+                       "' assigned to '" + to_type + "'");
       return "";
     }
     // ptr → ptr or ptr ↔ voided*: allowed
-    if (from_ptr && to_ptr)
-      return "";
+    if (from_ptr && to_ptr) return "";
     // string (ptr) is compatible with any pointer target
-    if ((from_ptr || from_type == "string") && (to_ptr || to_type == "string"))
-      return "";
+    if ((from_ptr || from_type == "string") && (to_ptr || to_type == "string")) return "";
 
     // Everything else is incompatible — but literal mismatches are caught by
     // check_declaration/check_const already.  For function-call results we emit:
@@ -1676,4 +1945,5 @@ private:
       add_error(line, "cannot cast '" + from_type + "' to '" + to_type + "'");
     return "error";
   }
+
 };

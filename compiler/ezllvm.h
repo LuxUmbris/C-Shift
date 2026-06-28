@@ -242,14 +242,123 @@ static inline EzTarget *ez_target_x86_64_windows(void)
 {
   EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
   assert(t);
+  /* Use the MinGW-w64 triple so ld.lld can link against mingw sysroot.
+   * MSVC triple (x86_64-pc-windows-msvc) requires lld-link + MSVC SDK;
+   * use ez_target_x86_64_windows_msvc() for that. */
+  ez__fill_target(t, "x86_64-w64-mingw32", "x86-64", "", "ld.lld", "", "");
+  return t;
+}
+
+/** x86-64 Windows with MSVC ABI (requires lld-link + Windows SDK sysroot). */
+static inline EzTarget *ez_target_x86_64_windows_msvc(void)
+{
+  EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
+  assert(t);
   ez__fill_target(t, "x86_64-pc-windows-msvc", "x86-64", "", "lld-link",
-                  "", /* set t->sysroot to Windows SDK path, or use mingw */
+                  "", /* set t->sysroot to Windows SDK path */
                   "");
   return t;
 }
 
 /**
- * ez_target_bare_metal — freestanding (no OS, no libc).
+ * ez_target_wasm32 — WebAssembly (wasm32-unknown-emscripten or bare).
+ *
+ * For Emscripten output (HTML/JS glue), set use_emscripten=1 and use
+ * emcc as the linker (pass via extra_flags to ez_link_exe_for, or just
+ * invoke emcc yourself with the .o file).
+ * For raw WASM (WASI or bare), use_emscripten=0.
+ */
+static inline EzTarget *ez_target_wasm32(int use_emscripten)
+{
+  EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
+  assert(t);
+  const char *triple = use_emscripten ? "wasm32-unknown-emscripten"
+                                      : "wasm32-unknown-wasi";
+  ez__fill_target(t, triple, "generic", "", "wasm-ld", "", "");
+  return t;
+}
+
+/**
+ * ez_target_wasm64 — WebAssembly with 64-bit memory (wasm64, experimental).
+ */
+static inline EzTarget *ez_target_wasm64(void)
+{
+  EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
+  assert(t);
+  ez__fill_target(t, "wasm64-unknown-unknown", "generic", "", "wasm-ld", "", "");
+  return t;
+}
+
+/**
+ * ez_target_aarch64_android — Android ARM64-v8a (API 21+).
+ *
+ * Set tgt->sysroot to your Android NDK sysroot, e.g.:
+ *   $NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot
+ */
+static inline EzTarget *ez_target_aarch64_android(void)
+{
+  EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
+  assert(t);
+  ez__fill_target(t, "aarch64-linux-android21", "generic", "+neon",
+                  "ld.lld", "", "/system/bin/linker64");
+  return t;
+}
+
+/**
+ * ez_target_x86_64_android — Android x86_64 (API 21+, emulator).
+ */
+static inline EzTarget *ez_target_x86_64_android(void)
+{
+  EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
+  assert(t);
+  ez__fill_target(t, "x86_64-linux-android21", "x86-64", "",
+                  "ld.lld", "", "/system/bin/linker64");
+  return t;
+}
+
+/**
+ * ez_target_aarch64_ios — Apple iOS / iPadOS (arm64).
+ * Requires Xcode or a cross-toolchain with an iOS sysroot.
+ * Set tgt->sysroot to your iOS SDK path, e.g.:
+ *   $(xcrun --sdk iphoneos --show-sdk-path)
+ */
+static inline EzTarget *ez_target_aarch64_ios(void)
+{
+  EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
+  assert(t);
+  ez__fill_target(t, "aarch64-apple-ios14.0", "apple-a14", "",
+                  "ld64.lld", "", "");
+  return t;
+}
+
+/**
+ * ez_target_thumbv7em — ARM Cortex-M4/M7 bare-metal (Thumb-2, hard-float).
+ * Good for STM32F4, STM32H7, etc.
+ * Pass a linker script via extra_flags: { "-T", "STM32F407.ld" }
+ */
+static inline EzTarget *ez_target_thumbv7em(void)
+{
+  EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
+  assert(t);
+  ez__fill_target(t, "thumbv7em-none-eabi", "cortex-m4",
+                  "+thumb2,+dsp,+fp16,+vfp4", "ld.lld", "", "");
+  return t;
+}
+
+/**
+ * ez_target_riscv32 — RISC-V 32-bit bare-metal (RV32IMAC).
+ * Good for microcontrollers (ESP32-C3, CH32V, etc.).
+ */
+static inline EzTarget *ez_target_riscv32(void)
+{
+  EzTarget *t = (EzTarget *)malloc(sizeof(EzTarget));
+  assert(t);
+  ez__fill_target(t, "riscv32-unknown-elf", "generic-rv32",
+                  "+m,+a,+c", "ld.lld", "", "");
+  return t;
+}
+/**
+ * ez_target_bare_metal — freestanding target (no OS, no libc).
  * Good for kernels, bootloaders, microcontrollers.
  *
  * @param triple  e.g. "thumbv7em-none-eabi" for ARM Cortex-M4
@@ -673,6 +782,25 @@ static inline int ez_link_exe(const char **obj_files, int nobj,
     EZ__FIND_CRT(crtn, "crtn.o")
     EZ__FIND_CRT(libgcc, "libgcc.a")
     EZ__FIND_CRT(libgcc_s, "libgcc_s.so.1")
+
+    /* Auto-detect the system library search path so ld.lld can find -lc.
+     * cc --print-file-name=libc.so returns the full path; we take dirname. */
+    char libdir[512] = {0};
+    {
+      char libc_path[512] = {0};
+      EZ__FIND_CRT(libc_path, "libc.so")
+      /* strip filename, keep directory */
+      char *slash = strrchr(libc_path, '/');
+      if (slash && slash != libc_path)
+      {
+        size_t dlen = (size_t)(slash - libc_path);
+        if (dlen < sizeof(libdir))
+        {
+          memcpy(libdir, libc_path, dlen);
+          libdir[dlen] = '\0';
+        }
+      }
+    }
 #undef EZ__FIND_CRT
 
     char dynld[256] = "/lib64/ld-linux-x86-64.so.2"; /* safe default */
@@ -710,6 +838,10 @@ static inline int ez_link_exe(const char **obj_files, int nobj,
      * call_init crashes on the dangling open entry (seen as 0x401016). */
     snprintf(cmd, sizeof(cmd), "%s -dynamic-linker %s %s %s", linker, dynld,
              crt1[0] ? crt1 : "", crti[0] ? crti : "");
+    /* Library search path — needed by ld.lld to find -lc */
+    if (libdir[0])
+      snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
+               " -L%s", libdir);
   }
 
   /* append object files */
@@ -789,57 +921,77 @@ static inline int ez_link_exe_for(EzTarget *tgt, const char **obj_files,
                                   int nobj, const char **extra_flags,
                                   int nflags, const char *out_path)
 {
-  /* pick the right lld frontend for the target OS */
-  char linker[128];
-  const char *preferred = tgt->linker[0] ? tgt->linker : "ld.lld";
-
-  /* map common lld frontends */
-  const char *lld_candidates[] = {preferred, "ld.lld", "lld", NULL};
-  int found = 0;
-  for (int i = 0; lld_candidates[i]; i++)
-  {
-    char probe[256];
-    snprintf(probe, sizeof(probe), "command -v %s >/dev/null 2>&1",
-             lld_candidates[i]);
-    if (system(probe) == 0)
-    {
-      strncpy(linker, lld_candidates[i], sizeof(linker) - 1);
-      found = 1;
-      break;
-    }
-  }
-  if (!found)
-  {
-    fprintf(stderr, "ez_link_exe_for: lld not found. Install with:\n"
-                    "  sudo apt install lld\n");
-    return 1;
-  }
+  /* classify target OS */
+  int is_macho   = (strstr(tgt->triple, "apple")   != NULL ||
+                    strstr(tgt->triple, "macos")    != NULL ||
+                    strstr(tgt->triple, "darwin")   != NULL ||
+                    strstr(tgt->triple, "ios")      != NULL);
+  int is_wasm    = (strstr(tgt->triple, "wasm")    != NULL ||
+                    strstr(tgt->triple, "emscripten") != NULL);
+  int is_mingw   = (strstr(tgt->triple, "mingw")   != NULL ||
+                    strstr(tgt->triple, "w64")      != NULL);
+  int is_msvc    = (strstr(tgt->triple, "msvc")    != NULL && !is_mingw);
 
   char cmd[8192] = {0};
 
-  /* ld64.lld (macOS/MachO) has a different CLI than ELF lld */
-  int is_macho = (strstr(tgt->triple, "apple") != NULL ||
-                  strstr(tgt->triple, "macos") != NULL ||
-                  strstr(tgt->triple, "darwin") != NULL);
-  int is_windows = (strstr(tgt->triple, "windows") != NULL ||
-                    strstr(tgt->triple, "msvc") != NULL);
-
-  if (is_macho)
+  /* ── WASM / WASI ─────────────────────────────────────────────────────── */
+  if (is_wasm)
   {
-    snprintf(cmd, sizeof(cmd), "%s -arch %s",
-             strcmp(linker, "ld.lld") == 0 ? "ld64.lld" : linker,
-             strstr(tgt->triple, "aarch64") ? "arm64" : "x86_64");
+    /* wasm-ld is the linker for both WASI and Emscripten bare .wasm */
+    char wasm_ld[128];
+    const char *wasm_candidates[] = {"wasm-ld", "wasm-ld-18", "wasm-ld-17",
+                                     "wasm-ld-16", NULL};
+    int found_wasm = 0;
+    for (int i = 0; wasm_candidates[i]; i++)
+    {
+      char probe[256];
+      snprintf(probe, sizeof(probe), "command -v %s >/dev/null 2>&1",
+               wasm_candidates[i]);
+      if (system(probe) == 0)
+      {
+        strncpy(wasm_ld, wasm_candidates[i], sizeof(wasm_ld) - 1);
+        found_wasm = 1;
+        break;
+      }
+    }
+    if (!found_wasm)
+    {
+      fprintf(stderr, "ez_link_exe_for: wasm-ld not found. Install LLVM or"
+                      " the Emscripten SDK.\n");
+      return 1;
+    }
+    snprintf(cmd, sizeof(cmd), "%s --no-entry --export-all", wasm_ld);
     if (tgt->sysroot[0])
-      snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " -syslibroot %s",
-               tgt->sysroot);
-    strncat(cmd, " -lSystem", sizeof(cmd) - strlen(cmd) - 1);
+      snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
+               " --sysroot=%s", tgt->sysroot);
+    for (int i = 0; i < nobj; i++)
+    {
+      strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+      strncat(cmd, obj_files[i], sizeof(cmd) - strlen(cmd) - 1);
+    }
+    snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " -o %s", out_path);
+    for (int i = 0; i < nflags; i++)
+    {
+      strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+      strncat(cmd, extra_flags[i], sizeof(cmd) - strlen(cmd) - 1);
+    }
+    return ez__run(cmd);
   }
-  else if (is_windows)
+
+  /* ── Windows / MSVC (lld-link) ──────────────────────────────────────── */
+  if (is_msvc && !is_mingw)
   {
+    char probe[256];
+    snprintf(probe, sizeof(probe), "command -v lld-link >/dev/null 2>&1");
+    if (system(probe) != 0)
+    {
+      fprintf(stderr, "ez_link_exe_for: lld-link not found. Install LLVM.\n");
+      return 1;
+    }
     snprintf(cmd, sizeof(cmd), "lld-link");
     if (tgt->sysroot[0])
-      snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " /libpath:%s/lib",
-               tgt->sysroot);
+      snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
+               " /libpath:%s/lib", tgt->sysroot);
     for (int i = 0; i < nobj; i++)
     {
       strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
@@ -854,58 +1006,156 @@ static inline int ez_link_exe_for(EzTarget *tgt, const char **obj_files,
     }
     return ez__run(cmd);
   }
-  else
-  {
-    /* ELF target (Linux, bare-metal) */
-    int bare = (tgt->sysroot[0] == '\0' && tgt->dynamic_linker[0] == '\0');
 
+  /* ── Windows / MinGW (ld.lld with PE/COFF) ──────────────────────────── */
+  if (is_mingw)
+  {
+    /* pick linker: prefer ld.lld, fall back to x86_64-w64-mingw32-ld */
+    char linker[128] = "ld.lld";
+    const char *mingw_candidates[] = {"ld.lld", "x86_64-w64-mingw32-ld",
+                                      "lld", NULL};
+    int found_ld = 0;
+    for (int i = 0; mingw_candidates[i]; i++)
+    {
+      char probe[256];
+      snprintf(probe, sizeof(probe), "command -v %s >/dev/null 2>&1",
+               mingw_candidates[i]);
+      if (system(probe) == 0)
+      {
+        strncpy(linker, mingw_candidates[i], sizeof(linker) - 1);
+        found_ld = 1;
+        break;
+      }
+    }
+    if (!found_ld)
+    {
+      fprintf(stderr,
+              "ez_link_exe_for: no linker found for MinGW.\n"
+              "  Install:  sudo apt install lld  OR  gcc-mingw-w64-x86-64\n");
+      return 1;
+    }
+    snprintf(cmd, sizeof(cmd),
+             "%s -m i386pep --target=%s -e mainCRTStartup", linker,
+             tgt->triple);
+    if (tgt->sysroot[0])
+    {
+      snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
+               " --sysroot=%s -L%s/lib -L%s/x86_64-w64-mingw32/lib",
+               tgt->sysroot, tgt->sysroot, tgt->sysroot);
+      /* MinGW CRT startup objects */
+      snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
+               " %s/x86_64-w64-mingw32/lib/crt2.o"
+               " %s/x86_64-w64-mingw32/lib/crtbegin.o",
+               tgt->sysroot, tgt->sysroot);
+    }
+    for (int i = 0; i < nobj; i++)
+    {
+      strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+      strncat(cmd, obj_files[i], sizeof(cmd) - strlen(cmd) - 1);
+    }
+    snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " -o %s", out_path);
+    /* MinGW standard libs */
+    strncat(cmd, " -lmingw32 -lmingwex -lmsvcrt -lkernel32 -luser32",
+            sizeof(cmd) - strlen(cmd) - 1);
+    if (tgt->sysroot[0])
+      snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
+               " %s/x86_64-w64-mingw32/lib/crtend.o", tgt->sysroot);
+    for (int i = 0; i < nflags; i++)
+    {
+      strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+      strncat(cmd, extra_flags[i], sizeof(cmd) - strlen(cmd) - 1);
+    }
+    return ez__run(cmd);
+  }
+
+  /* ── macOS / MachO (ld64.lld) ───────────────────────────────────────── */
+  /* pick lld frontend */
+  char linker[128];
+  const char *preferred = tgt->linker[0] ? tgt->linker : "ld.lld";
+  const char *lld_candidates[] = {preferred, "ld.lld", "lld", NULL};
+  int found = 0;
+  for (int i = 0; lld_candidates[i]; i++)
+  {
+    char probe[256];
+    snprintf(probe, sizeof(probe), "command -v %s >/dev/null 2>&1",
+             lld_candidates[i]);
+    if (system(probe) == 0)
+    {
+      snprintf(linker, sizeof(linker), "%s", lld_candidates[i]);
+      found = 1;
+      break;
+    }
+  }
+  if (!found)
+  {
+    fprintf(stderr, "ez_link_exe_for: lld not found. Install with:\n"
+                    "  sudo apt install lld\n");
+    return 1;
+  }
+
+  if (is_macho)
+  {
+    snprintf(cmd, sizeof(cmd), "%s -arch %s",
+             strcmp(linker, "ld.lld") == 0 ? "ld64.lld" : linker,
+             strstr(tgt->triple, "aarch64") ? "arm64" : "x86_64");
+    if (tgt->sysroot[0])
+      snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
+               " -syslibroot %s", tgt->sysroot);
+    strncat(cmd, " -lSystem", sizeof(cmd) - strlen(cmd) - 1);
+    for (int i = 0; i < nobj; i++)
+    {
+      strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+      strncat(cmd, obj_files[i], sizeof(cmd) - strlen(cmd) - 1);
+    }
+    snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " -o %s", out_path);
+    for (int i = 0; i < nflags; i++)
+    {
+      strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+      strncat(cmd, extra_flags[i], sizeof(cmd) - strlen(cmd) - 1);
+    }
+    return ez__run(cmd);
+  }
+
+  /* ── ELF target (Linux, Android, bare-metal) ────────────────────────── */
+  {
+    int bare = (tgt->sysroot[0] == '\0' && tgt->dynamic_linker[0] == '\0');
     snprintf(cmd, sizeof(cmd), "%s --target=%s", linker, tgt->triple);
 
     if (!bare)
     {
-      /* dynamic Linux binary */
       if (tgt->sysroot[0])
-        snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " --sysroot=%s",
-                 tgt->sysroot);
+        snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
+                 " --sysroot=%s", tgt->sysroot);
       if (tgt->dynamic_linker[0])
         snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
                  " -dynamic-linker %s", tgt->dynamic_linker);
 
-      /* crt files from sysroot */
+      /* CRT startup — crt1 + crti must come BEFORE user objects */
       if (tgt->sysroot[0])
-      {
-        /* try common sysroot layout */
         snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),
-                 " %s/usr/lib/crt1.o"
-                 " %s/usr/lib/crti.o",
+                 " %s/usr/lib/crt1.o %s/usr/lib/crti.o",
                  tgt->sysroot, tgt->sysroot);
-      }
     }
-  }
 
-  /* append object files */
-  for (int i = 0; i < nobj; i++)
-  {
-    strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
-    strncat(cmd, obj_files[i], sizeof(cmd) - strlen(cmd) - 1);
-  }
+    /* object files */
+    for (int i = 0; i < nobj; i++)
+    {
+      strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+      strncat(cmd, obj_files[i], sizeof(cmd) - strlen(cmd) - 1);
+    }
 
-  /* output */
-  strncat(cmd, " -o ", sizeof(cmd) - strlen(cmd) - 1);
-  strncat(cmd, out_path, sizeof(cmd) - strlen(cmd) - 1);
+    /* output */
+    snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd), " -o %s", out_path);
 
-  /* extra flags (linker scripts, --entry, etc.) */
-  for (int i = 0; i < nflags; i++)
-  {
-    strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
-    strncat(cmd, extra_flags[i], sizeof(cmd) - strlen(cmd) - 1);
-  }
+    /* extra flags (linker scripts, --entry, etc.) */
+    for (int i = 0; i < nflags; i++)
+    {
+      strncat(cmd, " ", sizeof(cmd) - strlen(cmd) - 1);
+      strncat(cmd, extra_flags[i], sizeof(cmd) - strlen(cmd) - 1);
+    }
 
-  /* libc for non-bare-metal ELF */
-  if (!is_macho && !is_windows)
-  {
-    int bare2 = (tgt->sysroot[0] == '\0' && tgt->dynamic_linker[0] == '\0');
-    if (!bare2)
+    /* libc + crtn.o — crtn.o MUST come after all user objects */
+    if (!bare)
     {
       if (tgt->sysroot[0])
         snprintf(cmd + strlen(cmd), sizeof(cmd) - strlen(cmd),

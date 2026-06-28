@@ -199,10 +199,37 @@ static std::string compile_frt_to_cache(const std::string &frt_c, const std::str
   const char *cc_env = std::getenv("CC");
   if (cc_env)
     compilers.push_back(cc_env);
+
+  // Determine if this is a cross-compile scenario
+  bool is_windows = !triple.empty() && triple != "native" &&
+    (triple.find("windows") != std::string::npos ||
+     triple.find("mingw") != std::string::npos ||
+     triple.find("w64") != std::string::npos ||
+     triple.find("msvc") != std::string::npos);
+  bool is_wasm = !triple.empty() && triple != "native" &&
+    (triple.find("wasm") != std::string::npos ||
+     triple.find("emscripten") != std::string::npos);
+
   if (!triple.empty() && triple != "native")
   {
-    compilers.push_back(triple + "-gcc");
-    compilers.push_back(triple + "-clang");
+    if (is_windows)
+    {
+      // MinGW cross-gcc is the most reliable option on Linux
+      compilers.push_back("x86_64-w64-mingw32-gcc");
+      // clang with explicit target also works
+      compilers.push_back("clang --target=x86_64-w64-mingw32");
+    }
+    else if (is_wasm)
+    {
+      compilers.push_back("emcc");
+      compilers.push_back("clang --target=wasm32-unknown-wasi");
+    }
+    else
+    {
+      compilers.push_back(triple + "-gcc");
+      compilers.push_back(triple + "-clang");
+      compilers.push_back("clang --target=" + triple);
+    }
   }
   for (auto &c : std::vector<std::string>{"cc", "gcc", "clang"})
     compilers.push_back(c);
@@ -307,6 +334,8 @@ static EzTarget *make_target(const std::string &triple)
     return ez_target_arm32_linux();
   if (triple == "riscv64-linux" || triple == "riscv64-linux-gnu")
     return ez_target_riscv64_linux();
+  if (triple == "riscv32" || triple == "riscv32-elf" || triple == "riscv32-unknown-elf")
+    return ez_target_riscv32();
   if (triple == "x86_64-macos" || triple == "x86_64-apple-darwin")
     return ez_target_x86_64_macos();
   if (triple == "aarch64-macos" || triple == "arm64-apple-darwin" ||
@@ -314,6 +343,27 @@ static EzTarget *make_target(const std::string &triple)
     return ez_target_aarch64_macos();
   if (triple == "x86_64-windows" || triple == "x86_64-w64-mingw32")
     return ez_target_x86_64_windows();
+  if (triple == "x86_64-windows-msvc" || triple == "x86_64-pc-windows-msvc")
+    return ez_target_x86_64_windows_msvc();
+  if (triple == "wasm32" || triple == "wasm" || triple == "wasi" ||
+      triple == "wasm32-wasi" || triple == "wasm32-unknown-wasi")
+    return ez_target_wasm32(0);
+  if (triple == "wasm32-emscripten" || triple == "wasm32-unknown-emscripten")
+    return ez_target_wasm32(1);
+  if (triple == "wasm64" || triple == "wasm64-unknown-unknown")
+    return ez_target_wasm64();
+  if (triple == "aarch64-android" || triple == "aarch64-linux-android" ||
+      triple == "aarch64-linux-android21")
+    return ez_target_aarch64_android();
+  if (triple == "x86_64-android" || triple == "x86_64-linux-android" ||
+      triple == "x86_64-linux-android21")
+    return ez_target_x86_64_android();
+  if (triple == "aarch64-ios" || triple == "aarch64-apple-ios" ||
+      triple == "aarch64-apple-ios14.0")
+    return ez_target_aarch64_ios();
+  if (triple == "thumbv7em" || triple == "cortex-m4" ||
+      triple == "thumbv7em-none-eabi")
+    return ez_target_thumbv7em();
 
   // Raw triple: use bare-metal preset (no sysroot assumed)
   return ez_target_bare_metal(triple.c_str(), "generic", "");
@@ -329,23 +379,94 @@ static void usage(const char *argv0)
             << "  --emit-llvm        Emit LLVM IR (.ll); skip link\n"
             << "  --emit-asm         Emit assembly (.s); skip link\n"
             << "  -c                 Compile to object (.o); skip link\n"
-            << "  --target <triple>  Cross-compile target triple or alias\n"
+            << "  --target <triple>  Cross-compile target (alias or LLVM triple)\n"
             << "  --no-frt           Skip frt.o linking\n"
             << "  --check-only       Lex + parse + type-check only; no codegen\n"
             << "  --verbose / -v     Verbose output\n"
             << "  -O0/-O1/-O2/-O3    Optimization level (default: -O0)\n"
-            << "  -Os                Optimize for size\n"
-            << "  -Oz                Optimize aggressively for size\n"
-            << "  --mcpu <cpu>       Target CPU name (e.g. skylake, cortex-a72)\n"
-            << "  --mattr <feat>     CPU feature flags (e.g. +avx2,+bmi2)\n"
-            << "  -l<lib>            Pass -l<lib> to the linker (e.g. -lm)\n"
-            << "  -Wl,<flag>         Pass <flag> through to the linker\n"
-            << "  --link-flag <f>    Pass raw linker flag <f>\n";
+            << "  -Os / -Oz          Optimize for size / aggressively for size\n"
+            << "  --mcpu <cpu>       Target CPU (e.g. skylake, cortex-a72)\n"
+            << "  --mattr <feat>     CPU features (e.g. +avx2,+bmi2)\n"
+            << "  -l<lib>            Link with library (e.g. -lm)\n"
+            << "  -Wl,<flag>         Pass flag to linker\n"
+            << "  --link-flag <f>    Pass raw linker flag\n"
+            << "  --version / -V     Print compiler version and exit\n"
+            << "  --keywords         List all C<< keywords and exit\n"
+            << "  --operators        List all C<< operators and exit\n"
+            << "\nTarget aliases:\n"
+            << "  x86_64-linux, aarch64-linux, arm32-linux, riscv64-linux, riscv32\n"
+            << "  x86_64-macos, aarch64-macos\n"
+            << "  x86_64-windows (MinGW), x86_64-windows-msvc\n"
+            << "  wasm32, wasm32-emscripten, wasm64\n"
+            << "  aarch64-android, x86_64-android, aarch64-ios\n"
+            << "  thumbv7em (ARM Cortex-M4), or any raw LLVM triple\n";
   std::exit(1);
 }
 
-// ── main
-// ──────────────────────────────────────────────────────────────────────
+// ── Compiler version ──────────────────────────────────────────────────────
+#define CSHIFT_VERSION "0.9.0"
+#define CSHIFT_VERSION_DATE "2026"
+
+static void print_version()
+{
+  std::cout << "cshift (C<<) " CSHIFT_VERSION " (" CSHIFT_VERSION_DATE ")\n"
+            << "LLVM " << LLVM_VERSION_STRING "\n"
+            << "Default target: " << LLVMGetDefaultTargetTriple() << "\n";
+  LLVMDisposeMessage(nullptr); // no-op, just to confirm linkage
+  std::exit(0);
+}
+
+static void print_keywords()
+{
+  // Canonical list of all C<< keywords (from lexer.hh keyword_lookup)
+  const char *kws[] = {
+    // Control flow
+    "if", "else", "switch", "case", "default",
+    "for", "foreach", "while", "break", "continue",
+    // Functions / declarations
+    "def", "dec", "import", "export", "entry", "extern",
+    // Types — canonical
+    "int8", "int16", "int32", "int64",
+    "uint8", "uint16", "uint32", "uint64",
+    "float32", "float64",
+    "bool", "char", "string", "voided",
+    // Types — short aliases
+    "i8", "i16", "i32", "i64",
+    "u8", "u16", "u32", "u64",
+    "f32", "f64", "byte",
+    // VOP / arena
+    "tunnel", "reserve", "reset", "move",
+    "valid",
+    // Structure
+    "struct", "class", "enum", "namespace", "template", "typename",
+    // Using / aliases
+    "using",
+    // Misc
+    "const", "raw",
+    nullptr
+  };
+  std::cout << "C<< keywords:\n";
+  for (int i = 0; kws[i]; ++i)
+    std::cout << "  " << kws[i] << "\n";
+  std::exit(0);
+}
+
+static void print_operators()
+{
+  std::cout << "C<< operators:\n"
+    << "  Arithmetic     :  +  -  *  /  %  **\n"
+    << "  Comparison     :  ==  !=  <  >  <=  >=\n"
+    << "  Logical        :  &&  ||  !\n"
+    << "  Bitwise        :  &  |  ^  ~  <<  >>\n"
+    << "  Assignment     :  =  +=  -=  *=  /=  %=  **=  <<=  >>=\n"
+    << "  Tunnel arrow   :  ->\n"
+    << "  Scope / NS     :  ::\n"
+    << "  Array append   :  <<\n"
+    << "  Address / deref:  &  *\n"
+    << "  Pointer field  :  .\n"
+    << "  Array length   :  [[:]]\n";
+  std::exit(0);
+}
 
 int main(int argc, char **argv)
 {
@@ -375,7 +496,13 @@ int main(int argc, char **argv)
   for (int i = 1; i < argc; ++i)
   {
     std::string a = argv[i];
-    if (a == "-o" && i + 1 < argc)
+    if (a == "--version" || a == "-V")
+      print_version();
+    else if (a == "--keywords")
+      print_keywords();
+    else if (a == "--operators")
+      print_operators();
+    else if (a == "-o" && i + 1 < argc)
       out_path = argv[++i];
     else if (a == "--target" && i + 1 < argc)
       target_triple = argv[++i];
@@ -446,7 +573,7 @@ int main(int argc, char **argv)
         linker_flags_storage.push_back("-l" + std::string(argv[++i]));
     }
     else if (a.size() >= 4 && a.substr(0, 4) == "-Wl,")
-      linker_flags_storage.push_back(a);
+      linker_flags_storage.push_back(a.substr(4)); // strip -Wl, prefix
     else if (a == "--link-flag" && i + 1 < argc)
       linker_flags_storage.push_back(argv[++i]);
     else if (a.size() >= 2 && a[0] == '-' && a[1] == 'I')
@@ -508,7 +635,23 @@ int main(int argc, char **argv)
       out_path += ".s";
     else if (no_link)
       out_path += ".o";
-    // else: plain executable (no extension on Linux/macOS)
+    else
+    {
+      // Executable: add platform-appropriate extension
+      bool is_windows_target = (!target_triple.empty() &&
+        (target_triple.find("windows") != std::string::npos ||
+         target_triple.find("mingw")   != std::string::npos ||
+         target_triple.find("w64")     != std::string::npos ||
+         target_triple.find("msvc")    != std::string::npos));
+      bool is_wasm_target = (!target_triple.empty() &&
+        (target_triple.find("wasm") != std::string::npos ||
+         target_triple.find("emscripten") != std::string::npos));
+      if (is_windows_target)
+        out_path += ".exe";
+      else if (is_wasm_target)
+        out_path += ".wasm";
+      // else: no extension (Linux / macOS / bare-metal)
+    }
   }
 
   // ── Front-end ────────────────────────────────────────────────────────────

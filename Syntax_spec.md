@@ -1,6 +1,6 @@
 # C<< (C-Shift) Language Specification
 
-> **Version:** 0.9 (2026)  
+> **Version:** 0.8 (2026)  
 > **Extension:** `.cll`  
 > **Entry point:** `entry { … }`  
 > **Paradigm:** Arena-scoped, VOP (Vertical Ownership Programming), C-ABI-compatible
@@ -56,9 +56,11 @@
 ### Literals
 | Kind | Examples |
 |------|----------|
-| Integer | `0`, `42`, `0xFF` |
-| Float | `3.14`, `1.0e-5` |
-| String | `"hello\nworld"` (C escape sequences) |
+| Integer (decimal) | `0`, `42`, `1_000_000` |
+| Integer (hex) | `0xFF`, `0xDEADBEEF` |
+| Integer (binary) | `0b1010`, `0b1111_0000` |
+| Float | `3.14`, `1.0e-5`, `6.022e23` |
+| String | `"hello\nworld"` (C escape sequences: `\n \r \t \\ \"`) |
 | Bool | `true`, `false` |
 | Raw string | see §21 |
 
@@ -68,55 +70,70 @@
 
 ### Primitive types
 
-| Type | Width | Notes |
-|------|-------|-------|
-| `int8` | 8 bit | signed |
-| `int16` | 16 bit | signed |
-| `int32` | 32 bit | signed |
-| `int64` | 64 bit | signed |
-| `uint8` | 8 bit | unsigned |
-| `uint16` | 16 bit | unsigned |
-| `uint32` | 32 bit | unsigned |
-| `uint64` | 64 bit | unsigned |
-| `float32` | 32 bit | IEEE-754 |
-| `float64` | 64 bit | IEEE-754 double |
-| `bool` | 1 bit | `true` / `false` |
-| `char` | 8 bit | unsigned byte |
-| `string` | ptr | null-terminated `char*` (C-ABI compatible) |
-| `voided` | — | C `void`; `voided*` = opaque pointer |
+Both canonical and short-alias forms are interchangeable. The compiler maps them identically.
+
+| Canonical | Short alias | Width | Notes |
+|-----------|-------------|-------|-------|
+| `int8`    | `i8`        | 8 bit | signed |
+| `int16`   | `i16`       | 16 bit | signed |
+| `int32`   | `i32`       | 32 bit | signed |
+| `int64`   | `i64`       | 64 bit | signed |
+| `uint8`   | `u8`, `byte`| 8 bit | unsigned |
+| `uint16`  | `u16`       | 16 bit | unsigned |
+| `uint32`  | `u32`       | 32 bit | unsigned |
+| `uint64`  | `u64`       | 64 bit | unsigned |
+| `float32` | `f32`       | 32 bit | IEEE-754 |
+| `float64` | `f64`       | 64 bit | IEEE-754 double |
+| `bool`    | —           | 1 bit  | `true` / `false` |
+| `char`    | —           | 8 bit  | unsigned byte |
+| `string`  | —           | ptr    | null-terminated `char*` |
+| `voided`  | —           | —      | C `void`; `voided*` = opaque pointer |
 
 ### Pointer types
 ```cll
-int32*      // pointer to int32
+i32*        // pointer to int32
 voided*     // void pointer (C-ABI opaque)
 string      // already a pointer (char*)
 ```
 
 ### Array / slice types
 ```cll
-int32[]     // arena-bound dynamic array (§11)
-int32[:]    // non-owning slice
-int32[16]   // fixed-size stack array
+i32[]       // arena-bound dynamic array (§11)
+i32[:]      // non-owning slice
+i32[16]     // fixed-size stack array
 ```
 
 ### Generic types
 ```cll
-Vector<int32>
-HashMap<string, int32>
+Vector<i32>
+HashMap<string, i32>
 ```
 Template params are stripped at compile time; the base name must match a known struct.
+
+### Type aliases (`using`)
+```cll
+using Meter  = i32;         // Meter is now a synonym for i32
+using Name   = u8*;         // pointer alias
+using Score  = float32;
+
+entry {
+    Meter dist = 100;
+    Name  label = "km";
+}
+```
+See §16b for namespace-level `using`.
 
 ### Automatic numeric coercion
 
 When a value of one numeric type is assigned to a different numeric type, the compiler automatically coerces it:
 
-- **Widening** (e.g. `int32 → int64`) — always safe, emits `sext`/`fpext`
-- **Narrowing** (e.g. `int64 → int32`) — emits `trunc`, produces a checker warning
+- **Widening** (e.g. `i32 → i64`) — always safe, emits `sext`/`fpext`
+- **Narrowing** (e.g. `i64 → i32`) — emits `trunc`, produces a checker warning
 - **Float ↔ int** — emits `sitofp` / `fptosi`, produces a checker warning
 - **Incompatible types** — `cannot cast 'T' to 'U'` error
 
 ```cll
-int32 len = strlen("hi");  // strlen returns uint64 → auto-truncated to int32
+i32 len = strlen("hi");  // strlen returns uint64 → auto-truncated to i32
 ```
 
 ---
@@ -127,7 +144,7 @@ A `.cll` file is a flat list of top-level items (order doesn't matter — a forw
 
 ```
 program ::= (import | struct | enum | namespace | def | export def
-            | entry | const | template)*
+            | entry | const | template | using)*
 ```
 
 ---
@@ -212,52 +229,40 @@ printf("%d\n", add(4, 8));
 
 ## 5a. Forward Declarations (`dec`)
 
-A function defined later in the file (or mutually recursive with another
-function) can be **forward-declared** with `dec`. This registers the
-function's signature — including its `tunnel` output names and types — so
-calls before the `def` appears type-check correctly.
+A function defined later in the file (or mutually recursive with another function) can be **forward-declared** with `dec`. The declaration **must** include the tunnel output signature — the compiler enforces this at check time.
 
 ```
-dec name(params) [-> type t1, type t2, ...];
+dec name(params) -> type t1 [, type t2, ...];
+dec name(params);               // only valid when def has NO tunnel outputs
 ```
 
 ```cll
-dec is_even(int32 n) -> int32 result;
-dec is_odd(int32 n)  -> int32 result;
+dec is_even(i32 n) -> i32 result;
+dec is_odd(i32 n)  -> i32 result;
 
-def is_even(int32 n)
-{
-    if (n == 0)
-    {
-        tunnel 1 -> int32 result;
-    }
-    else
-    {
-        reserve int32 r = is_odd(n - 1);
-        tunnel r -> int32 result;
+def is_even(i32 n) {
+    if (n == 0) { tunnel 1 -> i32 result; }
+    else {
+        reserve i32 r = is_odd(n - 1);
+        tunnel r -> i32 result;
     }
 }
 
-def is_odd(int32 n)
-{
-    if (n == 0)
-    {
-        tunnel 0 -> int32 result;
-    }
-    else
-    {
-        reserve int32 r = is_even(n - 1);
-        tunnel r -> int32 result;
+def is_odd(i32 n) {
+    if (n == 0) { tunnel 0 -> i32 result; }
+    else {
+        reserve i32 r = is_even(n - 1);
+        tunnel r -> i32 result;
     }
 }
 ```
 
 ### Rules
 
-- The parameter list and tunnel signature of `dec` must match the later `def`. (The compiler does not currently cross-check this exhaustively — mismatches may surface as link-time or runtime errors.)
-- If no tunnel outputs are declared (`dec name(params);`), the function must not contain `tunnel` statements with named outputs that callers rely on before the `def` is seen.
-- `dec` with no matching `def` anywhere in the program leaves an external declaration — useful for linking against functions defined in other translation units or C code (combined with `export def` on the defining side).
-- `export` may be combined: `export dec name(params) -> type t;` is accepted by the parser but linkage is determined by the `def`'s own `export` modifier.
+- The tunnel names in the `dec` **must match** the `tunnel ... -> type name` statements in the `def` body. The checker validates this and reports a clear error if they differ.
+- A `dec name(params);` (no `->`) followed by a `def` that uses `tunnel` statements is a **checker error**. The compiler reports exactly which tunnel outputs to add to the `dec`.
+- `dec` with no matching `def` anywhere leaves an external declaration — useful for linking against functions defined in other translation units.
+- `export` may be combined: `export dec name(params) -> type t;` — linkage is determined by the `def`'s own `export` modifier.
 
 ---
 
@@ -852,16 +857,61 @@ Lexical grouping — does **not** create a new arena:
 ```cll
 namespace Math
 {
-    const float64 PI = 3.14159265358979;
+    const f64 PI = 3.14159265358979;
 }
 
 // access:
-float64 area = Math::PI * r * r;
+f64 area = Math::PI * r * r;
 ```
 
 Nested path in one statement:
 ```cll
 namespace Engine::Physics { … }
+```
+
+---
+
+## 16b. `using` — Type Aliases and Namespace Imports
+
+### Type aliases
+
+```cll
+using Alias = existing_type;
+```
+
+Defines a new name that is completely interchangeable with the target type. The alias is resolved by the compiler before any type-checking or codegen.
+
+```cll
+using Meter   = i32;
+using Pixel   = i32;
+using CStr    = u8*;
+using Matrix4 = float32[16];
+
+entry {
+    Meter  dist  = 100;
+    Pixel  x     = 640;
+    CStr   label = "km";
+}
+```
+
+Aliases to struct types also work:
+```cll
+class Vec2 { f32 x; f32 y; }
+using Point = Vec2;       // Point and Vec2 are the same type
+```
+
+### Namespace imports
+
+Bring all names from a namespace into the current scope:
+```cll
+using namespace Math;
+f64 area = PI * r * r;   // no Math:: prefix needed
+```
+
+Namespace alias:
+```cll
+using M = namespace Math;
+f64 c = M::PI;
 ```
 
 ---
@@ -1063,15 +1113,19 @@ Line 3
 ## 22. Reserved Words
 
 ```
-bool       break      case       char       class      const
-continue   dec        default    def        else       enum
-entry      export     false      float32    float64    for
-foreach    if         import     int8       int16      int32
-int64      move       namespace  raw        reserve    reset
-string     struct     switch     template   true       tunnel
-typename   uint8      uint16     uint32     uint64     valid
+bool       break      byte       case       char       class
+const      continue   dec        default    def        else
+enum       entry      export     f32        f64        false
+float32    float64    for        foreach    i8         i16
+i32        i64        if         import     int8       int16
+int32      int64      move       namespace  raw        reserve
+reset      string     struct     switch     template   true
+tunnel     typename   u8         u16        u32        u64
+uint8      uint16     uint32     uint64     using      valid
 voided     while
 ```
+
+Short aliases (`i8`/`u8`/`i32`/`u32`/`f32`/`f64`/`byte` etc.) are keywords identical in every way to their canonical forms.
 
 Built-in identifiers (not keywords, but reserved by the compiler):
 ```
@@ -1086,14 +1140,17 @@ __arena    __arena_null    __track_validity_*
 |----|----------|-------|
 | `->` | Tunnel arrow | |
 | `::` | Namespace resolution | |
-| `==` `!=` `<` `>` `<=` `>=` | Comparison | |
+| `==` `!=` | Equality | Smart: calls `strcmp` for strings, field-compare for structs |
+| `<` `>` `<=` `>=` | Comparison | |
 | `&&` `\|\|` `!` | Logical | |
 | `+` `-` `*` `/` `%` | Arithmetic | auto-coerce numeric types |
-| `+=` `-=` `*=` `/=` `%=` | Compound assign | |
+| `**` | Power | |
+| `=` | Assignment | |
+| `+=` `-=` `*=` `/=` `%=` `**=` | Compound assign | |
 | `<<=` `>>=` | Shift-assign | |
 | `<<` | Array append / left-shift | |
 | `>>` | Right shift | |
-| `&` | Address-of | For managed types: returns heap ptr |
+| `&` | Address-of | |
 | `*` | Dereference | |
 | `.` | Field / method access | |
 | `[i]` | Subscript | |
@@ -1483,13 +1540,17 @@ entry
 ### Build: `import std;` program
 
 ```bash
-cshift myprog.cll -o myprog
+cshift myprog.cll -c -o myprog.o
+gcc myprog.o frt_native.o -o myprog
 ```
 
 ### Build: raylib program
 
 ```bash
-cshift game.cll -lraylib -lm -ldl -lpthread -lGL -lX11 -lXrandr -lXinerama -lXcursor -lXi -o game
+cshift game.cll -I/path/to/raylib/src -c -o game.o
+gcc game.o frt_native.o libraylib.a \
+    -lm -ldl -lpthread -lGL -lX11 -lXrandr -lXinerama -lXcursor -lXi \
+    -o game
 ```
 
 `frt_native.o` is found in the build output directory after running `cmake + make`.

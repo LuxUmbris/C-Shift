@@ -38,19 +38,29 @@ private:
       {"def", TokenType::KEYWORD},      {"enum", TokenType::KEYWORD},
       {"move", TokenType::KEYWORD},     {"valid", TokenType::KEYWORD},
       {"voided", TokenType::KEYWORD},   {"raw", TokenType::KEYWORD},
+      // Canonical integer/float types
       {"int8", TokenType::KEYWORD},     {"int16", TokenType::KEYWORD},
       {"int32", TokenType::KEYWORD},    {"int64", TokenType::KEYWORD},
       {"uint8", TokenType::KEYWORD},    {"uint16", TokenType::KEYWORD},
       {"uint32", TokenType::KEYWORD},   {"uint64", TokenType::KEYWORD},
-      {"float32", TokenType::KEYWORD},  {"char", TokenType::KEYWORD},
-      {"bool", TokenType::KEYWORD},     {"string", TokenType::KEYWORD},
+      {"float32", TokenType::KEYWORD},  {"float64", TokenType::KEYWORD},
+      {"char", TokenType::KEYWORD},     {"bool", TokenType::KEYWORD},
+      {"string", TokenType::KEYWORD},
+      // Short aliases (i8/u8/i32/u32 etc.) — identical semantics
+      {"i8", TokenType::KEYWORD},       {"u8", TokenType::KEYWORD},
+      {"i16", TokenType::KEYWORD},      {"u16", TokenType::KEYWORD},
+      {"i32", TokenType::KEYWORD},      {"u32", TokenType::KEYWORD},
+      {"i64", TokenType::KEYWORD},      {"u64", TokenType::KEYWORD},
+      {"f32", TokenType::KEYWORD},      {"f64", TokenType::KEYWORD},
+      {"byte", TokenType::KEYWORD},     // alias for u8
       {"true", TokenType::KEYWORD},     {"false", TokenType::KEYWORD},
       {"import", TokenType::KEYWORD},   {"entry", TokenType::KEYWORD},
-      {"const", TokenType::KEYWORD},    {"float64", TokenType::KEYWORD},
+      {"const", TokenType::KEYWORD},    
       {"reset", TokenType::KEYWORD},    {"break", TokenType::KEYWORD},
       {"continue", TokenType::KEYWORD}, {"template", TokenType::KEYWORD},
       {"typename", TokenType::KEYWORD}, {"export", TokenType::KEYWORD},
-      {"dec", TokenType::KEYWORD},      {"class", TokenType::KEYWORD}};
+      {"dec", TokenType::KEYWORD},      {"class", TokenType::KEYWORD},
+      {"using", TokenType::KEYWORD}};
 
   // Operators sorted by length (Maximal Munch)
   std::vector<std::pair<std::string, TokenType>> operator_lookup = {
@@ -179,7 +189,8 @@ public:
       }
 
       std::cerr << "[ERROR] Line " << line << ": Unknown symbol '" << current << "'\n";
-      advance();
+      throw std::runtime_error("[SYNTAX ERROR] Line " + std::to_string(line) +
+                               ": Unknown symbol '" + std::string(1, current) + "'");
     }
     tokens.push_back({TokenType::END_OF_FILE, "", line});
     return tokens;
@@ -250,12 +261,47 @@ private:
   Token readNumber()
   {
     std::string val;
+    // Hex literal: 0x... or 0X...
+    if (peek() == '0' && (peek(1) == 'x' || peek(1) == 'X'))
+    {
+      val += advance(); // '0'
+      val += advance(); // 'x'
+      if (!std::isxdigit(peek()))
+        throw std::runtime_error("[SYNTAX ERROR] Line " + std::to_string(line) +
+                                 ": Expected hex digit after '0x'");
+      while (std::isxdigit(peek()))
+        val += advance();
+      return {TokenType::NUMBER, val, line};
+    }
+    // Binary literal: 0b... or 0B...
+    if (peek() == '0' && (peek(1) == 'b' || peek(1) == 'B'))
+    {
+      val += advance(); // '0'
+      val += advance(); // 'b'
+      if (peek() != '0' && peek() != '1')
+        throw std::runtime_error("[SYNTAX ERROR] Line " + std::to_string(line) +
+                                 ": Expected binary digit after '0b'");
+      while (peek() == '0' || peek() == '1')
+        val += advance();
+      return {TokenType::NUMBER, val, line};
+    }
+    // Decimal / float
     while (std::isdigit(peek()))
       val += advance();
-    // Support decimal point for float32
+    // Support decimal point for float
     if (peek() == '.' && std::isdigit(peek(1)))
     {
       val += advance();
+      while (std::isdigit(peek()))
+        val += advance();
+    }
+    // Optional exponent: 1e10, 3.14e-2
+    if ((peek() == 'e' || peek() == 'E') &&
+        (std::isdigit(peek(1)) || ((peek(1) == '+' || peek(1) == '-') && std::isdigit(peek(2)))))
+    {
+      val += advance(); // 'e'
+      if (peek() == '+' || peek() == '-')
+        val += advance();
       while (std::isdigit(peek()))
         val += advance();
     }
