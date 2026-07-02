@@ -1,6 +1,6 @@
 # C<< (C-Shift) Language Specification
 
-> **Version:** 0.8 (2026)  
+> **Version:** 0.11 (2026)  
 > **Extension:** `.cll`  
 > **Entry point:** `entry { … }`  
 > **Paradigm:** Arena-scoped, VOP (Vertical Ownership Programming), C-ABI-compatible
@@ -1540,8 +1540,7 @@ entry
 ### Build: `import std;` program
 
 ```bash
-cshift myprog.cll -c -o myprog.o
-gcc myprog.o frt_native.o -o myprog
+cshift myprog.cll -o myprog
 ```
 
 ### Build: raylib program
