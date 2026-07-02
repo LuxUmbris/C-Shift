@@ -12,8 +12,8 @@ C<< focuses on deterministic, zero-runtime behaviour and direct C-ABI interopera
 ## Quick Start
 
 ```bash
-# Download a release and install
-tar -xzf cshift-*-linux-x86_64.tar.gz
+# Download and install
+gh repo clone LuxUmbris/C-Shift && cd C-Shift/scripts
 sudo ./install.sh              # system-wide (/usr/local)
 # or:
 ./install.sh ~/.local          # user-local, no sudo needed
