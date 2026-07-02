@@ -270,6 +270,8 @@ private:
 
   // Struct types and template types
   std::unordered_set<std::string> struct_types;
+  // struct_name -> list of field names (order matters for error messages)
+  std::unordered_map<std::string, std::vector<std::string>> struct_fields;
   std::unordered_set<std::string> enum_types;
   std::unordered_set<std::string> template_types;
 
@@ -702,11 +704,15 @@ private:
   void check_struct(Parser::ASTNode *n)
   {
     struct_types.insert(n->value);
+    std::vector<std::string> &fields = struct_fields[n->value];
+    fields.clear();
     for (auto *field : n->children)
     {
       if (!field)
         continue;
+      std::string fname = extract_name(field->value);
       std::string ftype = extract_base_type(field->value);
+      fields.push_back(fname);
       if (!is_known_type(ftype))
         add_warning(field->line, "Unknown field type '" + ftype + "' in struct '" + n->value + "'");
       if (ftype.size() >= 2 && ftype.substr(ftype.size() - 2) == "[]")
@@ -741,6 +747,85 @@ private:
       collect_body_tunnels(c, out);
   }
 
+  // Walk a function body collecting every "IDENT (" call-site identifier
+  // (best-effort: scans flat token lists inside Expression/CallStatement
+  // nodes, doesn't need full call resolution). Used by
+  // check_tunnel_name_collisions to know which functions are called from
+  // within another function's body.
+  void collect_called_function_names(Parser::ASTNode *n, std::unordered_set<std::string> &out)
+  {
+    if (!n)
+      return;
+    if (n->type == "Expression" || n->type == "CallStatement" || n->type == "Args")
+    {
+      for (size_t i = 0; i + 1 < n->children.size(); ++i)
+      {
+        auto *cur = n->children[i];
+        auto *next = n->children[i + 1];
+        if (cur && next && cur->type == "Token" &&
+            cur->token_type == Lexer::TokenType::IDENTIFIER && next->value == "(")
+          out.insert(cur->value);
+      }
+    }
+    for (auto *c : n->children)
+      collect_called_function_names(c, out);
+  }
+
+  // PRIORITY CHECK: a function's hidden tunnel-output parameter is bound to
+  // a caller-provided pointer slot named after the tunnel variable (e.g.
+  // `tunnel x -> int32 r;` creates an output slot keyed by the name "r").
+  // If a function F (whose own tunnel output is named, say, "r") calls
+  // another function G that ALSO has a tunnel output named "r", codegen
+  // previously aliased G's result write directly onto F's own output slot,
+  // silently corrupting F's return value (or whatever F's slot pointed to).
+  // This was responsible for hard-to-diagnose data corruption — e.g. struct
+  // fields silently becoming garbage when pushed into an array.
+  //
+  // This check makes that situation a compile error instead of undefined
+  // runtime behavior: any function whose own tunnel output name matches the
+  // tunnel output name of a function it calls must rename one of them.
+  void check_tunnel_name_collisions(Parser::ASTNode *n)
+  {
+    if (n->value.empty())
+      return;
+    auto sit = func_table.find(n->value);
+    if (sit == func_table.end() || sit->second.tunnels.empty())
+      return; // no tunnel outputs of our own — nothing to collide with
+
+    std::unordered_set<std::string> own_tunnel_names;
+    for (auto &t : sit->second.tunnels)
+      own_tunnel_names.insert(t.name);
+
+    Parser::ASTNode *body = n->children.size() >= 2 ? n->children[1]
+                           : (n->children.size() == 1 ? n->children[0] : nullptr);
+    if (!body)
+      return;
+
+    std::unordered_set<std::string> called;
+    collect_called_function_names(body, called);
+
+    for (const std::string &callee_name : called)
+    {
+      if (callee_name == n->value)
+        continue; // recursion into self is fine — same slot, same meaning
+      auto cit = func_table.find(callee_name);
+      if (cit == func_table.end())
+        continue;
+      for (auto &ct : cit->second.tunnels)
+      {
+        if (own_tunnel_names.count(ct.name))
+        {
+          add_warning(n->line,
+                     "function '" + n->value + "' has a tunnel output named '" + ct.name +
+                     "' and also calls '" + callee_name + "', which has its own tunnel output " +
+                     "named '" + ct.name + "' — consider renaming one of the two tunnel targets " +
+                     "(e.g. 'tunnel ... -> " + ct.type + " " + ct.name + "_out;') " +
+                     "to improve readability.");
+        }
+      }
+    }
+  }
+
   void check_function(Parser::ASTNode *n)
   {
     push_scope();
@@ -749,6 +834,8 @@ private:
     bool prev_in_function = in_function;
     current_func = &sig;
     in_function = true;
+
+    check_tunnel_name_collisions(n);
 
     // Cross-validate dec <-> def tunnel signatures.
     if (funcdecl_names.count(n->value))
@@ -838,6 +925,60 @@ private:
     if (!n->children.empty())
     {
       auto *init = n->children[0];
+
+      // ── Brace initializer validation ─────────────────────────────────────
+      if (init->type == "InitList")
+      {
+        std::string base_type = type;
+        bool is_arena_arr = (type.size() >= 2 && type.substr(type.size() - 2) == "[]");
+        if (is_arena_arr)
+          base_type = type.substr(0, type.size() - 2);
+        else
+        {
+          auto lt = base_type.find('<');
+          if (lt != std::string::npos)
+            base_type = base_type.substr(0, lt);
+        }
+        static const std::unordered_set<std::string> container_types = {
+          "Vector","Buffer","List","Deque","RingBuffer","SortedVec"
+        };
+        bool is_container = container_types.count(base_type);
+        bool is_struct    = struct_types.count(base_type);
+        if (!is_arena_arr && !is_container && !is_struct)
+          add_error(n->line, "Brace initializer '{ ... }' is not supported for type '" +
+                                 type + "' — only T[] arena arrays, container types "
+                                        "(Vector, Buffer, List, Deque, RingBuffer), "
+                                        "and structs support it");
+        // Struct field count check (only when directly initialising a struct, not T[])
+        if (is_struct && !is_arena_arr)
+        {
+          auto sit = struct_fields.find(base_type);
+          if (sit != struct_fields.end())
+          {
+            size_t n_fields = sit->second.size();
+            size_t n_given  = init->children.size();
+            if (n_given > n_fields)
+              add_error(n->line, "Too many initializers for struct '" + base_type +
+                                     "': has " + std::to_string(n_fields) +
+                                     " fields but " + std::to_string(n_given) +
+                                     " values given");
+          }
+        }
+        // Recursively check child expressions (important for undefined vars)
+        // Also handle nested InitList children {{ a, b }, { c, d }}
+        for (auto *child : init->children)
+        {
+          if (child->type == "InitList")
+          {
+            for (auto *sub : child->children)
+              check_expression_tokens(sub);
+          }
+          else
+            check_expression_tokens(child);
+        }
+        return;
+      }
+
       // Resolve 'using' aliases before type checks
       std::string resolved_type = type;
       {
@@ -1707,9 +1848,23 @@ private:
     if (it == func_table.end())
       return;
     const FuncSig &sig = it->second;
-    size_t expected = sig.params.size();
-    if (is_method && expected > 0)
-      --expected; // don't count implicit self
+    // Count expected args, expanding flat: struct params by their field count
+    size_t expected = 0;
+    size_t method_skip = (is_method && !sig.params.empty()) ? 1 : 0;
+    for (size_t pi = method_skip; pi < sig.params.size(); ++pi)
+    {
+      const std::string &ptype = sig.params[pi].first;
+      if (ptype.rfind("flat:", 0) == 0)
+      {
+        // Count comma-separated fields: "flat:i8,i8,i8,i8" -> 4
+        size_t fields = 1;
+        for (char ch : ptype.substr(5))
+          if (ch == ',') ++fields;
+        expected += fields;
+      }
+      else
+        ++expected;
+    }
     size_t actual = arg_spans.size();
     if (sig.is_variadic)
     {
@@ -1796,7 +1951,84 @@ private:
     for (size_t i = 0; i < toks.size(); ++i)
     {
       auto *tok = toks[i];
-      if (!tok || tok->token_type != Lexer::TokenType::IDENTIFIER)
+      if (!tok)
+        continue;
+
+      // ── array[idx].field validation ──────────────────────────────────────
+      // Pattern: IDENT [ ... ] . IDENT
+      // Validate: IDENT is a known array, its element type is a known struct,
+      // and the accessed field actually exists on that struct.
+      if (tok->token_type == Lexer::TokenType::IDENTIFIER &&
+          i + 1 < toks.size() && toks[i + 1]->value == "[")
+      {
+        // Find matching ]
+        size_t close_bracket = find_matching_close(toks, i + 1);
+        if (close_bracket < toks.size() &&
+            close_bracket + 1 < toks.size() && toks[close_bracket]->value == "]" &&
+            toks[close_bracket + 1]->value == ".")
+        {
+          // There's a .field after arr[idx]
+          size_t field_tok_idx = close_bracket + 2;
+          if (field_tok_idx < toks.size() &&
+              toks[field_tok_idx]->token_type == Lexer::TokenType::IDENTIFIER)
+          {
+            const std::string &arr_name = tok->value;
+            const std::string &field_name = toks[field_tok_idx]->value;
+            int field_line = (int)toks[field_tok_idx]->line;
+
+            Symbol *arr_sym = lookup(arr_name);
+            if (arr_sym)
+            {
+              const std::string &arr_type = arr_sym->type;
+              // Arena-array type ends with []
+              if (arr_type.size() >= 2 &&
+                  arr_type.substr(arr_type.size() - 2) == "[]")
+              {
+                std::string elem_type = arr_type.substr(0, arr_type.size() - 2);
+                // Strip pointer/template decorators for struct lookup
+                auto lt = elem_type.find('<');
+                if (lt != std::string::npos)
+                  elem_type = elem_type.substr(0, lt);
+                while (!elem_type.empty() && elem_type.back() == '*')
+                  elem_type.pop_back();
+
+                if (!elem_type.empty() && struct_types.count(elem_type))
+                {
+                  // Struct is known — check field exists
+                  auto sit = struct_fields.find(elem_type);
+                  if (sit != struct_fields.end())
+                  {
+                    bool found = false;
+                    for (const auto &fn : sit->second)
+                      if (fn == field_name) { found = true; break; }
+                    if (!found)
+                    {
+                      add_error(field_line, "'" + elem_type + "' has no field '" +
+                                            field_name + "' (accessed as " + arr_name +
+                                            "[...]." + field_name + ")");
+                    }
+                  }
+                }
+                else if (!elem_type.empty() && !struct_types.count(elem_type) &&
+                         elem_type != "voided" && elem_type != "string" &&
+                         elem_type.find("int") == std::string::npos &&
+                         elem_type.find("float") == std::string::npos &&
+                         elem_type.find("bool") == std::string::npos &&
+                         elem_type.find("char") == std::string::npos)
+                {
+                  // Element type is not a known struct — field access is always wrong
+                  add_error(field_line, "Cannot access field '" + field_name +
+                                        "' on '" + arr_name + "' — element type '" +
+                                        elem_type + "' is not a struct");
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // ── call-site arity check ─────────────────────────────────────────────
+      if (tok->token_type != Lexer::TokenType::IDENTIFIER)
         continue;
       // Must be followed by '('
       if (i + 1 >= toks.size() || toks[i + 1]->value != "(")
