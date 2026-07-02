@@ -43,6 +43,11 @@ class Codegen
   // name → EzFunc* (for call generation)
   std::unordered_map<std::string, EzFunc *> func_map;
 
+  // "EnumName::ValueName" → integer value, populated by forward_declare
+  std::unordered_map<std::string, long long> enum_value_map;
+  // "EnumName" → LLVM type (e.g. i8 for : uint8, i32 default)
+  std::unordered_map<std::string, EzType> enum_backing_type;
+
   // Tunnel output info for C<< functions: name → ordered list of (type, name)
   // pairs. These become hidden pointer parameters appended after the normal
   // params.
@@ -463,11 +468,18 @@ class Codegen
     else
     {
       // user-defined struct?
-      auto it = struct_map.find(base);
-      if (it != struct_map.end())
-        elem = it->second.llvm_type;
+      auto sit = struct_map.find(base);
+      if (sit != struct_map.end())
+        elem = sit->second.llvm_type;
       else
-        elem = ez_i32(); // fallback: treat unknown as i32
+      {
+        // user-defined enum? use its declared backing type
+        auto eit2 = enum_backing_type.find(base);
+        if (eit2 != enum_backing_type.end())
+          elem = eit2->second;
+        else
+          elem = ez_i32(); // fallback: treat unknown as i32
+      }
     }
 
     // Special-case: pointer-to-void/voided should map to i8* (ez_ptr()),
@@ -580,6 +592,8 @@ private:
       return;
     if (n->type == "Struct")
       forward_struct(n);
+    else if (n->type == "Enum")
+      forward_enum(n);
     else if (n->type == "CImport")
       forward_c_import(n);
     else if (n->type == "Function")
@@ -738,6 +752,37 @@ private:
         class_method_nodes[fn_name] = fn_node;
         order.push_back(fn_name);
       }
+    }
+  }
+
+  // Populate enum_value_map["EnumName::ValueName"] = integer value.
+  // Auto-increments unless an explicit "= N" was given (parser stores it
+  // appended to the EnumValue's value as "Name=N").
+  void forward_enum(Parser::ASTNode *n)
+  {
+    std::string full = n->value;
+    auto colon = full.find(':');
+    std::string ename = (colon != std::string::npos) ? full.substr(0, colon) : full;
+    // Store backing type for cshift_type() to use
+    std::string backing_s = (colon != std::string::npos) ? full.substr(colon + 1) : "int32";
+    enum_backing_type[ename] = cshift_type(backing_s);
+
+    long long next_val = 0;
+    for (auto *ev : n->children)
+    {
+      if (ev->type != "EnumValue")
+        continue;
+      std::string vname = ev->value;
+      auto eq = vname.find('=');
+      if (eq != std::string::npos)
+      {
+        std::string num_part = vname.substr(eq + 1);
+        vname = vname.substr(0, eq);
+        try { next_val = std::stoll(num_part); }
+        catch (...) { /* keep next_val as-is on parse failure */ }
+      }
+      enum_value_map[ename + "::" + vname] = next_val;
+      next_val++;
     }
   }
 
@@ -1307,16 +1352,235 @@ private:
     var_type_map[name] = "int64";         // arr.len loads from len_slot
   }
 
+  // Push an already-evaluated value into an arena array. This is the same
+  // grow/store logic as emit_array_append but takes a value directly instead
+  // of an expression node — used by InitList desugaring.
+  void emit_arena_push_val(const std::string &arr, EzVal val, const std::string &elem_s)
+  {
+    EzVal len_ptr  = get_arena_len_ptr(arr);
+    EzVal cap_ptr  = get_arena_cap_ptr(arr);
+    EzVal data_ptr = get_arena_data_ptr(arr);
+    if (!len_ptr || !cap_ptr || !data_ptr || !val)
+      return;
+    EzType elem_ty = cshift_type(elem_s);
+    EzType i64 = ez_i64();
+    EzVal len = ez_load(mod, i64, len_ptr, "len");
+    EzVal cap = ez_load(mod, i64, cap_ptr, "cap");
+
+    EzBlock *grow_b  = ez_block(current_func, "arr.grow");
+    EzBlock *store_b = ez_block(current_func, "arr.store");
+    EzVal need_grow  = ez_sge(mod, len, cap, "need_grow");
+    ez_cond_br(mod, need_grow, grow_b, store_b);
+
+    current_block = grow_b;
+    ez_use(grow_b);
+    EzVal cap_zero = ez_eq(mod, cap, ez_const_int(i64, 0), "cap_zero");
+    EzVal new_cap = LLVMBuildSelect(mod->builder, cap_zero, ez_const_int(i64, 8),
+                                    ez_mul(mod, cap, ez_const_int(i64, 2), "cap2"), "new_cap");
+    ez_store(mod, new_cap, cap_ptr);
+    unsigned elem_bits = LLVMSizeOfTypeInBits(LLVMGetModuleDataLayout(mod->mod), elem_ty);
+    EzVal elem_size  = ez_const_int(i64, std::max(1u, elem_bits / 8));
+    EzVal new_bytes  = ez_mul(mod, new_cap, elem_size, "new_bytes");
+    EzVal old_data   = ez_load(mod, ez_ptr(), data_ptr, "old_data");
+    EzFunc *rf = func_map.count("realloc") ? func_map["realloc"] : nullptr;
+    if (rf)
+    {
+      EzVal rargs[] = {old_data, new_bytes};
+      EzVal new_data = ez_call(mod, rf, rargs, 2, "new_data");
+      auto depth_it = arena_array_decl_depth.find(arr);
+      size_t ddepth = (depth_it != arena_array_decl_depth.end())
+                          ? depth_it->second
+                          : (arena_stack.empty() ? 0 : arena_stack.size() - 1);
+      EzVal tracked = arena_realloc_track_at_depth(ddepth, old_data, new_data);
+      ez_store(mod, tracked, data_ptr);
+    }
+    ez_br(mod, store_b);
+
+    current_block = store_b;
+    ez_use(store_b);
+    EzVal len2   = ez_load(mod, i64, len_ptr, "len2");
+    EzVal data2  = ez_load(mod, ez_ptr(), data_ptr, "data2");
+    EzVal gep_idx[] = {len2};
+    EzVal eptr   = ez_gep(mod, elem_ty, data2, gep_idx, 1, "elem_ptr");
+    ez_store(mod, val, eptr);
+    EzVal new_len = ez_add(mod, len2, ez_const_int(i64, 1), "new_len");
+    ez_store(mod, new_len, len_ptr);
+    EzVal main_slot = lookup_var(arr);
+    if (main_slot && main_slot != len_ptr)
+      ez_store(mod, new_len, main_slot);
+  }
+
+  // For T[] arena arrays where T is a struct: materialise { f1, f2, ... }
+  // as a struct value (not i64), so emit_arena_push_val can store it correctly.
+  EzVal emit_struct_initlist_as_alloca_then_load(Parser::ASTNode *init,
+                                                   const std::string &struct_type_s)
+  {
+    if (!init || init->type != "InitList")
+      return nullptr;
+    std::string base = struct_type_s;
+    { auto lt = base.find('<'); if (lt != std::string::npos) base = base.substr(0, lt); }
+    auto sit = struct_map.find(base);
+    if (sit == struct_map.end())
+    {
+      if (!init->children.empty())
+        return emit_expression_val(init->children[0], struct_type_s);
+      return nullptr;
+    }
+    const StructLayout &layout = sit->second;
+    EzType sty = layout.llvm_type;
+    EzVal slot = alloca_in_entry(current_func, sty, "__sarr_init_tmp");
+    for (size_t fi = 0; fi < init->children.size() && fi < layout.field_names.size(); ++fi)
+    {
+      const std::string &ftype = layout.field_types[fi];
+      EzVal val = emit_expression_val(init->children[fi], ftype);
+      if (!val) continue;
+      EzType field_ty = cshift_type(ftype);
+      EzType vt = LLVMTypeOf(val);
+      if (vt != field_ty)
+      {
+        LLVMTypeKind vk = LLVMGetTypeKind(vt), wk = LLVMGetTypeKind(field_ty);
+        if (vk == LLVMIntegerTypeKind && wk == LLVMIntegerTypeKind)
+          val = LLVMGetIntTypeWidth(vt) < LLVMGetIntTypeWidth(field_ty)
+                    ? LLVMBuildSExt(mod->builder, val, field_ty, "sext")
+                    : LLVMBuildTrunc(mod->builder, val, field_ty, "trunc");
+        else if (vk == LLVMIntegerTypeKind &&
+                 (wk == LLVMFloatTypeKind || wk == LLVMDoubleTypeKind))
+          val = LLVMBuildSIToFP(mod->builder, val, field_ty, "sitofp");
+      }
+      EzVal z = LLVMConstInt(LLVMInt32Type(), 0, 0);
+      EzVal fi_v = LLVMConstInt(LLVMInt32Type(), (unsigned)fi, 0);
+      EzVal gep_args[] = {z, fi_v};
+      EzVal fptr = LLVMBuildGEP2(mod->builder, sty, slot, gep_args, 2,
+                                   (layout.field_names[fi] + "_si").c_str());
+      LLVMBuildStore(mod->builder, val, fptr);
+    }
+    for (size_t fi = init->children.size(); fi < layout.field_names.size(); ++fi)
+    {
+      EzType field_ty = cshift_type(layout.field_types[fi]);
+      EzVal z = LLVMConstInt(LLVMInt32Type(), 0, 0);
+      EzVal fi_v = LLVMConstInt(LLVMInt32Type(), (unsigned)fi, 0);
+      EzVal gep_args[] = {z, fi_v};
+      EzVal fptr = LLVMBuildGEP2(mod->builder, sty, slot, gep_args, 2,
+                                   (layout.field_names[fi] + "_z").c_str());
+      LLVMBuildStore(mod->builder, LLVMConstNull(field_ty), fptr);
+    }
+    return ez_load(mod, sty, slot, "struct_val");
+  }
+
+  // Emit a nested InitList { f1, f2, ... } as a struct-typed alloca, then
+  // bit-cast/load the first pointer-sized field (for vec_push which takes i64).
+  // For structs wider than 64 bits we store on the stack and pass the pointer.
+  EzVal emit_struct_initlist_as_i64(Parser::ASTNode *init, const std::string &struct_type_s)
+  {
+    if (!init || init->type != "InitList")
+      return nullptr;
+
+    std::string base = struct_type_s;
+    { auto lt = base.find('<'); if (lt != std::string::npos) base = base.substr(0, lt); }
+
+    auto sit = struct_map.find(base);
+    if (sit == struct_map.end())
+    {
+      // Not a known struct — just evaluate first child as i64
+      if (!init->children.empty())
+      {
+        EzVal v = emit_expression_val(init->children[0], "int64");
+        return v;
+      }
+      return nullptr;
+    }
+
+    const StructLayout &layout = sit->second;
+    EzType sty = layout.llvm_type;
+    EzVal slot = alloca_in_entry(current_func, sty, "__struct_init_tmp");
+
+    // Assign each field positionally (mirrors struct InitList in emit_declaration)
+    for (size_t fi = 0; fi < init->children.size() && fi < layout.field_names.size(); ++fi)
+    {
+      const std::string &ftype = layout.field_types[fi];
+      EzVal val = emit_expression_val(init->children[fi], ftype);
+      if (!val) continue;
+      EzType field_ty = cshift_type(ftype);
+      // coerce if needed
+      EzType val_ty = LLVMTypeOf(val);
+      if (val_ty != field_ty)
+      {
+        LLVMTypeKind vk = LLVMGetTypeKind(val_ty), wk = LLVMGetTypeKind(field_ty);
+        unsigned vw = LLVMGetIntTypeWidth(val_ty), ww = LLVMGetIntTypeWidth(field_ty);
+        if (vk == LLVMIntegerTypeKind && wk == LLVMIntegerTypeKind)
+          val = vw < ww ? LLVMBuildSExt(mod->builder, val, field_ty, "sext")
+                        : LLVMBuildTrunc(mod->builder, val, field_ty, "trunc");
+        else if (vk == LLVMIntegerTypeKind && wk == LLVMFloatTypeKind)
+          val = LLVMBuildSIToFP(mod->builder, val, field_ty, "sitofp");
+        else if (vk == LLVMIntegerTypeKind && wk == LLVMDoubleTypeKind)
+          val = LLVMBuildSIToFP(mod->builder, val, field_ty, "sitofp");
+      }
+      EzVal zero = LLVMConstInt(LLVMInt32Type(), 0, 0);
+      EzVal fidx = LLVMConstInt(LLVMInt32Type(), (unsigned)fi, 0);
+      EzVal gep_args[] = {zero, fidx};
+      EzVal fptr = LLVMBuildGEP2(mod->builder, sty, slot, gep_args, 2,
+                                   (layout.field_names[fi] + "_tmp").c_str());
+      LLVMBuildStore(mod->builder, val, fptr);
+    }
+    // Zero-init remaining fields
+    for (size_t fi = init->children.size(); fi < layout.field_names.size(); ++fi)
+    {
+      EzType field_ty = cshift_type(layout.field_types[fi]);
+      EzVal zero = LLVMConstInt(LLVMInt32Type(), 0, 0);
+      EzVal fidx = LLVMConstInt(LLVMInt32Type(), (unsigned)fi, 0);
+      EzVal gep_args[] = {zero, fidx};
+      EzVal fptr = LLVMBuildGEP2(mod->builder, sty, slot, gep_args, 2,
+                                   (layout.field_names[fi] + "_zero").c_str());
+      LLVMBuildStore(mod->builder, LLVMConstNull(field_ty), fptr);
+    }
+
+    // vec_push takes i64. The Vector<T> internal storage is a flat i64 array
+    // where T is stored as a bit-pattern. For pointer-containing structs
+    // this means we need to store the struct on the heap and pass its address.
+    // For small structs (<= 64 bits) we can load the struct as i64.
+    unsigned total_bits = (unsigned)LLVMSizeOfTypeInBits(
+        LLVMGetModuleDataLayout(mod->mod), sty);
+
+    if (total_bits <= 64)
+    {
+      // Bit-cast the alloca pointer to i64* and load
+      EzVal as_i64 = LLVMBuildBitCast(mod->builder, slot,
+                                        LLVMPointerType(ez_i64(), 0), "si64ptr");
+      return ez_load(mod, ez_i64(), as_i64, "struct_i64");
+    }
+    else
+    {
+      // Struct is wider than 64 bits: pass pointer as i64 (let vec_push store the ptr)
+      return LLVMBuildPtrToInt(mod->builder, slot, ez_i64(), "sptr_i64");
+    }
+  }
+
+  // Emit the __track_validity_<name> flag initialised to true.
+  void emit_validity_flag(const std::string &vname)
+  {
+    std::string vflag = "__track_validity_" + vname;
+    if (lookup_var(vflag))
+      return; // already declared (shouldn't normally happen)
+    EzVal vslot = alloca_in_entry(current_func, ez_i1(), vflag.c_str());
+    ez_store(mod, LLVMConstInt(ez_i1(), 1, 0), vslot);
+    declare_var(vflag, vslot, "bool");
+  }
+
+  // Diagnostic note from codegen (non-fatal).
+  void add_codegen_note(const std::string &msg)
+  {
+    (void)msg; // Currently just suppressed; could route to stderr in debug builds.
+  }
+
   void emit_array_append(Parser::ASTNode *n)
   {
     // n->value = array variable name, n->children[0] = value expr
     const std::string &arr = n->value;
-    EzVal len_ptr = get_arena_len_ptr(arr);
-    EzVal cap_ptr = get_arena_cap_ptr(arr);
+    EzVal len_ptr  = get_arena_len_ptr(arr);
+    EzVal cap_ptr  = get_arena_cap_ptr(arr);
     EzVal data_ptr = get_arena_data_ptr(arr);
     if (!len_ptr || !cap_ptr || !data_ptr)
       return; // not an arena array
-
     std::string elem_s = "int32";
     auto eit = arena_array_elem_type.find(arr);
     if (eit != arena_array_elem_type.end())
@@ -1395,13 +1659,302 @@ private:
     std::string type_s = n->value.substr(0, sp);
     std::string vname = n->value.substr(sp + 1);
 
-    // Arena array: T[]
-    if (type_s.size() > 2 && type_s.substr(type_s.size() - 2) == "[]")
+    // ── Plain arena array declaration without initializer: T[] arr; ───────
+    bool has_initlist = (!n->children.empty() && n->children[0]->type == "InitList");
+    bool is_arena_arr = (type_s.size() > 2 && type_s.substr(type_s.size() - 2) == "[]");
+    if (is_arena_arr && !has_initlist)
     {
       std::string elem = type_s.substr(0, type_s.size() - 2);
       emit_arena_array_declaration(vname, elem);
       return;
     }
+
+    // Recognised from the parser as a child node of type "InitList".
+    // Desugar early so the rest of emit_declaration only sees the plain decl.
+    if (!n->children.empty() && n->children[0]->type == "InitList")
+    {
+      Parser::ASTNode *init = n->children[0];
+      const std::vector<Parser::ASTNode *> &elems = init->children;
+
+      // ── T[] arena array ────────────────────────────────────────────────
+      if (type_s.size() > 2 && type_s.substr(type_s.size() - 2) == "[]")
+      {
+        std::string elem = type_s.substr(0, type_s.size() - 2);
+        emit_arena_array_declaration(vname, elem);
+        for (auto *e : elems)
+        {
+          EzVal val = nullptr;
+          if (e->type == "InitList")
+            val = emit_struct_initlist_as_alloca_then_load(e, elem);
+          else
+            val = emit_expression_val(e, elem);
+          if (val)
+            emit_arena_push_val(vname, val, elem);
+        }
+        return;
+      }
+
+      // ── Strip template params to get base container type ───────────────
+      std::string base_type = type_s;
+      {
+        auto lt = base_type.find('<');
+        if (lt != std::string::npos)
+          base_type = base_type.substr(0, lt);
+      }
+      // Inner element type from template: "Vector<int32>" → "int32"
+      std::string tparam;
+      {
+        auto lt = type_s.find('<');
+        auto gt = type_s.rfind('>');
+        if (lt != std::string::npos && gt != std::string::npos && gt > lt)
+          tparam = type_s.substr(lt + 1, gt - lt - 1);
+      }
+
+      // ── Vector<T> x = { e1, e2, ... } ──────────────────────────────────
+      if (base_type == "Vector")
+      {
+        // Declare pointer slot (same as managed constructor path)
+        EzVal slot = alloca_in_entry(current_func, ez_ptr(), vname.c_str());
+        ez_store(mod, LLVMConstNull(ez_ptr()), slot);
+        declare_var(vname, slot, type_s);
+        // x = vec_new(16)
+        auto it = func_map.find("vec_new");
+        if (it != func_map.end())
+        {
+          EzVal chunk = ez_const_int(ez_i64(), 16);
+          EzVal args[] = {chunk};
+          EzVal ptr = ez_call(mod, it->second, args, 1, "vec_ptr");
+          EzVal tracked = arena_track(ptr);
+          ez_store(mod, tracked, slot);
+        }
+        // vec_push(&x, eN)
+        auto pit = func_map.find("vec_push");
+        if (pit != func_map.end())
+        {
+          for (auto *e : elems)
+          {
+            EzVal vec_ptr = ez_load(mod, ez_ptr(), slot, "vptr");
+            EzVal val = nullptr;
+            // Nested InitList { a, b, ... } for struct element types
+            if (e->type == "InitList" && !tparam.empty())
+            {
+              // Allocate a temp struct on the stack, init its fields, then push the i64 encoding
+              // For now: build the struct and pass its bit-cast to i64 (only works for <=64-bit structs)
+              // For pointer-sized structs (string, ptr), push the first field's ptr value
+              val = emit_struct_initlist_as_i64(e, tparam);
+            }
+            else
+            {
+              val = emit_expression_val(e, tparam.empty() ? "int64" : tparam);
+            }
+            if (!val) continue;
+            // vec_push takes i64 element — widen if needed
+            LLVMTypeKind vk = LLVMGetTypeKind(LLVMTypeOf(val));
+            if (vk == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(LLVMTypeOf(val)) < 64)
+              val = LLVMBuildSExt(mod->builder, val, ez_i64(), "widen");
+            else if (vk == LLVMPointerTypeKind)
+              val = LLVMBuildPtrToInt(mod->builder, val, ez_i64(), "ptr2i64");
+            EzVal pargs[] = {vec_ptr, val};
+            ez_call(mod, pit->second, pargs, 2, "");
+          }
+        }
+        return;
+      }
+
+      // ── Buffer<T> x = { e1, e2, ... } ──────────────────────────────────
+      if (base_type == "Buffer")
+      {
+        // buf_new(capacity) returns Buffer<T> by value (struct)
+        EzType buf_ty = cshift_type(type_s);
+        EzVal slot = alloca_in_entry(current_func, buf_ty, vname.c_str());
+        declare_var(vname, slot, type_s);
+        var_type_map[vname] = type_s;
+        auto bnit = func_map.find("buf_new");
+        if (bnit != func_map.end())
+        {
+          EzVal cap = ez_const_int(ez_i64(), (long long)std::max((size_t)8, elems.size()));
+          EzVal bargs[] = {cap};
+          EzVal buf_val = ez_call(mod, bnit->second, bargs, 1, "buf_init");
+          if (buf_val)
+            ez_store(mod, buf_val, slot);
+        }
+        // buf_push(&x, eN)
+        auto bpit = func_map.find("buf_push");
+        if (bpit != func_map.end())
+        {
+          for (auto *e : elems)
+          {
+            std::string elem_type_s_hint = tparam.empty() ? "int32" : tparam;
+            EzVal val = emit_expression_val(e, elem_type_s_hint);
+            if (!val) continue;
+            EzVal pargs[] = {slot, val};
+            ez_call(mod, bpit->second, pargs, 2, "");
+          }
+        }
+        return;
+      }
+
+      // ── List<T> x = { e1, e2, ... } ────────────────────────────────────
+      if (base_type == "List")
+      {
+        EzVal slot = alloca_in_entry(current_func, ez_ptr(), vname.c_str());
+        ez_store(mod, LLVMConstNull(ez_ptr()), slot);
+        declare_var(vname, slot, type_s);
+        auto lnit = func_map.find("list_new");
+        if (lnit != func_map.end())
+        {
+          EzVal ptr = ez_call(mod, lnit->second, nullptr, 0, "list_ptr");
+          EzVal tracked = arena_track(ptr);
+          ez_store(mod, tracked, slot);
+        }
+        auto lpit = func_map.find("list_push_back");
+        if (lpit != func_map.end())
+        {
+          for (auto *e : elems)
+          {
+            EzVal list_ptr = ez_load(mod, ez_ptr(), slot, "lptr");
+            EzVal val = emit_expression_val(e, tparam.empty() ? "int64" : tparam);
+            if (!val) continue;
+            if (LLVMGetTypeKind(LLVMTypeOf(val)) == LLVMIntegerTypeKind &&
+                LLVMGetIntTypeWidth(LLVMTypeOf(val)) < 64)
+              val = LLVMBuildSExt(mod->builder, val, ez_i64(), "widen");
+            EzVal pargs[] = {list_ptr, val};
+            ez_call(mod, lpit->second, pargs, 2, "");
+          }
+        }
+        return;
+      }
+
+      // ── Deque<T> x = { e1, e2, ... } ───────────────────────────────────
+      if (base_type == "Deque")
+      {
+        EzVal slot = alloca_in_entry(current_func, ez_ptr(), vname.c_str());
+        ez_store(mod, LLVMConstNull(ez_ptr()), slot);
+        declare_var(vname, slot, type_s);
+        auto dnit = func_map.find("deque_new");
+        if (dnit != func_map.end())
+        {
+          EzVal cap = ez_const_int(ez_i64(), (long long)std::max((size_t)8, elems.size()));
+          EzVal dargs[] = {cap};
+          EzVal ptr = ez_call(mod, dnit->second, dargs, 1, "deque_ptr");
+          EzVal tracked = arena_track(ptr);
+          ez_store(mod, tracked, slot);
+        }
+        auto dpit = func_map.find("deque_push_back");
+        if (dpit != func_map.end())
+        {
+          for (auto *e : elems)
+          {
+            EzVal dq_ptr = ez_load(mod, ez_ptr(), slot, "dqptr");
+            EzVal val = emit_expression_val(e, tparam.empty() ? "int32" : tparam);
+            if (!val) continue;
+            EzVal pargs[] = {dq_ptr, val};
+            ez_call(mod, dpit->second, pargs, 2, "");
+          }
+        }
+        return;
+      }
+
+      // ── RingBuffer<T> x = { e1, e2, ... } ──────────────────────────────
+      if (base_type == "RingBuffer")
+      {
+        EzVal slot = alloca_in_entry(current_func, ez_ptr(), vname.c_str());
+        ez_store(mod, LLVMConstNull(ez_ptr()), slot);
+        declare_var(vname, slot, type_s);
+        auto rnit = func_map.find("ring_new");
+        if (rnit != func_map.end())
+        {
+          EzVal cap = ez_const_int(ez_i64(), (long long)std::max((size_t)8, elems.size()));
+          EzVal rargs[] = {cap};
+          EzVal ptr = ez_call(mod, rnit->second, rargs, 1, "ring_ptr");
+          EzVal tracked = arena_track(ptr);
+          ez_store(mod, tracked, slot);
+        }
+        auto rpit = func_map.find("ring_push");
+        if (rpit != func_map.end())
+        {
+          for (auto *e : elems)
+          {
+            EzVal rng_ptr = ez_load(mod, ez_ptr(), slot, "rptr");
+            EzVal val = emit_expression_val(e, tparam.empty() ? "int32" : tparam);
+            if (!val) continue;
+            EzVal pargs[] = {rng_ptr, val};
+            ez_call(mod, rpit->second, pargs, 2, "");
+          }
+        }
+        return;
+      }
+
+      // ── Struct x = { field1_val, field2_val, ... } ─────────────────────
+      // Must be a known struct type — assign fields positionally.
+      if (struct_map.count(base_type))
+      {
+        EzType ty = cshift_type(type_s);
+        EzVal slot = alloca_in_entry(current_func, ty, vname.c_str());
+        declare_var(vname, slot, type_s);
+        var_type_map[vname] = type_s;
+        const StructLayout &layout = struct_map.at(base_type);
+        size_t n_fields = layout.field_names.size();
+        for (size_t fi = 0; fi < elems.size() && fi < n_fields; ++fi)
+        {
+          std::string ftype = layout.field_types[fi];
+          EzVal val = emit_expression_val(elems[fi], ftype);
+          if (!val) continue;
+          EzType field_ty = cshift_type(ftype);
+          EzVal zero = LLVMConstInt(LLVMInt32Type(), 0, 0);
+          EzVal fidx = LLVMConstInt(LLVMInt32Type(), (unsigned)fi, 0);
+          EzVal gep_args[] = {zero, fidx};
+          EzVal field_ptr = LLVMBuildGEP2(mod->builder, layout.llvm_type, slot,
+                                           gep_args, 2,
+                                           (layout.field_names[fi] + "_init").c_str());
+          // Coerce type if needed
+          EzType val_ty = LLVMTypeOf(val);
+          EzType want_ty = field_ty;
+          if (val_ty != want_ty)
+          {
+            LLVMTypeKind vk = LLVMGetTypeKind(val_ty);
+            LLVMTypeKind wk = LLVMGetTypeKind(want_ty);
+            if (vk == LLVMIntegerTypeKind && wk == LLVMIntegerTypeKind)
+            {
+              unsigned vw = LLVMGetIntTypeWidth(val_ty);
+              unsigned ww = LLVMGetIntTypeWidth(want_ty);
+              if (vw < ww)
+                val = LLVMBuildSExt(mod->builder, val, want_ty, "sext");
+              else if (vw > ww)
+                val = LLVMBuildTrunc(mod->builder, val, want_ty, "trunc");
+            }
+            else if (vk == LLVMFloatTypeKind && wk == LLVMDoubleTypeKind)
+              val = LLVMBuildFPExt(mod->builder, val, want_ty, "fpext");
+            else if (vk == LLVMDoubleTypeKind && wk == LLVMFloatTypeKind)
+              val = LLVMBuildFPTrunc(mod->builder, val, want_ty, "fptrunc");
+            else if (vk == LLVMIntegerTypeKind && wk == LLVMFloatTypeKind)
+              val = LLVMBuildSIToFP(mod->builder, val, want_ty, "sitofp");
+            else if (vk == LLVMIntegerTypeKind && wk == LLVMDoubleTypeKind)
+              val = LLVMBuildSIToFP(mod->builder, val, want_ty, "sitofp");
+          }
+          LLVMBuildStore(mod->builder, val, field_ptr);
+        }
+        // Zero-init any fields not covered by the initializer list
+        for (size_t fi = elems.size(); fi < n_fields; ++fi)
+        {
+          EzType field_ty = cshift_type(layout.field_types[fi]);
+          EzVal zero = LLVMConstInt(LLVMInt32Type(), 0, 0);
+          EzVal fidx = LLVMConstInt(LLVMInt32Type(), (unsigned)fi, 0);
+          EzVal gep_args[] = {zero, fidx};
+          EzVal field_ptr = LLVMBuildGEP2(mod->builder, layout.llvm_type, slot,
+                                           gep_args, 2,
+                                           (layout.field_names[fi] + "_zero").c_str());
+          LLVMBuildStore(mod->builder, LLVMConstNull(field_ty), field_ptr);
+        }
+        // Emit validity flag
+        emit_validity_flag(vname);
+        return;
+      }
+
+      // Unknown type with brace init — fall through as normal decl, emit a diagnostic
+      add_codegen_note("Brace initializer on unknown type '" + type_s + "' ignored.");
+    } // end InitList
+
 
     // Strip template params to get base type name: "Vector<int32>" → "Vector"
     std::string base_type = type_s;
@@ -2335,12 +2888,29 @@ private:
                 if (tit != func_tunnels.end())
                   for (auto &tp : tit->second)
                   {
-                    EzVal tslot = lookup_var(tp.name);
+                    // IMPORTANT: do not resolve this against tunnel_slots —
+                    // tunnel_slots holds the *current function's own* tunnel
+                    // output binding(s) (e.g. "r" -> caller's out-pointer).
+                    // If the callee's tunnel param happens to share that same
+                    // name (very common, e.g. both named "r"/"result"), a
+                    // naive lookup_var(tp.name) would alias the callee's
+                    // result write directly through to our own tunnel output
+                    // slot, corrupting unrelated data. Each call site must
+                    // get its own private temporary unless the user is doing
+                    // an explicit "reserve T name << tname = call();" bind,
+                    // which is handled by a separate code path before this
+                    // one runs.
+                    EzVal tslot = nullptr;
+                    if (!tunnel_slots.count(tp.name))
+                      tslot = lookup_var(tp.name);
                     if (!tslot)
                     {
                       EzType tty = cshift_type(tp.type);
-                      tslot = alloca_in_entry(current_func, tty, tp.name.c_str());
-                      declare_var(tp.name, tslot, tp.type);
+                      std::string tmp_name = "__call_tmp_" + fname + "_" + tp.name;
+                      tslot = alloca_in_entry(current_func, tty, tmp_name.c_str());
+                      // Deliberately NOT calling declare_var here — this is a
+                      // private per-call-site temporary, not a named local
+                      // the rest of the function body should be able to see.
                     }
                     call_args.push_back(tslot);
                   }
@@ -2397,11 +2967,13 @@ private:
                   if (tit != func_tunnels.end())
                     for (auto &tp : tit->second)
                     {
-                      EzVal ts = lookup_var(tp.name);
+                      EzVal ts = nullptr;
+                      if (!tunnel_slots.count(tp.name))
+                        ts = lookup_var(tp.name);
                       if (!ts)
                       {
-                        ts = alloca_in_entry(current_func, cshift_type(tp.type), tp.name.c_str());
-                        declare_var(tp.name, ts, tp.type);
+                        std::string tmp_name = "__call_tmp_" + class_fn + "_" + tp.name;
+                        ts = alloca_in_entry(current_func, cshift_type(tp.type), tmp_name.c_str());
                       }
                       call_args.push_back(ts);
                     }
@@ -2466,12 +3038,18 @@ private:
       {
         for (auto &tp : tit->second)
         {
-          EzVal slot = lookup_var(tp.name);
+          // Do not resolve against the current function's own tunnel output
+          // binding (tunnel_slots) — see detailed comment at the other call
+          // sites above. A same-named tunnel param in the callee must never
+          // alias our own out-pointer slot.
+          EzVal slot = nullptr;
+          if (!tunnel_slots.count(tp.name))
+            slot = lookup_var(tp.name);
           if (!slot)
           {
             EzType ty = cshift_type(tp.type);
-            slot = alloca_in_entry(current_func, ty, tp.name.c_str());
-            declare_var(tp.name, slot, tp.type);
+            std::string tmp_name = "__call_tmp_" + fname + "_" + tp.name;
+            slot = alloca_in_entry(current_func, ty, tmp_name.c_str());
           }
           // Pass the alloca pointer directly (it IS the address)
           args.push_back(slot);
@@ -2577,6 +3155,14 @@ private:
       // caller's pointer).  Load the caller's pointer then store rhs into it.
       EzVal caller_ptr = ez_load(mod, ez_ptr(), tit->second, "tptr");
       ez_store(mod, rhs, caller_ptr);
+      // Return immediately so fall-through code can't overwrite this value.
+      if (current_func)
+      {
+        ez_ret_void(mod);
+        EzBlock *unreachable_b = ez_block(current_func, "tunnel.unreachable");
+        current_block = unreachable_b;
+        ez_use(unreachable_b);
+      }
       return;
     }
 
@@ -2589,6 +3175,17 @@ private:
       tunnel_slots[tname] = ptr;
     }
     ez_store(mod, rhs, ptr);
+
+    // After a tunnel store the function must return immediately so that
+    // subsequent code (e.g. the fall-through "tunnel false" at end of function)
+    // cannot overwrite the value we just stored.
+    if (current_func)
+    {
+      ez_ret_void(mod);
+      EzBlock *unreachable_b = ez_block(current_func, "tunnel.unreachable");
+      current_block = unreachable_b;
+      ez_use(unreachable_b);
+    }
   }
 
   void emit_break(Parser::ASTNode *)
@@ -3023,6 +3620,20 @@ private:
     if (tokens.empty())
       return nullptr;
 
+    // Enum value access: IDENT :: IDENT  (e.g. Color::GREEN, TokenType::NUMBER)
+    if (tokens.size() == 3 && tokens[0]->type == "Token" && tokens[1]->value == "::" &&
+        tokens[2]->type == "Token")
+    {
+      std::string key = tokens[0]->value + "::" + tokens[2]->value;
+      auto it = enum_value_map.find(key);
+      if (it != enum_value_map.end())
+      {
+        EzType ty = cshift_type(hint.empty() ? "int32" : hint);
+        return ez_const_int(ty, it->second);
+      }
+      // Not a known enum value — fall through to other handlers (namespace etc.)
+    }
+
     // Handle 'move VAR' — just load the variable value; voiding is static
     if (tokens.size() == 2 && tokens[0]->value == "move" && tokens[1]->type == "Token")
     {
@@ -3124,13 +3735,38 @@ private:
     {
       std::vector<Parser::ASTNode *> lhs_tokens(tokens.begin(), tokens.begin() + op_idx);
       std::vector<Parser::ASTNode *> rhs_tokens(tokens.begin() + op_idx + 1, tokens.end());
-      EzVal lhs = eval_expr_children(lhs_tokens, hint);
-      EzVal rhs = eval_expr_children(rhs_tokens, hint);
+      const std::string &binop = tokens[op_idx]->value;
+
+      // For comparison and logical operators don't propagate bool/i1 hint to
+      // operands — it causes integer literals to be truncated to i1.
+      // Instead evaluate lhs first, then use its type to inform rhs.
+      bool is_cmp = (binop == ">=" || binop == "<=" || binop == ">" || binop == "<" ||
+                     binop == "==" || binop == "!=" || binop == "&&" || binop == "||");
+      std::string operand_hint = (is_cmp && (hint == "bool" || hint.empty())) ? "" : hint;
+
+      EzVal lhs = eval_expr_children(lhs_tokens, operand_hint);
+      // For rhs: use actual lhs type as hint so literals get the right integer width
+      std::string rhs_hint = operand_hint;
+      if (lhs && rhs_hint.empty())
+      {
+        LLVMTypeRef lt = LLVMTypeOf(lhs);
+        LLVMTypeKind lk = LLVMGetTypeKind(lt);
+        if (lk == LLVMIntegerTypeKind)
+        {
+          unsigned w = LLVMGetIntTypeWidth(lt);
+          if (w == 8)  rhs_hint = "int8";
+          else if (w == 16) rhs_hint = "int16";
+          else if (w == 32) rhs_hint = "int32";
+          else if (w == 64) rhs_hint = "int64";
+        }
+        else if (lk == LLVMFloatTypeKind)  rhs_hint = "float32";
+        else if (lk == LLVMDoubleTypeKind) rhs_hint = "float64";
+      }
+      EzVal rhs = eval_expr_children(rhs_tokens, rhs_hint);
       if (!lhs || !rhs)
         return lhs ? lhs : rhs;
 
       // ── Smart == and != for strings and structs ────────────────────────
-      const std::string &binop = tokens[op_idx]->value;
       if (binop == "==" || binop == "!=")
       {
         bool eq = (binop == "==");
@@ -3193,9 +3829,26 @@ private:
     if (tokens.size() >= 4 && tokens[0]->type == "Token" && tokens[1]->value == "[")
     {
       std::string arr = tokens[0]->value;
-      // Find matching ]
+
+      // Find the matching ']' by tracking bracket depth (don't assume it's
+      // the last token — there may be a trailing ".field" after it).
+      int depth = 0;
+      size_t close_idx = 0;
+      bool found_close = false;
+      for (size_t i = 1; i < tokens.size(); ++i)
+      {
+        if (tokens[i]->value == "[") depth++;
+        else if (tokens[i]->value == "]")
+        {
+          depth--;
+          if (depth == 0) { close_idx = i; found_close = true; break; }
+        }
+      }
+      if (!found_close)
+        return nullptr;
+
       std::vector<Parser::ASTNode *> idx_toks;
-      for (size_t i = 2; i < tokens.size() - 1; ++i)
+      for (size_t i = 2; i < close_idx; ++i)
         idx_toks.push_back(tokens[i]);
 
       // arr[[:]] — length-of operator
@@ -3226,10 +3879,80 @@ private:
         EzVal data_ptr = get_arena_data_ptr(arr);
         if (!data_ptr)
           return nullptr;
-        EzType elem_ty = cshift_type(eit->second);
+        std::string elem_type_s = eit->second;
+        EzType elem_ty = cshift_type(elem_type_s);
         EzVal data = ez_load(mod, ez_ptr(), data_ptr, "data");
         EzVal gep_idx[] = {idx};
         EzVal elem_ptr = ez_gep(mod, elem_ty, data, gep_idx, 1, "elem_ptr");
+
+        // Trailing ".field" (or chained ".field1.field2...") after arr[idx] —
+        // GEP into the specific field instead of loading the whole struct.
+        size_t after = close_idx + 1;
+        if (after < tokens.size() && tokens[after]->value == ".")
+        {
+          // Strip template params/pointer suffix to find the struct layout
+          std::string struct_name = elem_type_s;
+          {
+            auto lt = struct_name.find('<');
+            if (lt != std::string::npos)
+              struct_name = struct_name.substr(0, lt);
+            while (!struct_name.empty() && struct_name.back() == '*')
+              struct_name.pop_back();
+          }
+          auto sit = struct_map.find(struct_name);
+          if (sit != struct_map.end())
+          {
+            EzVal cur_ptr = elem_ptr;
+            std::string cur_struct_name = struct_name;
+            size_t pos = after;
+            EzVal field_val = nullptr;
+            std::string field_type_s;
+            while (pos < tokens.size() && tokens[pos]->value == "." && pos + 1 < tokens.size())
+            {
+              std::string field_name = tokens[pos + 1]->value;
+              auto slit = struct_map.find(cur_struct_name);
+              if (slit == struct_map.end())
+                return nullptr;
+              const StructLayout &layout = slit->second;
+              int field_idx = -1;
+              for (size_t fi = 0; fi < layout.field_names.size(); ++fi)
+              {
+                if (layout.field_names[fi] == field_name)
+                {
+                  field_idx = (int)fi;
+                  field_type_s = layout.field_types[fi];
+                  break;
+                }
+              }
+              if (field_idx < 0)
+                return nullptr;
+              EzType field_ty = cshift_type(field_type_s);
+              EzVal zero = LLVMConstInt(LLVMInt32Type(), 0, 0);
+              EzVal fidx = LLVMConstInt(LLVMInt32Type(), (unsigned)field_idx, 0);
+              EzVal gep_args[] = {zero, fidx};
+              EzVal field_ptr = LLVMBuildGEP2(mod->builder, layout.llvm_type, cur_ptr, gep_args, 2,
+                                               (field_name + "_gep").c_str());
+              field_val = ez_load(mod, field_ty, field_ptr, field_name.c_str());
+              pos += 2;
+              // Prepare for a possible further chained field (nested struct)
+              std::string next_struct = field_type_s;
+              {
+                auto lt2 = next_struct.find('<');
+                if (lt2 != std::string::npos)
+                  next_struct = next_struct.substr(0, lt2);
+                while (!next_struct.empty() && next_struct.back() == '*')
+                  next_struct.pop_back();
+              }
+              cur_struct_name = next_struct;
+              cur_ptr = field_ptr;
+            }
+            if (pos == tokens.size())
+              return field_val;
+            // Trailing tokens we don't understand (e.g. a method call) —
+            // fall through to the generic full-element load below.
+          }
+        }
+
         return ez_load(mod, elem_ty, elem_ptr, "elem");
       }
     }
@@ -3546,12 +4269,14 @@ private:
                   {
                     for (auto &tp : tit->second)
                     {
-                      EzVal tslot = lookup_var(tp.name);
+                      EzVal tslot = nullptr;
+                      if (!tunnel_slots.count(tp.name))
+                        tslot = lookup_var(tp.name);
                       if (!tslot)
                       {
                         EzType tty = cshift_type(tp.type);
-                        tslot = alloca_in_entry(current_func, tty, tp.name.c_str());
-                        declare_var(tp.name, tslot, tp.type);
+                        std::string tmp_name = "__call_tmp_" + class_fn + "_" + tp.name;
+                        tslot = alloca_in_entry(current_func, tty, tmp_name.c_str());
                       }
                       call_args.push_back(tslot);
                     }
@@ -3972,18 +4697,25 @@ private:
     std::vector<EzVal> args;
     collect_call_args(arg_groups, param_types, regular_params, is_vararg_fn2, args);
 
-    // Append hidden tunnel pointer args — find or create caller slots
+    // Append hidden tunnel pointer args — find or create caller slots.
+    // Track each slot by tunnel-param name so the single-tunnel readback
+    // below can use the exact slot we just allocated, instead of doing a
+    // second lookup_var() that won't find unnamed private temporaries.
+    std::unordered_map<std::string, EzVal> call_tunnel_slots;
     if (tit2 != func_tunnels.end())
     {
       for (auto &tp : tit2->second)
       {
-        EzVal slot = lookup_var(tp.name);
+        EzVal slot = nullptr;
+        if (!tunnel_slots.count(tp.name))
+          slot = lookup_var(tp.name);
         if (!slot)
         {
           EzType ty = cshift_type(tp.type);
-          slot = alloca_in_entry(current_func, ty, tp.name.c_str());
-          declare_var(tp.name, slot, tp.type);
+          std::string tmp_name = "__call_tmp_" + fname + "_" + tp.name;
+          slot = alloca_in_entry(current_func, ty, tmp_name.c_str());
         }
+        call_tunnel_slots[tp.name] = slot;
         args.push_back(slot);
       }
     }
@@ -4017,7 +4749,10 @@ private:
     if (tit2 != func_tunnels.end() && tit2->second.size() == 1)
     {
       const auto &tp = tit2->second[0];
-      EzVal slot = lookup_var(tp.name);
+      EzVal slot = nullptr;
+      auto cts = call_tunnel_slots.find(tp.name);
+      if (cts != call_tunnel_slots.end())
+        slot = cts->second;
       if (slot)
       {
         EzType slot_ty = cshift_type(tp.type);
