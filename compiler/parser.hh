@@ -177,10 +177,18 @@ private:
           peek_token(la + 1).value != ":" && peek_token(la + 1).value != ":")
         return parse_assignment();
 
-      // skip potential pointer/slice decorators
-      while (peek_token(la).value == "*" || peek_token(la).value == "[" ||
-             peek_token(la).value == "[:]")
+      // skip potential pointer/slice decorators: *, []
+      while (peek_token(la).value == "*")
         la++;
+      // skip [] and [N] and [:]: consume [ then optional content then ]
+      while (peek_token(la).value == "[" || peek_token(la).value == "[:]")
+      {
+        if (peek_token(la).value == "[:]") { la++; continue; }
+        la++; // consume [
+        while (peek_token(la).value != "]" && peek_token(la).type != Lexer::TokenType::END_OF_FILE)
+          la++;
+        if (peek_token(la).value == "]") la++; // consume ]
+      }
       // skip dot-field chains: p.x  or  p.x.y  etc.
       while (peek_token(la).value == "." && peek_token(la + 1).type == Lexer::TokenType::IDENTIFIER)
         la += 2;
@@ -508,7 +516,12 @@ private:
         expr->children.push_back(make_token_node(advance_token()));
         continue;
       }
-      if (paren_depth == 0 && bracket_depth == 0 && (val == ";" || val == "}" || val == "->"))
+      if (paren_depth == 0 && bracket_depth == 0 &&
+          peek_token().type == Lexer::TokenType::OPERATOR &&
+          (val == ";" || val == "}"))
+        break;
+      if (paren_depth == 0 && bracket_depth == 0 && val == "->" &&
+          peek_token().type == Lexer::TokenType::OPERATOR)
         break;
 
       expr->children.push_back(make_token_node(advance_token()));
@@ -985,6 +998,29 @@ private:
     return node;
   }
 
+  // Parse a single initializer-list element: collect tokens until ',' or '}'
+  // at depth 0, without consuming the delimiter itself.
+  ASTNode *parse_initlist_elem()
+  {
+    size_t ln = current_line();
+    ASTNode *expr = new ASTNode("Expression", "", ln, current_depth);
+    int depth = 0; // tracks ( { [ nesting
+    while (peek_token().type != Lexer::TokenType::END_OF_FILE)
+    {
+      const std::string &v = peek_token().value;
+      if (v == "(" || v == "[" || v == "{") { depth++; expr->children.push_back(make_token_node(advance_token())); continue; }
+      if (v == ")" || v == "]" || v == "}") {
+        if (depth == 0) break;
+        depth--;
+        expr->children.push_back(make_token_node(advance_token()));
+        continue;
+      }
+      if (depth == 0 && v == ",") break;
+      expr->children.push_back(make_token_node(advance_token()));
+    }
+    return expr;
+  }
+
   ASTNode *parse_declaration()
   {
     size_t ln = current_line();
@@ -995,7 +1031,47 @@ private:
     if (peek_token().value == "=")
     {
       advance_token();
-      node->children.push_back(parse_expression());
+      // Brace initializer:  T x = { expr, expr, ... };
+      // Works for: T[] arena arrays, Vector<T>, Buffer<T>, List, Deque,
+      //            RingBuffer, SortedVec, and plain structs.
+      // Nested:    Vector<Pair<A,B>> x = {{ a, b }, { c, d }};
+      if (peek_token().value == "{")
+      {
+        advance_token(); // consume '{'
+        ASTNode *init_list = new ASTNode("InitList", type, ln, current_depth);
+        while (peek_token().value != "}" &&
+               peek_token().type != Lexer::TokenType::END_OF_FILE)
+        {
+          // ── Nested brace { ... } → child InitList (struct/pair element) ─
+          if (peek_token().value == "{")
+          {
+            advance_token(); // consume inner '{'
+            ASTNode *inner = new ASTNode("InitList", "", ln, current_depth);
+            while (peek_token().value != "}" &&
+                   peek_token().type != Lexer::TokenType::END_OF_FILE)
+            {
+              inner->children.push_back(parse_initlist_elem());
+              if (peek_token().value == ",")
+                advance_token();
+            }
+            match_token(Lexer::TokenType::OPERATOR, "}");
+            init_list->children.push_back(inner);
+          }
+          else
+          {
+            // Plain expression element — stop at ',' or '}'
+            init_list->children.push_back(parse_initlist_elem());
+          }
+          if (peek_token().value == ",")
+            advance_token();
+        }
+        match_token(Lexer::TokenType::OPERATOR, "}");
+        node->children.push_back(init_list);
+      }
+      else
+      {
+        node->children.push_back(parse_expression());
+      }
     }
     match_token(Lexer::TokenType::OPERATOR, ";");
     return node;
