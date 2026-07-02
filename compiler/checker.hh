@@ -796,8 +796,9 @@ private:
     for (auto &t : sit->second.tunnels)
       own_tunnel_names.insert(t.name);
 
-    Parser::ASTNode *body = n->children.size() >= 2 ? n->children[1]
-                           : (n->children.size() == 1 ? n->children[0] : nullptr);
+    Parser::ASTNode *body = n->children.size() >= 2
+                                ? n->children[1]
+                                : (n->children.size() == 1 ? n->children[0] : nullptr);
     if (!body)
       return;
 
@@ -815,12 +816,12 @@ private:
       {
         if (own_tunnel_names.count(ct.name))
         {
-          add_warning(n->line,
-                     "function '" + n->value + "' has a tunnel output named '" + ct.name +
-                     "' and also calls '" + callee_name + "', which has its own tunnel output " +
-                     "named '" + ct.name + "' — consider renaming one of the two tunnel targets " +
-                     "(e.g. 'tunnel ... -> " + ct.type + " " + ct.name + "_out;') " +
-                     "to improve readability.");
+          add_warning(n->line, "function '" + n->value + "' has a tunnel output named '" + ct.name +
+                                   "' and also calls '" + callee_name +
+                                   "', which has its own tunnel output " + "named '" + ct.name +
+                                   "' — consider renaming one of the two tunnel targets " +
+                                   "(e.g. 'tunnel ... -> " + ct.type + " " + ct.name + "_out;') " +
+                                   "to improve readability.");
         }
       }
     }
@@ -940,15 +941,14 @@ private:
             base_type = base_type.substr(0, lt);
         }
         static const std::unordered_set<std::string> container_types = {
-          "Vector","Buffer","List","Deque","RingBuffer","SortedVec"
-        };
+            "Vector", "Buffer", "List", "Deque", "RingBuffer", "SortedVec"};
         bool is_container = container_types.count(base_type);
-        bool is_struct    = struct_types.count(base_type);
+        bool is_struct = struct_types.count(base_type);
         if (!is_arena_arr && !is_container && !is_struct)
-          add_error(n->line, "Brace initializer '{ ... }' is not supported for type '" +
-                                 type + "' — only T[] arena arrays, container types "
-                                        "(Vector, Buffer, List, Deque, RingBuffer), "
-                                        "and structs support it");
+          add_error(n->line, "Brace initializer '{ ... }' is not supported for type '" + type +
+                                 "' — only T[] arena arrays, container types "
+                                 "(Vector, Buffer, List, Deque, RingBuffer), "
+                                 "and structs support it");
         // Struct field count check (only when directly initialising a struct, not T[])
         if (is_struct && !is_arena_arr)
         {
@@ -956,12 +956,11 @@ private:
           if (sit != struct_fields.end())
           {
             size_t n_fields = sit->second.size();
-            size_t n_given  = init->children.size();
+            size_t n_given = init->children.size();
             if (n_given > n_fields)
-              add_error(n->line, "Too many initializers for struct '" + base_type +
-                                     "': has " + std::to_string(n_fields) +
-                                     " fields but " + std::to_string(n_given) +
-                                     " values given");
+              add_error(n->line, "Too many initializers for struct '" + base_type + "': has " +
+                                     std::to_string(n_fields) + " fields but " +
+                                     std::to_string(n_given) + " values given");
           }
         }
         // Recursively check child expressions (important for undefined vars)
@@ -1859,7 +1858,8 @@ private:
         // Count comma-separated fields: "flat:i8,i8,i8,i8" -> 4
         size_t fields = 1;
         for (char ch : ptype.substr(5))
-          if (ch == ',') ++fields;
+          if (ch == ',')
+            ++fields;
         expected += fields;
       }
       else
@@ -1958,14 +1958,13 @@ private:
       // Pattern: IDENT [ ... ] . IDENT
       // Validate: IDENT is a known array, its element type is a known struct,
       // and the accessed field actually exists on that struct.
-      if (tok->token_type == Lexer::TokenType::IDENTIFIER &&
-          i + 1 < toks.size() && toks[i + 1]->value == "[")
+      if (tok->token_type == Lexer::TokenType::IDENTIFIER && i + 1 < toks.size() &&
+          toks[i + 1]->value == "[")
       {
         // Find matching ]
         size_t close_bracket = find_matching_close(toks, i + 1);
-        if (close_bracket < toks.size() &&
-            close_bracket + 1 < toks.size() && toks[close_bracket]->value == "]" &&
-            toks[close_bracket + 1]->value == ".")
+        if (close_bracket < toks.size() && close_bracket + 1 < toks.size() &&
+            toks[close_bracket]->value == "]" && toks[close_bracket + 1]->value == ".")
         {
           // There's a .field after arr[idx]
           size_t field_tok_idx = close_bracket + 2;
@@ -1981,8 +1980,7 @@ private:
             {
               const std::string &arr_type = arr_sym->type;
               // Arena-array type ends with []
-              if (arr_type.size() >= 2 &&
-                  arr_type.substr(arr_type.size() - 2) == "[]")
+              if (arr_type.size() >= 2 && arr_type.substr(arr_type.size() - 2) == "[]")
               {
                 std::string elem_type = arr_type.substr(0, arr_type.size() - 2);
                 // Strip pointer/template decorators for struct lookup
@@ -2000,12 +1998,16 @@ private:
                   {
                     bool found = false;
                     for (const auto &fn : sit->second)
-                      if (fn == field_name) { found = true; break; }
+                      if (fn == field_name)
+                      {
+                        found = true;
+                        break;
+                      }
                     if (!found)
                     {
-                      add_error(field_line, "'" + elem_type + "' has no field '" +
-                                            field_name + "' (accessed as " + arr_name +
-                                            "[...]." + field_name + ")");
+                      add_error(field_line, "'" + elem_type + "' has no field '" + field_name +
+                                                "' (accessed as " + arr_name + "[...]." +
+                                                field_name + ")");
                     }
                   }
                 }
@@ -2017,9 +2019,8 @@ private:
                          elem_type.find("char") == std::string::npos)
                 {
                   // Element type is not a known struct — field access is always wrong
-                  add_error(field_line, "Cannot access field '" + field_name +
-                                        "' on '" + arr_name + "' — element type '" +
-                                        elem_type + "' is not a struct");
+                  add_error(field_line, "Cannot access field '" + field_name + "' on '" + arr_name +
+                                            "' — element type '" + elem_type + "' is not a struct");
                 }
               }
             }
