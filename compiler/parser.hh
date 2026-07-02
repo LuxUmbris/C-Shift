@@ -183,11 +183,16 @@ private:
       // skip [] and [N] and [:]: consume [ then optional content then ]
       while (peek_token(la).value == "[" || peek_token(la).value == "[:]")
       {
-        if (peek_token(la).value == "[:]") { la++; continue; }
+        if (peek_token(la).value == "[:]")
+        {
+          la++;
+          continue;
+        }
         la++; // consume [
         while (peek_token(la).value != "]" && peek_token(la).type != Lexer::TokenType::END_OF_FILE)
           la++;
-        if (peek_token(la).value == "]") la++; // consume ]
+        if (peek_token(la).value == "]")
+          la++; // consume ]
       }
       // skip dot-field chains: p.x  or  p.x.y  etc.
       while (peek_token(la).value == "." && peek_token(la + 1).type == Lexer::TokenType::IDENTIFIER)
@@ -517,8 +522,7 @@ private:
         continue;
       }
       if (paren_depth == 0 && bracket_depth == 0 &&
-          peek_token().type == Lexer::TokenType::OPERATOR &&
-          (val == ";" || val == "}"))
+          peek_token().type == Lexer::TokenType::OPERATOR && (val == ";" || val == "}"))
         break;
       if (paren_depth == 0 && bracket_depth == 0 && val == "->" &&
           peek_token().type == Lexer::TokenType::OPERATOR)
@@ -1008,14 +1012,22 @@ private:
     while (peek_token().type != Lexer::TokenType::END_OF_FILE)
     {
       const std::string &v = peek_token().value;
-      if (v == "(" || v == "[" || v == "{") { depth++; expr->children.push_back(make_token_node(advance_token())); continue; }
-      if (v == ")" || v == "]" || v == "}") {
-        if (depth == 0) break;
+      if (v == "(" || v == "[" || v == "{")
+      {
+        depth++;
+        expr->children.push_back(make_token_node(advance_token()));
+        continue;
+      }
+      if (v == ")" || v == "]" || v == "}")
+      {
+        if (depth == 0)
+          break;
         depth--;
         expr->children.push_back(make_token_node(advance_token()));
         continue;
       }
-      if (depth == 0 && v == ",") break;
+      if (depth == 0 && v == ",")
+        break;
       expr->children.push_back(make_token_node(advance_token()));
     }
     return expr;
@@ -1039,16 +1051,14 @@ private:
       {
         advance_token(); // consume '{'
         ASTNode *init_list = new ASTNode("InitList", type, ln, current_depth);
-        while (peek_token().value != "}" &&
-               peek_token().type != Lexer::TokenType::END_OF_FILE)
+        while (peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
         {
           // ── Nested brace { ... } → child InitList (struct/pair element) ─
           if (peek_token().value == "{")
           {
             advance_token(); // consume inner '{'
             ASTNode *inner = new ASTNode("InitList", "", ln, current_depth);
-            while (peek_token().value != "}" &&
-                   peek_token().type != Lexer::TokenType::END_OF_FILE)
+            while (peek_token().value != "}" && peek_token().type != Lexer::TokenType::END_OF_FILE)
             {
               inner->children.push_back(parse_initlist_elem());
               if (peek_token().value == ",")
