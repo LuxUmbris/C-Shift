@@ -2542,11 +2542,12 @@ private:
     int depth = 0;
     for (auto *tok : tokens)
     {
-      if (tok->value == "(" || tok->value == "[")
+      bool is_op = tok->token_type == Lexer::TokenType::OPERATOR;
+      if (is_op && (tok->value == "(" || tok->value == "["))
         depth++;
-      else if (tok->value == ")" || tok->value == "]")
+      else if (is_op && (tok->value == ")" || tok->value == "]"))
         depth--;
-      if (tok->value == "," && depth == 0)
+      if (is_op && tok->value == "," && depth == 0)
       {
         if (!cur.empty())
           groups.push_back(cur);
@@ -2596,17 +2597,18 @@ private:
     int depth = 0;
     for (auto *tok : *flat)
     {
-      if (tok->value == "(")
+      bool is_op = tok->token_type == Lexer::TokenType::OPERATOR;
+      if (is_op && tok->value == "(")
       {
         depth++;
         cur.push_back(tok);
       }
-      else if (tok->value == ")")
+      else if (is_op && tok->value == ")")
       {
         depth--;
         cur.push_back(tok);
       }
-      else if (tok->value == "," && depth == 0)
+      else if (is_op && tok->value == "," && depth == 0)
       {
         groups.push_back(cur);
         cur.clear();
@@ -4438,14 +4440,15 @@ private:
       for (int i = (int)tokens.size() - 1; i >= 1; --i)
       {
         const std::string &v = tokens[i]->value;
-        if (v == ")")
+        bool is_op = tokens[i]->token_type == Lexer::TokenType::OPERATOR;
+        if (is_op && v == ")")
           depth++;
-        if (v == "(")
+        if (is_op && v == "(")
           depth--;
         if (depth == 0)
         {
           for (auto &op : level)
-            if (v == op)
+            if (is_op && v == op)
               return i;
         }
       }
@@ -4683,12 +4686,13 @@ private:
     for (size_t i = 2; i < tokens.size(); ++i)
     {
       const std::string &v = tokens[i]->value;
-      if (v == "(")
+      bool is_op = tokens[i]->token_type == Lexer::TokenType::OPERATOR;
+      if (is_op && v == "(")
       {
         depth++;
         cur_group.push_back(tokens[i]);
       }
-      else if (v == ")")
+      else if (is_op && v == ")")
       {
         if (depth == 0)
         {
@@ -4699,7 +4703,7 @@ private:
         depth--;
         cur_group.push_back(tokens[i]);
       }
-      else if (v == "," && depth == 0)
+      else if (is_op && v == "," && depth == 0)
       {
         arg_groups.push_back(cur_group);
         cur_group.clear();
