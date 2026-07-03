@@ -492,14 +492,15 @@ private:
     while (peek_token().type != Lexer::TokenType::END_OF_FILE)
     {
       const std::string &val = peek_token().value;
+      bool is_op = peek_token().type == Lexer::TokenType::OPERATOR;
 
-      if (val == "(")
+      if (is_op && val == "(")
       {
         paren_depth++;
         expr->children.push_back(make_token_node(advance_token()));
         continue;
       }
-      if (val == ")")
+      if (is_op && val == ")")
       {
         if (paren_depth == 0)
           break;
@@ -507,13 +508,13 @@ private:
         expr->children.push_back(make_token_node(advance_token()));
         continue;
       }
-      if (val == "[")
+      if (is_op && val == "[")
       {
         bracket_depth++;
         expr->children.push_back(make_token_node(advance_token()));
         continue;
       }
-      if (val == "]")
+      if (is_op && val == "]")
       {
         if (bracket_depth == 0 && paren_depth == 0)
           break;
