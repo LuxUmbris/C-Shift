@@ -1719,6 +1719,8 @@ private:
     int depth = 0;
     for (size_t i = open_idx; i < toks.size(); ++i)
     {
+      if (toks[i]->token_type != Lexer::TokenType::OPERATOR)
+        continue;
       const std::string &v = toks[i]->value;
       if (v == "(" || v == "[" || v == "{")
         ++depth;
@@ -1744,12 +1746,13 @@ private:
     size_t span_start = start;
     for (size_t i = start; i < end; ++i)
     {
+      bool is_op = toks[i]->token_type == Lexer::TokenType::OPERATOR;
       const std::string &v = toks[i]->value;
-      if (v == "(" || v == "[" || v == "{")
+      if (is_op && (v == "(" || v == "[" || v == "{"))
         ++depth;
-      else if (v == ")" || v == "]" || v == "}")
+      else if (is_op && (v == ")" || v == "]" || v == "}"))
         --depth;
-      else if (v == "," && depth == 0)
+      else if (is_op && v == "," && depth == 0)
       {
         result.push_back({toks.begin() + span_start, toks.begin() + i});
         span_start = i + 1;
