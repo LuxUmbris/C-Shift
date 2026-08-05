@@ -7,6 +7,8 @@
 An LLVM-based compiler for a safe, arena-oriented systems language.
 C<< focuses on deterministic, zero-runtime behaviour and direct C-ABI interoperability.
 
+> Disclaimer: This project was made with some help of AI, and is only a syntax experiment for future projects (e. g. [Shaft](https://github.com/LuxUmbris/Shaft/syntax.md))
+
 ---
 
 ## Quick Start
